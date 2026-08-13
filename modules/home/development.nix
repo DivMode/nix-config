@@ -43,6 +43,17 @@ in
         mise
         uv
         rustup
+        # Package manager and runtime for repositories that declare it in
+        # `packageManager`. It was previously a global install, so nothing
+        # restored it when this machine was rebuilt and every task that shells
+        # out to `bun` failed with "command not found". Declared here for the
+        # same reason as everything else: it comes back with the machine.
+        #
+        # nixpkgs rather than Homebrew. This is a portable CLI, and Homebrew in
+        # this configuration owns only native and vendor casks — a formula needs
+        # a documented nixpkgs incompatibility, which trailing the latest
+        # release by a single patch version is not.
+        bun
         kubectl
         pulumi
         crane

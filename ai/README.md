@@ -45,6 +45,25 @@ The PreToolUse guard is referenced by absolute store path and run with an
 explicit interpreter, so nothing under `~/.claude` is involved in enforcing it.
 Deleting that directory cannot disarm the rule.
 
+### Plugins and marketplaces are deliberately not declared
+
+Checked on 2026-08-13, and the answer is that there is nothing at risk:
+
+- The only marketplace is Anthropic's official one, and Claude Code installs it
+  itself — `~/.claude.json` records `officialMarketplaceAutoInstalled`. It
+  already survives a wipe without help.
+- No third-party marketplaces are configured, and no enabled-plugin state is
+  recorded anywhere.
+- The `<namespace>:<command>` entries that look like plugins are a project's own
+  tracked `.claude/commands/**`, restored by cloning that repository.
+
+`programs.claude-code.marketplaces` takes a *directory*, which it records as
+`source = { source = "directory"; path = <store path>; }`. Declaring the
+official marketplace would therefore replace a self-healing GitHub install with
+a pinned copy that must then be updated by hand — maintenance bought with no
+recoverability gained. Revisit this only if a marketplace is added that Claude
+Code does not install on its own.
+
 ## Codex
 
 Codex mutates `~/.codex/config.toml` at runtime, so its declarative TOML is

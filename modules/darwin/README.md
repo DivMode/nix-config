@@ -27,6 +27,20 @@ the remaining declared applications are explicit. The Dock auto-hides, excludes
 recent applications and persistent file/folder entries, and uses recent-use
 Spaces arrangement.
 
+`chrome-web-apps.nix` declares Google's real Gmail PWA through Chrome's supported
+`WebAppInstallForceList` platform policy. Chrome—not Nix—creates the native
+`~/Applications/Chrome Apps.localized/Gmail.app` shim after each profile first
+processes the policy. The Dock pins that shim immediately after Chrome.
+
+The system-wide policy applies to every local Chrome profile and makes Chrome
+display **Managed by your organization**. Nix owns only the public install URL
+and window behavior. Chrome still owns profile selection, sign-in, cookies,
+history, Gmail sessions, and the derived app shim. On a new Mac, open or restart
+Chrome after the first switch, verify `WebAppInstallForceList` in
+`chrome://policy`, and reload the Dock after Gmail.app appears. Activation
+refuses to overwrite a Chrome policy file it did not create or that changed
+outside nix-config.
+
 `macos-defaults.nix` owns a deliberately small Finder, keyboard-repeat,
 save-panel, screenshot, widget, login-window, and scrolling baseline. Finder's
 Column View does not guarantee a fixed number of visible columns.

@@ -7,6 +7,9 @@
     persistent-apps = [
       "/System/Applications/Launchpad.app"
       "/Applications/Google Chrome.app"
+      # Chrome creates this real app shim after a profile first processes the
+      # declared policy. It may show a question mark until Chrome is opened.
+      "${local.homeDirectory}/Applications/Chrome Apps.localized/Gmail.app"
       "/Applications/ChatGPT.app"
       "/Applications/cmux.app"
     ];

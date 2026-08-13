@@ -54,6 +54,13 @@ in
         # a documented nixpkgs incompatibility, which trailing the latest
         # release by a single patch version is not.
         bun
+        # macOS ships no `flock`; it is a util-linux tool. Deploy scripts that
+        # serialise themselves with a lock file need it, and without it they do
+        # not fail cleanly — the one here reported a two-hour lock timeout,
+        # while the actual error was `flock: command not found` on the line
+        # below it. This is the standalone BSD-compatible implementation rather
+        # than util-linux, which exists mainly for Linux.
+        flock
         kubectl
         pulumi
         crane

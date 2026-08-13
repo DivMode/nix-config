@@ -2,10 +2,12 @@
   imports = [
     ./chrome-web-apps.nix
     ./dock.nix
+    ./firewall.nix
     ./fonts.nix
     ./homebrew.nix
     ./macos-defaults.nix
     ./nix.nix
+    ./power.nix
     ./spotlight.nix
   ];
 

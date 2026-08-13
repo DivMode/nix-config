@@ -129,9 +129,19 @@ Home Manager configures SSH-format commit and tag signing through 1Password's
 
 ### Manual checklist
 
-- Complete the [Karabiner first run](../../modules/home/karabiner.md#first-run).
+- Complete the [Karabiner first run](../../modules/home/karabiner.md#first-run),
+  then run `scripts/check-karabiner.sh` and confirm every line reports `ok`.
+  Grant Accessibility to **Karabiner-Core-Service**, not to
+  `Karabiner-Elements.app` — see the linked section for why that distinction
+  matters.
 - Complete the [LinearMouse first run](../../modules/home/mouse.md).
 - Sign in to 1Password and enable its SSH agent as described above.
 
 These are protected macOS or application controls and cannot safely be approved
-by Nix.
+by Nix. TCC grants are per-machine and never survive a fresh install; there is
+no supported way to script them without enrolling the Mac in an MDM, so expect
+to grant each one exactly once.
+
+Do not diagnose a keyboard problem by reading logs — run
+`scripts/check-karabiner.sh`. It distinguishes a missing permission from an
+unwritable configuration directory, which produce identical symptoms.

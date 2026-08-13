@@ -58,8 +58,26 @@
     masApps = { };
 
     onActivation = {
+      # Never contact Homebrew's remotes during activation. The taps are pinned
+      # flake inputs and `mutableTaps` is false, so there is nothing to fetch;
+      # this only suppresses an implicit `brew update`.
       autoUpdate = false;
-      upgrade = false;
+
+      # Bring installed casks up to the version the pinned tap defines.
+      #
+      # This does NOT make activation pull arbitrary new software, which is the
+      # usual reason to leave it off. `homebrew-cask` is a flake input, so the
+      # only version activation can move a cask to is the one flake.lock already
+      # pins. Upgrades therefore still arrive as a reviewable lock bump in git,
+      # exactly like every nixpkgs change. Combined with autoUpdate = false,
+      # this is nix-darwin's documented "only ever upgrade during activation".
+      #
+      # False means "install the pinned version, but leave anything already
+      # installed stale forever" — it passes `--no-upgrade`. That stranded
+      # claude-code on 2.1.222 until 2026-08-13. It went unnoticed because 9 of
+      # the 10 declared casks carry Homebrew's `auto_updates` flag and quietly
+      # update themselves; only claude-code and 1password-cli depend on this.
+      upgrade = true;
 
       # Reconcile only software managed by Homebrew. Never use "zap", which can
       # additionally remove application-associated files and user data.

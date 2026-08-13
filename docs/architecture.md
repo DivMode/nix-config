@@ -69,9 +69,10 @@ reusable user choices belong in `profiles/`. Future NixOS servers should add
 prompts but produce client-native files. Client-specific settings should remain in
 renderer modules rather than leaking into the shared source. The basic profile
 keeps these renderers disabled until the AI configuration is ready to activate.
-Anthropic's Claude Code terminal CLI is installed through the Homebrew
-`claude-code` cask independently of this dormant renderer. The Claude desktop
-cask is not installed.
+Anthropic's Claude Code terminal CLI is installed as a Nix package from the
+`llm-agents` flake input, declared in `modules/home/development.nix`,
+independently of this dormant renderer. The Claude desktop cask is not
+installed.
 
 Codex's declarative MCP TOML is rendered to a review artifact, not linked over its
 mutable `~/.codex/config.toml`. Claude's user-scoped MCP state is likewise not

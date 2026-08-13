@@ -16,9 +16,19 @@ homebrew.onActivation.cleanup = "uninstall";
 ```
 
 Global `"zap"` is forbidden because it can delete application-associated user
-data. Automatic Homebrew update and upgrade are disabled so a rebuild does not
-silently change package versions. `claude-code` is Anthropic's terminal CLI; the
-separate Claude desktop cask is intentionally absent.
+data. `onActivation.autoUpdate` stays disabled so activation never contacts
+Homebrew's remotes; the taps are pinned flake inputs, so there is nothing to
+fetch. `onActivation.upgrade` is enabled, which brings an installed cask to the
+version the pinned tap defines — still governed by `flake.lock`, so a version
+change remains a reviewable diff rather than something a rebuild does silently.
+
+Every declared cask except `1password-cli` carries Homebrew's `auto_updates`
+flag and updates itself, so that setting is what keeps `1password-cli` current.
+
+Anthropic's Claude Code terminal CLI is **not** a cask here. It is a Nix
+package from the `llm-agents` flake input, because the cask lags the upstream
+release stream by days. The separate Claude desktop cask is intentionally
+absent.
 
 ## Dock and macOS defaults
 

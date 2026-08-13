@@ -1,0 +1,12 @@
+local.nix
+.local.nix.*
+.setup-mac.env
+result
+result-*
+.direnv/
+.DS_Store
+
+# Secret material must never be committed. Ignore every nested file by default
+# and explicitly re-include public documentation.
+secrets/**
+!secrets/README.md

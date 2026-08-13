@@ -1,0 +1,6 @@
+{
+  context7 = {
+    transport = "http";
+    url = "https://mcp.context7.com/mcp";
+  };
+}

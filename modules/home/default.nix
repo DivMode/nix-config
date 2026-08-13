@@ -68,9 +68,15 @@
   # Home Manager is integrated into the nix-darwin generation. Do not install
   # the separate `home-manager` CLI or create a second activation path.
   programs.home-manager.enable = false;
-  # The shared AI renderers and API-secret runtime injection remain dormant.
-  # SSH authentication and Git signing are a separate 1Password capability.
-  nixConfig.ai.enable = false;
+  # The shared AI renderers own the Claude Code and Codex instruction files,
+  # agent definitions, and Claude Code's user settings — including the
+  # PreToolUse guard that enforces Nix-only machine changes. They are enabled
+  # so that directory is reproducible: an agent, or anything else, can delete
+  # ~/.claude and `darwin-rebuild switch` restores it from this repository.
+  #
+  # API-secret runtime injection stays dormant. SSH authentication and Git
+  # signing are a separate 1Password capability.
+  nixConfig.ai.enable = true;
   nixConfig.secrets.onePassword.enable = false;
   nixConfig.secrets.onePassword.sshAgent.enable = lib.mkDefault true;
 

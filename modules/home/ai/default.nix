@@ -20,12 +20,18 @@ let
   #
   # Claude Code loads the whole tree as a plugin, which namespaces every skill
   # as `mattpocock:<name>` and so cannot collide with a built-in or with a
-  # project's own skills. Codex has no plugin mechanism — `--plugin-dir` and
-  # `.claude-plugin/plugin.json` are Claude Code's — but the skills themselves
-  # are portable `SKILL.md` files and Codex reads the identical
-  # `~/.codex/skills/<name>/SKILL.md` layout. So the same input serves both,
-  # composed into each client's native layout, rather than being installed
-  # twice or vendored.
+  # project's own skills.
+  #
+  # Codex is given the same skills as plain skill directories instead. Not
+  # because Codex lacks plugins — it has them, with `.codex-plugin/plugin.json`
+  # manifests, marketplaces, and `[plugins."<name>@<marketplace>"]` entries in
+  # ~/.codex/config.toml — but because the two plugin formats are different and
+  # this upstream ships only the Claude Code manifest. There is no Codex plugin
+  # here to install.
+  #
+  # What both clients do share is the portable `SKILL.md` layout, so the same
+  # input serves both, composed into each client's native form rather than
+  # vendored twice.
   mattPocockSkills = inputs.mattpocock-skills;
 
   # The plugin manifest is the authoritative list; deriving it here means a

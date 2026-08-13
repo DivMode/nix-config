@@ -124,9 +124,15 @@
         modules = [ ./hosts/example-mac ];
       };
 
-      formatter.aarch64-darwin = nixpkgs.legacyPackages.aarch64-darwin.nixfmt;
-      formatter.x86_64-darwin = nixpkgs.legacyPackages.x86_64-darwin.nixfmt;
-      formatter.aarch64-linux = nixpkgs.legacyPackages.aarch64-linux.nixfmt;
-      formatter.x86_64-linux = nixpkgs.legacyPackages.x86_64-linux.nixfmt;
+      # `nixfmt-tree`, not bare `nixfmt`. `nix fmt` invokes the formatter with
+      # the paths to format, and passing none makes bare `nixfmt` read stdin —
+      # so the documented `nix fmt` workflow silently formatted nothing and
+      # exited non-zero with "unexpected end of input". The treefmt wrapper
+      # formats the whole tree when invoked with no arguments, which is what
+      # AGENTS.md, README.md, and docs/operations/rebuild.md all tell you to do.
+      formatter.aarch64-darwin = nixpkgs.legacyPackages.aarch64-darwin.nixfmt-tree;
+      formatter.x86_64-darwin = nixpkgs.legacyPackages.x86_64-darwin.nixfmt-tree;
+      formatter.aarch64-linux = nixpkgs.legacyPackages.aarch64-linux.nixfmt-tree;
+      formatter.x86_64-linux = nixpkgs.legacyPackages.x86_64-linux.nixfmt-tree;
     };
 }

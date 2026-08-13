@@ -1,6 +1,15 @@
-{ pkgs, ... }:
+{ lib, pkgs, ... }:
 let
   karabinerConfiguration = {
+    # Karabiner-Menu is a separate menu-bar process. Its visibility is part of
+    # the declarative configuration, so it belongs here rather than in any
+    # application UI state. Karabiner defaults both of these to true when the
+    # `global` section is absent, which is why the icon appeared.
+    global = {
+      show_in_menu_bar = false;
+      show_profile_name_in_menu_bar = false;
+    };
+
     profiles = [
       {
         name = "Default";
@@ -56,6 +65,31 @@ let
                     to = "right_arrow";
                   }
                 ];
+          }
+          {
+            # Caps Lock held is Hyper (see the rule below), so this is the
+            # "Caps Lock and Space" launcher. Space is deliberately reused:
+            # Command-Space belongs to Raycast and Spotlight's shortcuts 64/65
+            # are disabled in launchers.nix, so nothing else claims it.
+            # `open -a` focuses an existing instance instead of starting a
+            # second one. Karabiner runs shell_command with a minimal PATH, so
+            # the absolute binary path is required.
+            description = "Use Hyper+Space to open cmux";
+            manipulators = [
+              {
+                type = "basic";
+                from = {
+                  key_code = "spacebar";
+                  modifiers.mandatory = [
+                    "left_command"
+                    "left_control"
+                    "left_option"
+                    "left_shift"
+                  ];
+                };
+                to = [ { shell_command = "/usr/bin/open -a /Applications/cmux.app"; } ];
+              }
+            ];
           }
           {
             description = "Tap Caps Lock for Escape; hold it for Hyper (Control+Option+Command+Shift)";
@@ -154,15 +188,53 @@ let
   '';
 in
 {
-  home.file.".config/karabiner" = {
-    source = karabinerDirectory;
-    recursive = false;
-    onChange = ''
+  # Karabiner requires a writable, user-owned configuration directory. It
+  # rewrites karabiner.json at runtime (selected profile and any GUI edit) and
+  # runs a permission check on the directory before loading it. Pointing
+  # ~/.config/karabiner at the read-only, root-owned Nix store makes that check
+  # fail with `permissions failed: ~/.config/karabiner: Operation not
+  # permitted`, and the configuration is silently never applied.
+  #
+  # So install a real file into a real directory and reassert the declared
+  # content on every activation. Karabiner owns runtime drift between
+  # activations; Nix owns the desired state. karabiner.json itself must not be a
+  # symlink either, or Karabiner cannot detect configuration changes.
+  # (https://karabiner-elements.pqrs.org/docs/manual/misc/configuration-file-path/)
+  home.activation.installKarabinerConfiguration = lib.hm.dag.entryAfter [ "writeBoundary" ] ''
+    configDirectory="$HOME/.config/karabiner"
+
+    # Older generations symlinked the whole directory into the store. Replace
+    # that link, but never touch an unmanaged real directory's other contents.
+    if [[ -L "$configDirectory" ]]; then
+      run rm -f "$configDirectory"
+    fi
+
+    run mkdir -p "$configDirectory"
+
+    # Rewrite and restart ONLY when the declared content actually differs.
+    #
+    # Both halves of this matter. `install` copies unconditionally, so it bumps
+    # karabiner.json's mtime on every activation even when the bytes are
+    # identical — enough on its own to make a watcher think something changed.
+    # And `kickstart -k` means kill-and-restart, so leaving it ungated took the
+    # keyboard remapper down during every activation in the repository,
+    # including ones that touch nothing but, say, the mouse. Keyboard input
+    # briefly stops being remapped, which is a real cost for no benefit.
+    #
+    # Karabiner still owns runtime drift between activations; Nix reasserts the
+    # desired content only when that desired content has changed. `cmp` also
+    # fails when the destination is missing, which correctly installs it.
+    if /usr/bin/cmp -s ${karabinerDirectory}/karabiner.json "$configDirectory/karabiner.json"; then
+      verboseEcho "Karabiner configuration is already current; not restarting it"
+    else
+      run /usr/bin/install -m 0644 ${karabinerDirectory}/karabiner.json \
+        "$configDirectory/karabiner.json"
+
       userId=$(/usr/bin/id -u)
       service="gui/$userId/org.pqrs.service.agent.karabiner_console_user_server"
       if /bin/launchctl print "$service" >/dev/null 2>&1; then
         run /bin/launchctl kickstart -k "$service"
       fi
-    '';
-  };
+    fi
+  '';
 }

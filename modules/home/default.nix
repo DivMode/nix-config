@@ -10,7 +10,10 @@
     ./ai
     ./development.nix
     ./karabiner.nix
+    ./launchers.nix
     ./mouse.nix
+    ./privacy.nix
+    ./screensaver.nix
     ./secrets.nix
     ./terminal.nix
   ];

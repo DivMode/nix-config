@@ -165,6 +165,30 @@ in
       fi
     '';
 
+    # Before this configuration existed, the guard was a loose file at
+    # ~/.claude/hooks/nix-only-guard.py and settings.json referenced it there.
+    # It is now committed and referenced by store path, leaving that copy
+    # orphaned — unreferenced, unmanaged, and misleading to anyone who finds it,
+    # since editing it would change nothing. Remove it, but only on evidence
+    # that it is byte-identical to the committed script; if it differs, someone
+    # made local changes that are not in this repository and should not be
+    # silently discarded.
+    home.activation.removeLegacyClaudeGuardHook = lib.hm.dag.entryAfter [ "writeBoundary" ] ''
+      legacyGuard="$HOME/.claude/hooks/nix-only-guard.py"
+
+      if [[ -f "$legacyGuard" && ! -L "$legacyGuard" ]]; then
+        if /usr/bin/cmp -s ${ai.hooks.nixOnlyGuard} "$legacyGuard"; then
+          run rm -f "$legacyGuard"
+          # Only if nothing else lives there; rmdir refuses a non-empty
+          # directory, which is exactly the check wanted.
+          rmdir "$HOME/.claude/hooks" 2>/dev/null || true
+        else
+          warnEcho "Leaving modified legacy hook in place: $legacyGuard"
+          warnEcho "It is no longer referenced. Fold any changes into ai/hooks/nix-only-guard.py."
+        fi
+      fi
+    '';
+
     # settings.json cannot be a store symlink for two independent reasons:
     # Claude Code writes to it at runtime, and a real unmanaged copy already
     # exists on this machine, which Home Manager's collision check would refuse

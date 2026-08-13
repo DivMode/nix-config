@@ -23,6 +23,8 @@ was never stored in a declarative or provider-backed system.
 - Authentication and OAuth sessions
 - macOS Keychain contents
 - Browser profiles and history
+- Gmail and Chrome authentication; Nix declares Gmail's installation policy,
+  while Chrome owns each profile's PWA registration and generated app shim
 - Application databases, caches, logs, indexes, and temporary files
 - cmux and Herdr runtime preferences and session state other than cmux's
   declarative Ghostty-compatible font selection

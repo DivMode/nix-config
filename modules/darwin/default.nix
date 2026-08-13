@@ -1,5 +1,6 @@
 {
   imports = [
+    ./chrome-web-apps.nix
     ./dock.nix
     ./fonts.nix
     ./homebrew.nix

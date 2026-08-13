@@ -20,6 +20,24 @@
 
   programs.git = {
     enable = true;
+
+    # Machine-local files that a tool writes into whatever repository is open,
+    # so they belong to this machine rather than to any one project. Ignoring
+    # them here means a repository does not have to know the tool exists.
+    #
+    # Claude Code appends to `.claude/settings.local.json` on its own every time
+    # a permission is approved. Left visible to git it shows up as an untracked
+    # change in every repository, and on 2026-08-13 that blocked a deploy whose
+    # precondition requires a clean tree — while the file itself was carrying
+    # the only thing keeping the sandbox off, so it could not simply be deleted.
+    # `**/.claude/.cc-writes/` was already in the unmanaged file this replaces.
+    # It is carried over deliberately rather than dropped: taking ownership of
+    # a file must not silently discard what it already contained.
+    ignores = [
+      "**/.claude/.cc-writes/"
+      ".claude/settings.local.json"
+    ];
+
     settings = {
       user = {
         inherit (local.git) name email;
@@ -79,6 +97,32 @@
   nixConfig.ai.enable = true;
   nixConfig.secrets.onePassword.enable = false;
   nixConfig.secrets.onePassword.sshAgent.enable = lib.mkDefault true;
+
+  # Home Manager refuses to replace an unmanaged file and aborts the whole
+  # activation, which is what happened on 2026-08-13: a pre-existing global git
+  # ignore file blocked every later step. Clear it, but ONLY on evidence that
+  # its content is the single legacy line now carried in `programs.git.ignores`
+  # above. Anything else means someone added rules that are not declared here,
+  # and those must not be discarded silently.
+  #
+  # Depends on `checkLinkTargets` BY NAME. Both are entryBefore
+  # [ "writeBoundary" ], which puts them in one DAG tier with no ordering
+  # between them, and the check would otherwise run first and abort on the very
+  # file this exists to clear.
+  home.activation.claimGlobalGitIgnore = lib.hm.dag.entryBefore [ "checkLinkTargets" ] ''
+    globalIgnore="${config.xdg.configHome}/git/ignore"
+    legacyContent='**/.claude/.cc-writes/'
+
+    if [[ -f "$globalIgnore" && ! -L "$globalIgnore" ]]; then
+      if [[ "$(< "$globalIgnore")" == "$legacyContent" ]]; then
+        run rm -f "$globalIgnore"
+      else
+        errorEcho "Refusing to replace unmanaged file with unknown content: $globalIgnore"
+        errorEcho "Add its rules to programs.git.ignores in modules/home/default.nix, then remove it."
+        exit 1
+      fi
+    fi
+  '';
 
   # Validate collisions before Home Manager begins writing any managed state.
   home.activation.validateScreenshotsDirectory = lib.hm.dag.entryBefore [ "writeBoundary" ] ''

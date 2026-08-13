@@ -67,12 +67,21 @@ reusable user choices belong in `profiles/`. Future NixOS servers should add
 
 `ai/default.nix` is canonical. Renderers consume the same instructions and agent
 prompts but produce client-native files. Client-specific settings should remain in
-renderer modules rather than leaking into the shared source. The basic profile
-keeps these renderers disabled until the AI configuration is ready to activate.
-Anthropic's Claude Code terminal CLI is installed as a Nix package from the
-`llm-agents` flake input, declared in `modules/home/development.nix`,
-independently of this dormant renderer. The Claude desktop cask is not
-installed.
+renderer modules rather than leaking into the shared source.
+
+The renderers are enabled, and the reason is recoverability: a coding agent
+deleted a previous machine's assistant configuration, so the instruction file,
+agent definitions, and Claude Code's user settings — including the PreToolUse
+guard that enforces Nix-only machine changes — are all declared here and
+restored by `darwin-rebuild switch`. Project-scoped instructions stay in each
+project's own repository; this layer is deliberately global-only.
+
+Claude Code's own Home Manager module, `programs.claude-code`, owns the
+instruction file and agent definitions. Its `package` and `settings` options are
+deliberately unused: the package is installed by `modules/home/development.nix`
+from the `llm-agents` flake input, and `settings.json` is installed as a real
+reasserted file because that option would make an application-writable file a
+read-only store symlink. The Claude desktop cask is not installed.
 
 Codex's declarative MCP TOML is rendered to a review artifact, not linked over its
 mutable `~/.codex/config.toml`. Claude's user-scoped MCP state is likewise not

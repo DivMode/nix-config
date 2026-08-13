@@ -130,6 +130,23 @@ let
     theme = "dark";
     tui = "fullscreen";
 
+    # Bash runs unsandboxed, matching how this machine is actually worked.
+    #
+    # This is the LOWEST-precedence settings file. Claude Code resolves scopes
+    # managed > command line > project `.claude/settings.local.json` > project
+    # `.claude/settings.json` > this one, so any repository declaring its own
+    # `sandbox` block overrides what is set here. Setting it globally is
+    # therefore a default, not a guarantee; a project that wants this posture
+    # must leave the key unset rather than restate it, or the two drift.
+    #
+    # `autoAllowBashIfSandboxed` only has meaning while the sandbox is on — it
+    # skips the approval prompt for commands the sandbox already contains — so
+    # it is declared false alongside for consistency rather than effect.
+    sandbox = {
+      enabled = false;
+      autoAllowBashIfSandboxed = false;
+    };
+
     # The guard is referenced by absolute Nix store path and run with an
     # explicit interpreter. Nothing under ~/.claude is involved, so removing
     # that directory cannot silently disable the rule the hook enforces.

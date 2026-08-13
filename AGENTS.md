@@ -24,8 +24,14 @@ today and is intentionally structured to add NixOS servers later.
 - Nix/Home Manager own Zsh, its plugins, Git, portable CLIs, and Herdr.
   Homebrew owns only declared native/vendor casks; formulae require a documented
   nixpkgs incompatibility. Never declare the same executable through both.
-- `claude-code` is Anthropic's terminal CLI cask. Do not add the separate
-  `claude` desktop cask. cmux is the native terminal; Herdr runs inside it.
+- Anthropic's Claude Code terminal CLI is a **Nix package**, from the
+  `llm-agents` flake input, declared in `modules/home/development.nix`. It is
+  deliberately not the `claude-code` Homebrew cask, which lags the release
+  stream by days; do not move it back. Never add the separate `claude` desktop
+  cask. cmux is the native terminal; Herdr runs inside it.
+- Exactly one thing may provide `bin/claude`. `development.nix` withholds the
+  unwrapped package whenever the 1Password launcher in `secrets.nix` is enabled,
+  because that launcher installs its own executable of the same name.
 - Karabiner-Elements exclusively owns keyboard remapping; Raycast's native Hyper
   Key stays disabled and LinearMouse exclusively owns mouse behavior. Home
   Manager owns LinearMouse's documented JSON; never automate TCC approval.

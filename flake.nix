@@ -19,6 +19,18 @@
       inputs.nixpkgs.follows = "nixpkgs";
     };
 
+    # Packages for AI coding agents, updated daily by upstream automation.
+    # Claude Code publishes several releases a day, far faster than its Homebrew
+    # cask tracks: on 2026-08-13 the newest homebrew-cask commit still described
+    # 2.1.223 while upstream was on 2.1.231, so no lock update could have closed
+    # that gap while it remained a cask.
+    #
+    # Its nixpkgs is deliberately NOT followed to ours. This input pins
+    # nixpkgs-unstable, and overriding that would rebuild every derivation away
+    # from what upstream tests and publishes to its own binary cache, for no
+    # benefit — the package is a signed vendor binary plus a wrapper.
+    llm-agents.url = "github:numtide/llm-agents.nix";
+
     nix-homebrew.url = "github:zhaofengli/nix-homebrew";
 
     homebrew-core = {

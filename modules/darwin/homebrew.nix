@@ -38,9 +38,10 @@
       # configuration directory; Raycast's native Hyper Key stays disabled.
       "karabiner-elements"
 
-      # Anthropic's terminal CLI. This is not the Claude desktop application;
-      # the separate `claude` cask must not be added to this profile.
-      "claude-code"
+      # Anthropic's terminal CLI is NOT here. It is a Nix package, declared in
+      # modules/home/development.nix from the llm-agents flake input, because
+      # the cask lags the release stream by days. Do not add `claude-code` back,
+      # and never add the separate `claude` desktop cask either.
 
       # Native terminal application. Herdr runs inside it and is installed by
       # Home Manager from its official flake instead of through Homebrew.
@@ -74,9 +75,10 @@
       #
       # False means "install the pinned version, but leave anything already
       # installed stale forever" — it passes `--no-upgrade`. That stranded
-      # claude-code on 2.1.222 until 2026-08-13. It went unnoticed because 9 of
-      # the 10 declared casks carry Homebrew's `auto_updates` flag and quietly
-      # update themselves; only claude-code and 1password-cli depend on this.
+      # claude-code on 2.1.222 until 2026-08-13, before it moved to Nix. It went
+      # unnoticed because every other declared cask except 1password-cli carries
+      # Homebrew's `auto_updates` flag and quietly updates itself, so this
+      # setting is the only thing keeping 1password-cli current.
       upgrade = true;
 
       # Reconcile only software managed by Homebrew. Never use "zap", which can

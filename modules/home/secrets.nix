@@ -12,6 +12,7 @@ let
     concatStringsSep
     concatMapStringsSep
     escapeShellArg
+    getExe'
     hasAttr
     hasInfix
     hasPrefix
@@ -55,7 +56,11 @@ let
   sshAgentSocket = "${config.home.homeDirectory}/Library/Group Containers/2BUA8C4S2C.com.1password/t/agent.sock";
   homebrewPrefix = if pkgs.stdenv.hostPlatform.isAarch64 then "/opt/homebrew" else "/usr/local";
   opExecutable = "${homebrewPrefix}/bin/op";
-  claudeExecutable = "${homebrewPrefix}/bin/claude";
+
+  # Claude Code is a Nix package rather than a Homebrew cask, so this reaches it
+  # by absolute store path. `development.nix` withholds the unwrapped package
+  # whenever this launcher is enabled, because both provide bin/claude.
+  claudeExecutable = getExe' config.nixConfig.claudeCode.package "claude";
   sshAgentConfig = concatMapStringsSep "\n" (itemId: ''
     [[ssh-keys]]
     item = "${itemId}"
@@ -82,9 +87,9 @@ let
       '';
     };
 
-  # The absolute Homebrew path reaches the vendor Claude Code terminal binary
-  # instead of resolving this wrapper recursively through PATH. No Codex
-  # launcher or Nix-provided AI executable is part of this module.
+  # The absolute store path reaches the vendor Claude Code binary instead of
+  # resolving this wrapper recursively through PATH — this launcher is itself
+  # named `claude`. No Codex launcher is part of this module.
   claudeWithOnePassword = makeOnePasswordLauncher "claude" claudeExecutable;
 in
 {

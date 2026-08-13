@@ -94,8 +94,12 @@ The everyday operations are:
 ```sh
 nix flake check --impure
 nix build --no-link --impure .#darwinConfigurations.example-mac.system
-sudo env NIX_CONFIG_LOCAL="$NIX_CONFIG_LOCAL" /run/current-system/sw/bin/darwin-rebuild switch --impure --flake "path:$PWD#example-mac"
+./scripts/rebuild.sh
 ```
+
+`scripts/rebuild.sh` is the activation path. It builds first and prompts for the
+password in a native dialog, so it also works from a shell with no controlling
+terminal. Do not hand-assemble the `darwin-rebuild switch` command.
 
 Format and inspect changes before switching. Lock updates and detailed operating
 procedures are in [`docs/operations/rebuild.md`](docs/operations/rebuild.md).
@@ -128,6 +132,7 @@ Keychain contents, caches, or mutable terminal sessions. See
 - [Mutable-state boundary](docs/state-boundary.md)
 - [macOS and Homebrew](modules/darwin/README.md)
 - [Karabiner keyboard](modules/home/karabiner.md)
+- [Application launcher hotkeys](modules/home/launchers.md)
 - [Terminal and Zsh](modules/home/terminal.md)
 - [Developer tools](modules/home/development.md)
 - [Mouse](modules/home/mouse.md)

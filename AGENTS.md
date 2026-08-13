@@ -39,3 +39,29 @@ today and is intentionally structured to add NixOS servers later.
 - Evaluate with `nix flake check` and
   `nix eval .#darwinConfigurations.example-mac.system` before activation.
 - Inspect activation diffs before switching a host.
+- Activate with `./scripts/rebuild.sh`, and run it yourself rather than handing
+  the command to the user. It sets `SUDO_ASKPASS` and uses `sudo -A`, so the
+  password is collected in a native dialog and no controlling terminal is
+  needed — that script exists precisely so an agent can activate. Do not
+  assemble a `darwin-rebuild switch` command line by hand.
+- A change is not finished at activation. Verify the observable behaviour the
+  change was for, and prefer the application's own source or stored state over
+  assuming the setting means what its name suggests.
+- Never hand-derive the stored form of a `targets.darwin.defaults` value that is
+  not a plain boolean, string, or integer. Set it once in the application's own
+  UI, read it back with `plutil -p ~/Library/Preferences/<domain>.plist`, and
+  declare exactly those bytes. Applications using the `Defaults` library store
+  enums as JSON, so the correct value contains literal double quotes — see
+  `modules/home/mouse.nix`. When an application's settings window disagrees with
+  what its plist plainly says, the value is stored in a form it cannot decode.
+- A comment that names a root cause must carry the evidence that proves it: the
+  source file, the log line, the stored bytes. Write anything unproven as a
+  hypothesis. A confident, wrong root-cause comment is worse than none — one in
+  `mouse.nix` misdirected a whole day's debugging on 2026-08-13.
+- Activation runs on every rebuild, so an entry that restarts an application
+  must first check whether its input actually changed. `install` copies
+  unconditionally and bumps mtime; `launchctl kickstart -k` kills and restarts.
+  Ungated, they disrupt applications during activations that have nothing to do
+  with them. Gate on `cmp -s` against the desired file. The exception is state
+  written through cfprefsd, whose flush is asynchronous and cannot be compared
+  on disk — restart unconditionally there and say why.

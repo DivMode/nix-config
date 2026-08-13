@@ -31,6 +31,15 @@
     # benefit — the package is a signed vendor binary plus a wrapper.
     llm-agents.url = "github:numtide/llm-agents.nix";
 
+    # Matt Pocock's engineering skills. Consumed as a pinned source tree rather
+    # than installed with `claude plugins install`, which writes mutable state
+    # this repository could not restore. MIT licensed, so nothing is vendored:
+    # only referenced, and updated with `./scripts/update.sh mattpocock-skills`.
+    mattpocock-skills = {
+      url = "github:mattpocock/skills";
+      flake = false;
+    };
+
     nix-homebrew.url = "github:zhaofengli/nix-homebrew";
 
     homebrew-core = {

@@ -15,10 +15,6 @@ let
   # input, no lock update could close that gap. See ../../docs/operations/rebuild.md.
   claudeCode = inputs.llm-agents.packages.${system}.claude-code;
 
-  # The 1Password launcher in secrets.nix installs its own executable named
-  # `claude`, wrapping the package below. Installing both would collide on
-  # bin/claude, so exactly one of them owns the command.
-  claudeCodeIsWrapped = config.nixConfig.secrets.onePassword.enable;
 in
 {
   options.nixConfig.claudeCode.package = lib.mkOption {
@@ -26,10 +22,11 @@ in
     readOnly = true;
     default = claudeCode;
     description = ''
-      The Claude Code package this configuration installs. Exposed so the
-      1Password launcher can wrap this exact build by absolute store path
-      rather than resolving `claude` through PATH, which would re-enter the
-      wrapper.
+      The Claude Code package this configuration uses. Declared here because
+      this module owns portable developer tooling, but INSTALLED by
+      `programs.claude-code` in ../ai, which wraps it with `--plugin-dir` to
+      load plugins. Only one of them may install it, or they collide on
+      bin/claude.
     '';
   };
 
@@ -56,8 +53,7 @@ in
       ])
       ++ [
         inputs.herdr.packages.${system}.default
-      ]
-      ++ lib.optional (!claudeCodeIsWrapped) claudeCode;
+      ];
 
     programs.zsh.initContent = lib.mkAfter ''
       eval "$(${lib.getExe pkgs.mise} activate zsh)"

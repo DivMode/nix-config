@@ -101,6 +101,15 @@ nix build --no-link --impure .#darwinConfigurations.example-mac.system
 password in a native dialog, so it also works from a shell with no controlling
 terminal. Do not hand-assemble the `darwin-rebuild switch` command.
 
+To move the pinned inputs forward and apply the result in one step:
+
+```sh
+./scripts/update.sh                  # every input
+./scripts/update.sh homebrew-cask    # only the Homebrew casks
+```
+
+Versions live in `flake.lock` and are never edited by hand.
+
 Format and inspect changes before switching. Lock updates and detailed operating
 procedures are in [`docs/operations/rebuild.md`](docs/operations/rebuild.md).
 

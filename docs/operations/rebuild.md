@@ -54,14 +54,47 @@ Two failure modes have already cost hours here, both in `modules/home/mouse.nix`
 
 ## Lock updates
 
-`flake.lock` pins every declared input. Update it intentionally:
+`flake.lock` pins every declared input, so nothing on the Mac advances on its
+own. Updating is therefore an explicit act — but not a manual one. **You never
+edit a version by hand**; `nix flake update` rewrites the lock for you, and the
+pin is the receipt of what was pulled, not something you maintain.
 
 ```sh
-nix flake lock
+./scripts/update.sh                  # every input, then build and activate
+./scripts/update.sh homebrew-cask    # only the Homebrew casks
+./scripts/update.sh --dry-run        # move the lock and build, do not activate
 ```
 
-Then repeat formatting, evaluation, checks, and the non-activating build. Do not
-activate an unreviewed lock update.
+The script prints which inputs actually moved, checks and builds, and activates
+only if the build succeeds. A failure leaves the Mac untouched with the lock
+change still in the working tree for inspection.
+
+The equivalent by hand, if you want the steps separately:
+
+```sh
+nix flake update            # or: nix flake update <input> [<input>…]
+nix flake check --impure
+nix build --no-link --impure .#darwinConfigurations.example-mac.system
+./scripts/rebuild.sh
+```
+
+Do not activate an unreviewed lock update.
+
+### What a lock update does and does not reach
+
+Three separate update channels feed this Mac, and only two are driven from here:
+
+- **`nixpkgs`** — everything Nix and Home Manager install.
+- **`homebrew-core` / `homebrew-cask`** — the cask *definitions*. These taps are
+  flake inputs and `mutableTaps` is false, so `brew update` cannot move them;
+  only a lock update can.
+- **The applications' own updaters** — most declared casks carry Homebrew's
+  `auto_updates` flag and update themselves entirely outside Nix.
+
+Because `homebrew.onActivation.upgrade` is true, activation moves an installed
+cask to whatever version the pinned tap defines. The casks that actually depend
+on this are the ones with no self-updater — currently `claude-code` and
+`1password-cli`.
 
 ## Safety boundaries
 

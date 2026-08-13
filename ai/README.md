@@ -71,6 +71,20 @@ emitted as a review artifact rather than linked over the live file. Claude's
 mutable user state is likewise not overwritten. Both clients need merge-safe
 adapters before those generated settings can become live configuration.
 
+### Codex plugins
+
+Codex has a plugin system of its own. Plugins carry a
+`.codex-plugin/plugin.json` manifest, marketplaces are declared as
+`[marketplaces.<name>]`, and installed plugins as
+`[plugins."<plugin>@<marketplace>"]` — all in `~/.codex/config.toml`, which
+Codex writes itself. That state is currently unmanaged.
+
+This matters when sharing a third-party skill set between clients: the Claude
+Code and Codex plugin formats are **different**, and a repository shipping
+`.claude-plugin/plugin.json` is not installable as a Codex plugin. Where an
+upstream ships only one manifest, deliver its skills to the other client as
+plain skill directories, which both clients read identically.
+
 Runtime secrets follow the interface in [`../secrets/README.md`](../secrets/README.md).
 The MCP registry contains endpoint metadata and environment-variable names only,
 never tokens.

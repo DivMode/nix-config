@@ -1,18 +1,55 @@
 {
   ai,
   config,
+  inputs,
   lib,
   pkgs,
   ...
 }:
 let
   inherit (lib)
+    listToAttrs
     mapAttrs
     mapAttrs'
     mkEnableOption
     mkIf
     nameValuePair
     ;
+
+  # Matt Pocock's skills, from the pinned flake input.
+  #
+  # Claude Code loads the whole tree as a plugin, which namespaces every skill
+  # as `mattpocock:<name>` and so cannot collide with a built-in or with a
+  # project's own skills. Codex has no plugin mechanism — `--plugin-dir` and
+  # `.claude-plugin/plugin.json` are Claude Code's — but the skills themselves
+  # are portable `SKILL.md` files and Codex reads the identical
+  # `~/.codex/skills/<name>/SKILL.md` layout. So the same input serves both,
+  # composed into each client's native layout, rather than being installed
+  # twice or vendored.
+  mattPocockSkills = inputs.mattpocock-skills;
+
+  # The plugin manifest is the authoritative list; deriving it here means a
+  # skill added or removed upstream is picked up by a lock update alone.
+  mattPocockManifest = builtins.fromJSON (
+    builtins.readFile "${mattPocockSkills}/.claude-plugin/plugin.json"
+  );
+
+  # Prefixed for Codex to mirror the namespacing Claude Code gets for free from
+  # the plugin. Without it, upstream's `research` would land on the same path as
+  # this repository's own `research` agent.
+  mattPocockCodexSkills = listToAttrs (
+    map (
+      relativePath:
+      let
+        path = lib.removePrefix "./" relativePath;
+        skillName = baseNameOf path;
+      in
+      nameValuePair ".codex/skills/mattpocock-${skillName}" {
+        source = "${mattPocockSkills}/${path}";
+        recursive = true;
+      }
+    ) mattPocockManifest.skills
+  );
 
   codexSkill =
     name: agent:
@@ -118,27 +155,49 @@ in
     programs.claude-code = {
       enable = true;
 
-      # Configuration only. The package itself is installed by
-      # development.nix, which also decides whether the unwrapped binary or the
-      # 1Password launcher provides `claude`. Declaring it here as well would
-      # install it twice and collide on bin/claude.
-      package = null;
+      # The module owns the package because `plugins` works by wrapping it with
+      # `--plugin-dir`. development.nix therefore does NOT install claude-code;
+      # only one of them may, or they collide on bin/claude.
+      package = config.nixConfig.claudeCode.package;
+
+      # Loaded straight from the Nix store. `claude plugins install` would
+      # write mutable state under ~/.claude that this repository could not
+      # restore, which is the whole thing this configuration exists to avoid.
+      plugins = [ mattPocockSkills ];
 
       context = ai.instructions;
       agents = mapAttrs claudeAgentText ai.agents;
     };
 
+    # Both would install an executable named `claude`. The 1Password launcher
+    # is currently disabled, so this cannot fire today; it exists so that
+    # enabling it fails with an explanation rather than an opaque collision.
+    assertions = [
+      {
+        assertion = !config.nixConfig.secrets.onePassword.enable;
+        message = ''
+          Both programs.claude-code and the 1Password launcher would provide
+          bin/claude. Point the launcher at
+          config.programs.claude-code.finalPackage — which carries the plugin
+          wrapper — and set programs.claude-code.package to null.
+        '';
+      }
+    ];
+
     # Instructions and agent definitions are linked from the store. Nothing
     # writes to them at runtime, so a read-only symlink is correct here: it
     # cannot drift, and Home Manager restores it if it is removed.
-    home.file = codexSkillFiles // {
-      ".codex/AGENTS.md".source = ai.instructions;
-      # Codex mutates ~/.codex/config.toml at runtime. Keep the declarative
-      # desired state as a reviewable artifact instead of replacing the live
-      # file with an immutable Nix-store symlink.
-      ".config/nix-config/ai/codex-config.toml".source = codexToml;
-      ".config/nix-config/ai/mcp-registry.json".source = mcpRegistryJson;
-    };
+    home.file =
+      codexSkillFiles
+      // mattPocockCodexSkills
+      // {
+        ".codex/AGENTS.md".source = ai.instructions;
+        # Codex mutates ~/.codex/config.toml at runtime. Keep the declarative
+        # desired state as a reviewable artifact instead of replacing the live
+        # file with an immutable Nix-store symlink.
+        ".config/nix-config/ai/codex-config.toml".source = codexToml;
+        ".config/nix-config/ai/mcp-registry.json".source = mcpRegistryJson;
+      };
 
     # Codex creates an empty ~/.codex/AGENTS.md on first run. Home Manager
     # refuses to replace an unmanaged file, so activation would abort before

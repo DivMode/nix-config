@@ -78,6 +78,20 @@ in
         # deploy failed with "could not find default credentials". The ADC
         # file itself is auth — application-owned, deliberately not declared.
         google-cloud-sdk
+        # The remaining deploy-path CLIs the 2026-08 machine rebuild lost, all
+        # found the same way — an sst deploy failing one tool at a time
+        # (2026-08-14, the work monorepo #4116's deploy):
+        #   oci         — the OKE kubeconfig authenticates through an exec
+        #                 plugin that spawns `oci`; without it every OKE
+        #                 resource reads as "unreachable cluster".
+        #   cloudflared — `cloudflared access tcp` carries the pg-oke tunnel
+        #                 the Atlas migration step connects through.
+        #   atlas       — applies the SQL migrations over that tunnel.
+        #   talosctl    — Talos cluster administration/debugging.
+        oci-cli
+        cloudflared
+        atlas
+        talosctl
         # The minimal build retains the GDAL/OGR command suite plus VRT, WebP,
         # SQLite/MBTiles, and projection support without unrelated cloud drivers.
         gdalMinimal

@@ -9,13 +9,47 @@ let
       schemes = [
         {
           "if".device.category = "mouse";
-          # High-resolution wheel is deliberately OFF. The MX Master 3 does
-          # expose Logitech HID++ high-resolution scrolling, and enabling it
-          # produces the fine-grained, smooth-scrolling feel — tried on
-          # 2026-08-13 and rejected as worse in daily use. False restores the
-          # wheel's discrete, notched steps. Do not re-enable without asking.
-          logitech.highResolutionWheel = false;
-          scrolling.reverse.vertical = true;
+
+          # High-resolution wheel is ON, and the history matters because the
+          # comment here previously said the opposite. It was tried alone on
+          # 2026-08-13 and rejected: finer steps on their own just make the
+          # wheel feel loose, because LinearMouse recombines the substeps into
+          # ordinary detents when the scrolling mode is not smoothed. It is
+          # good in combination with the smoothed engine below, which is what
+          # was actually wanted, and was adopted the same day.
+          logitech.highResolutionWheel = true;
+
+          scrolling = {
+            reverse.vertical = true;
+
+            # Values tuned by hand in LinearMouse's own settings window and
+            # then read back out of the file it wrote, rather than guessed
+            # from the visible sliders — several of these sit below the fold
+            # in that window and would have been missed.
+            #
+            # This is the arrangement described at the top of this file: the
+            # application owns the file at runtime, and activation reasserts
+            # it. That means any tuning done in the settings window is lost at
+            # the next rebuild unless it is captured here first.
+            smoothed.vertical = {
+              enabled = true;
+              preset = "easeInOut";
+              response = 0.68;
+              speed = 1.02;
+              acceleration = 1.1;
+              inertia = 0.74;
+              bouncing = true;
+            };
+
+            # Written alongside the smoothed block by the application. `speed`
+            # and `acceleration` here are the non-smoothed engine's controls;
+            # the smoothed engine ignores `scrolling.acceleration` and uses its
+            # own, so these are kept only so the file matches what LinearMouse
+            # itself produces and no rebuild shows a spurious difference.
+            acceleration.vertical = 1;
+            speed.vertical = 0;
+            distance.vertical = "auto";
+          };
         }
       ];
     }

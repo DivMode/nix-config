@@ -98,6 +98,27 @@
   nixConfig.secrets.onePassword.enable = false;
   nixConfig.secrets.onePassword.sshAgent.enable = lib.mkDefault true;
 
+  # A cached service-account token, exported from .zshenv. This is what stops
+  # the desktop application prompting: a service account authenticates with no
+  # app, no biometrics, and no controlling terminal, so non-interactive
+  # processes read secrets silently. Independent of the dormant `enable` above,
+  # which is the `op run` launcher, and of the SSH agent, which is the
+  # application's own capability and keeps working either way.
+  nixConfig.secrets.onePassword.serviceAccount.enable = true;
+
+  # Connect credentials for the deploy path only. Cached to a 0600 env file that
+  # the work monorepo's scripts/sst-connect-env.sh sources at the sst invocation seam, so
+  # deploys use Connect — which does not spend the service account's rolling 24h
+  # request cap — while interactive `op` keeps working with `--fields`.
+  nixConfig.secrets.onePassword.connect.enable = true;
+
+  # AWS profiles for the SST state bucket, resolved from 1Password per call.
+  # ~/.aws did not exist at all after this machine was rebuilt — auth is
+  # application-owned and so nothing restored it — which failed every infra
+  # deploy with "aws: failed to get shared config profile, <profile>".
+  # The profile definitions are declared; only the keys stay in 1Password.
+  nixConfig.secrets.onePassword.aws.enable = true;
+
   # Home Manager refuses to replace an unmanaged file and aborts the whole
   # activation, which is what happened on 2026-08-13: a pre-existing global git
   # ignore file blocked every later step. Clear it, but ONLY on evidence that

@@ -70,6 +70,14 @@ in
         kubectl
         pulumi
         crane
+        # the work monorepo's SST deploys drive the Pulumi gcp provider through
+        # Application Default Credentials (`gcloud auth application-default
+        # login` — one-time browser consent; JSON keys are blocked by org
+        # policy, see the work monorepo ADR-0016). gcloud was a global install before
+        # this machine was rebuilt, so nothing restored it and every infra
+        # deploy failed with "could not find default credentials". The ADC
+        # file itself is auth — application-owned, deliberately not declared.
+        google-cloud-sdk
         # The minimal build retains the GDAL/OGR command suite plus VRT, WebP,
         # SQLite/MBTiles, and projection support without unrelated cloud drivers.
         gdalMinimal

@@ -9,6 +9,7 @@
     ./nix.nix
     ./power.nix
     ./spotlight.nix
+    ./sudo.nix
   ];
 
   programs.zsh.enable = true;

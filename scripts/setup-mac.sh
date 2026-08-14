@@ -245,7 +245,7 @@ write_local_nix() {
 run_switch() {
   export NIX_CONFIG_LOCAL="$LOCAL_FILE"
   if [[ -x /run/current-system/sw/bin/darwin-rebuild ]]; then
-    sudo env NIX_CONFIG_LOCAL="$NIX_CONFIG_LOCAL" \
+    sudo -A --preserve-env=NIX_CONFIG_LOCAL \
       /run/current-system/sw/bin/darwin-rebuild switch --impure \
       --flake "path:$REPO_ROOT#example-mac"
   else

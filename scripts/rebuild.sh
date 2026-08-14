@@ -27,7 +27,10 @@ echo "==> Building $host"
 nix build --no-link --impure ".#darwinConfigurations.${host}.system"
 
 echo "==> Activating $host (password dialog will appear)"
-/usr/bin/sudo -A env NIX_CONFIG_LOCAL="$NIX_CONFIG_LOCAL" \
+# --preserve-env, NOT an `env` wrapper: sudoers matches the literal command,
+# and the NOPASSWD rule names darwin-rebuild — wrapping in `env` makes sudo
+# see `env` and prompt despite the rule (measured 2026-08-14).
+/usr/bin/sudo -A --preserve-env=NIX_CONFIG_LOCAL \
   /run/current-system/sw/bin/darwin-rebuild switch --impure \
   --flake "path:${repository}#${host}"
 

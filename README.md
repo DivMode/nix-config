@@ -103,9 +103,13 @@ nix build --no-link --impure .#darwinConfigurations.example-mac.system
 ./scripts/rebuild.sh
 ```
 
-`scripts/rebuild.sh` is the activation path. It builds first and prompts for the
-password in a native dialog, so it also works from a shell with no controlling
-terminal. Do not hand-assemble the `darwin-rebuild switch` command.
+`scripts/rebuild.sh` is the activation path. It builds first, then activates
+without a password: a declared sudoers rule (`modules/darwin/sudo.nix`) allows
+exactly the `darwin-rebuild` activation command for this account, so rebuilds
+run unattended from any shell. Anything else under sudo still prompts — the
+askpass dialog remains as the fallback (and covers the one first switch on a
+wiped machine, before the rule exists). Do not hand-assemble the
+`darwin-rebuild switch` command.
 
 To move the pinned inputs forward and apply the result in one step:
 

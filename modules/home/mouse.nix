@@ -7,48 +7,100 @@ let
     builtins.toJSON {
       "$schema" = "https://schema.linearmouse.app/0.11.4";
       schemes = [
+        # TWO schemes, exactly as LinearMouse itself wrote them. Do not merge
+        # them into one. Collapsing the pair into a single category-level
+        # scheme on 2026-08-13 changed the scroll feel immediately and
+        # noticeably, even though the merged file carried the same key/value
+        # pairs — so the split is load-bearing, not incidental formatting.
+        #
+        # The base scheme covers any mouse. The second matches this receiver
+        # specifically and carries the smoothed-scrolling tuning; where both
+        # match, the more specific one wins.
         {
           "if".device.category = "mouse";
+          logitech.highResolutionWheel = false;
+          scrolling.reverse.vertical = true;
+        }
+        {
+          "if".device = {
+            category = "mouse";
+            vendorID = "0x46d";
+            productID = "0xc548";
+            productName = "USB Receiver";
+          };
 
-          # High-resolution wheel is ON, and the history matters because the
-          # comment here previously said the opposite. It was tried alone on
-          # 2026-08-13 and rejected: finer steps on their own just make the
-          # wheel feel loose, because LinearMouse recombines the substeps into
-          # ordinary detents when the scrolling mode is not smoothed. It is
-          # good in combination with the smoothed engine below, which is what
-          # was actually wanted, and was adopted the same day.
+          # On for this device only. Enabled on its own it was rejected the
+          # same day as worse — finer steps alone just make the wheel feel
+          # loose, because the substeps are recombined into ordinary detents
+          # unless the scrolling mode is smoothed. Paired with the smoothed
+          # engine below it is what was actually wanted.
           logitech.highResolutionWheel = true;
 
+          # Tuned by hand in LinearMouse's settings window and read back out of
+          # the file it wrote, rather than transcribed from the visible
+          # sliders — inertia, speed, acceleration and bouncing all sit below
+          # the fold in that window.
+          #
+          # Captured here because of the arrangement described at the top of
+          # this file: the application owns this file at runtime and activation
+          # reasserts it, so tuning done in the settings window is lost at the
+          # next rebuild unless it is written down first.
           scrolling = {
-            reverse.vertical = true;
-
-            # Values tuned by hand in LinearMouse's own settings window and
-            # then read back out of the file it wrote, rather than guessed
-            # from the visible sliders — several of these sit below the fold
-            # in that window and would have been missed.
-            #
-            # This is the arrangement described at the top of this file: the
-            # application owns the file at runtime, and activation reasserts
-            # it. That means any tuning done in the settings window is lost at
-            # the next rebuild unless it is captured here first.
+            acceleration.vertical = 1;
+            distance.vertical = "auto";
+            speed.vertical = 0;
             smoothed.vertical = {
+              # 0 is the range's lower bound, which the engine treats as a
+              # switch rather than a value: at the bound it bypasses the
+              # rate-dependent input curve and the acceleration gain entirely,
+              # so every wheel tick travels a constant distance however fast
+              # the wheel is spun.
+              #
+              # Tried at 0 on 2026-08-13 and reverted, along with speed. Neither
+              # made terminal text readable while scrolling, and both were worse
+              # elsewhere. Taken together those two results say the same thing:
+              # if removing rate-dependence AND cutting travel by a third change
+              # nothing, then how far and how fast the pointer scrolls is not
+              # what makes terminal text unreadable. Look at the terminal, which
+              # scrolls whole lines through a scrollback buffer rather than
+              # pixels, not at this file.
+              acceleration = 1.1;
+
+              # False keeps the smoothed momentum tail but stops LinearMouse
+              # marking the synthetic events with scroll-phase and
+              # momentum-phase flags. With those flags an application treats
+              # the stream as a trackpad gesture, and many hold or discard
+              # input while a momentum phase is still running — which is felt
+              # as a delay when reversing direction straight after a scroll.
+              # Was true.
+              bouncing = false;
+
               enabled = true;
+
+              # Left at the tuned value on purpose. The engine cancels an
+              # opposing momentum tail on a direction change, and inertia sets
+              # how long that tail lasts — default is 0.65, and decay compounds
+              # per frame. If reversing still lags with bouncing off, this is
+              # the next thing to lower.
+              inertia = 0.74;
+
               preset = "easeInOut";
               response = 0.68;
-              speed = 1.02;
-              acceleration = 1.1;
-              inertia = 0.74;
-              bouncing = true;
-            };
 
-            # Written alongside the smoothed block by the application. `speed`
-            # and `acceleration` here are the non-smoothed engine's controls;
-            # the smoothed engine ignores `scrolling.acceleration` and uses its
-            # own, so these are kept only so the file matches what LinearMouse
-            # itself produces and no rebuild shows a spurious difference.
-            acceleration.vertical = 1;
-            speed.vertical = 0;
-            distance.vertical = "auto";
+              # Distance per wheel tick. With acceleration at its bypass the
+              # engine computes
+              #   velocity = magnitude * profile.velocityScale * (0.85 + speed * 0.4)
+              # so this is a plain multiplier: 1.02 gives 1.258, and 0 gives
+              # 0.85, the floor.
+              #
+              # Tried at 0 on 2026-08-13 and reverted: a third less travel per
+              # tick did NOT make text readable while scrolling in the terminal,
+              # and the slower scroll was worse everywhere else. That result is
+              # the useful part — if cutting distance by a third changes nothing
+              # about readability, distance is not what makes terminal text
+              # unreadable, and no amount of further tuning here will fix it.
+              speed = 1.02;
+            };
           };
         }
       ];
@@ -81,13 +133,24 @@ in
 
     run mkdir -p "$configDirectory"
 
-    # Copy only on a real difference, so an unrelated activation does not bump
-    # this file's mtime and make LinearMouse's watcher see a phantom change.
+    # Written IN PLACE, with a redirect rather than `install`, and the
+    # difference is the whole reason the restart below can be conditional.
+    #
+    # `install` replaces the file: the path keeps its name but gets a new
+    # inode. LinearMouse watches the file it opened, so it is left holding the
+    # old inode and never sees the change — the same stale-inode failure
+    # described at the top of this file, just one layer down. Measured on
+    # 2026-08-13: `install` moved the inode, `>` did not.
+    #
+    # Writing in place keeps the inode, so the application's own watcher picks
+    # the change up by itself and no restart is needed for this file at all.
+    linearMouseConfigurationChanged=false
     if /usr/bin/cmp -s ${linearMouseConfiguration} "$configDirectory/linearmouse.json"; then
       verboseEcho "LinearMouse configuration is already current"
     else
-      run /usr/bin/install -m 0644 ${linearMouseConfiguration} \
-        "$configDirectory/linearmouse.json"
+      run cat ${linearMouseConfiguration} > "$configDirectory/linearmouse.json"
+      run /bin/chmod 0644 "$configDirectory/linearmouse.json"
+      linearMouseConfigurationChanged=true
     fi
   '';
 

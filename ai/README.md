@@ -71,6 +71,39 @@ emitted as a review artifact rather than linked over the live file. Claude's
 mutable user state is likewise not overwritten. Both clients need merge-safe
 adapters before those generated settings can become live configuration.
 
+### `~/.codex/config.toml` is deliberately not managed
+
+Investigated on 2026-08-13 and rejected, so it is not re-investigated. Unlike
+`~/.claude`, there is nothing here worth declaring, and declaring it would be
+actively wrong for three separate reasons.
+
+**It is mostly not configuration.** Of roughly forty keys, six are genuine
+preferences — `model`, `model_reasoning_effort`, and four `[desktop]` display
+toggles. Everything else is state Codex writes about itself: `last_updated`
+timestamps on marketplaces, `source` paths into `~/.codex/.tmp/` and
+`~/.cache/codex-runtimes/`, `[plugins."<name>@<marketplace>"]` enable flags for
+plugins Codex installs on its own, an `[mcp_servers.node_repl]` block full of
+paths into `/Applications/ChatGPT.app` with a pinned SHA256 and the app's build
+version, and `[projects."<path>"]` trust levels that accumulate as you work.
+
+**This repository is public.** The file is full of absolute home-directory
+paths and the names of private project checkouts. Committing it would breach
+the first safety rule in `AGENTS.md`.
+
+**There is no merge-safe way to write it.** The Defaults domain used for Claude
+Code can be applied key-by-key with `defaults import`; TOML has no equivalent,
+so managing six keys inside a forty-key file that the application rewrites at
+runtime needs a real merge adapter. That is why the declarative TOML in this
+repository is emitted as a review artifact and not linked over the live file.
+
+**And the recovery case is weak.** Losing this file costs a model preference and
+four display toggles. The plugins reinstall themselves and the trust levels
+regenerate as you use them. Compare `~/.claude`, which held a 151-line guard
+hook that existed nowhere else — that one was worth closing.
+
+Revisit only if Codex grows settings that are expensive to lose and cannot be
+recreated by using the application.
+
 ### Codex plugins
 
 Codex has a plugin system of its own. Plugins carry a

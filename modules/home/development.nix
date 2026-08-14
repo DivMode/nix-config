@@ -54,6 +54,12 @@ in
         # a documented nixpkgs incompatibility, which trailing the latest
         # release by a single patch version is not.
         bun
+        # Fetches subtitle and caption tracks, which is the only reliable way
+        # to read a video's transcript from a shell: the pages are client-side
+        # applications that serve a navigation shell to a plain fetch, the
+        # unauthenticated caption endpoint returns nothing, and the third-party
+        # transcript mirrors answer 403.
+        yt-dlp
         # macOS ships no `flock`; it is a util-linux tool. Deploy scripts that
         # serialise themselves with a lock file need it, and without it they do
         # not fail cleanly — the one here reported a two-hour lock timeout,

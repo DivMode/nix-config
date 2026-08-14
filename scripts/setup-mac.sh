@@ -190,8 +190,8 @@ finish() {
 # Replace the example below. Set the two totals to match the stages you write.
 # ──────────────────────────────────────────────────────────────────────────
 
-TOTAL_STAGES=6
-TOTAL_MINUTES=20
+TOTAL_STAGES=7
+TOTAL_MINUTES=21
 
 REPO_ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 ENV_FILE="$REPO_ROOT/.setup-mac.env"
@@ -341,7 +341,60 @@ step "Open Settings → Developer and enable 'Use the SSH Agent'."
 step "Enable the 1Password CLI integration so this wizard can discover public SSH metadata."
 pause "Press Enter after those settings are enabled."
 
+stage "Restore local.nix from 1Password" 1
+# The canonical local.nix for each host lives in 1Password as a Document item
+# titled "nix-config local.nix <LocalHostName>" (vault <vault>). Restoring
+# it here is what makes a wiped machine a no-retyping setup: the Connect host,
+# the 1Password item IDs, and the AWS profile wiring all come back without a
+# human ever knowing them. scripts/rebuild.sh re-uploads the stored copy after
+# every activation whose local.nix differs, and the identity stage below
+# uploads a fresh copy when it runs (first-ever setup of a brand-new host).
+BREW_PREFIX=$([[ "$MAC_SYSTEM" == "aarch64-darwin" ]] && printf /opt/homebrew || printf /usr/local)
+OP="$BREW_PREFIX/bin/op"
+LOCAL_DOC_TITLE="nix-config local.nix $MAC_HOST"
+LOCAL_DOC_VAULT="<vault>"
+IDENTITY_RESTORED=0
+if [[ -x "$OP" ]]; then
+  restored=$(mktemp "$REPO_ROOT/.local.nix.restore.XXXXXX")
+  if "$OP" document get "$LOCAL_DOC_TITLE" --vault "$LOCAL_DOC_VAULT" > "$restored" 2>/dev/null \
+      && [[ -s "$restored" ]]; then
+    restore_ok=1
+    for attr_and_expected in \
+      "user|$MAC_USER" \
+      "hostName|$MAC_HOST" \
+      "system|$MAC_SYSTEM" \
+      "homeDirectory|$MAC_HOME"; do
+      attr=${attr_and_expected%%|*}
+      expected=${attr_and_expected#*|}
+      if ! actual=$(SETUP_LOCAL="$restored" \
+          NIX_CONFIG="extra-experimental-features = nix-command flakes" \
+          "$NIX_BIN" eval --impure --raw --expr \
+          "(import (builtins.toPath (builtins.getEnv \"SETUP_LOCAL\"))).$attr" 2>/dev/null) \
+          || [[ "$actual" != "$expected" ]]; then
+        restore_ok=0
+      fi
+    done
+    if [[ "$restore_ok" -eq 1 ]]; then
+      chmod 600 "$restored"
+      mv "$restored" "$LOCAL_FILE"
+      IDENTITY_RESTORED=1
+      say "Restored local.nix for $MAC_HOST from 1Password — nothing to retype."
+    else
+      rm -f "$restored"
+      warn "The stored local.nix does not match this Mac; falling back to the identity wizard."
+    fi
+  else
+    rm -f "$restored"
+    say "No stored local.nix for $MAC_HOST — the identity wizard will create and upload one."
+  fi
+else
+  warn "1Password CLI missing; continuing with the identity wizard."
+fi
+
 stage "Choose Git identity and SSH keys" 4
+if [[ "$IDENTITY_RESTORED" -eq 1 ]]; then
+  say "Skipped — local.nix was restored from 1Password."
+else
 ask GIT_NAME "Public Git author name:"
 ask GIT_EMAIL "Git-host-verified public commit email:"
 [[ -n "$GIT_NAME" ]] || { warn "Git author name cannot be empty."; exit 1; }
@@ -398,6 +451,25 @@ else
   exit 1
 fi
 say "Wrote public identity and ordered 1Password item IDs to ignored local.nix."
+
+# First-ever setup of this host: store the freshly written local.nix so the
+# NEXT wipe of this machine restores it without retyping anything. Deploy
+# wiring (Connect host, item IDs, AWS profiles) added to local.nix later is
+# captured by the rebuild.sh sync, not here.
+if "$OP" document get "$LOCAL_DOC_TITLE" --vault "$LOCAL_DOC_VAULT" >/dev/null 2>&1; then
+  if "$OP" document edit "$LOCAL_DOC_TITLE" "$LOCAL_FILE" --vault "$LOCAL_DOC_VAULT" >/dev/null 2>&1; then
+    say "Updated the stored local.nix in 1Password ($LOCAL_DOC_TITLE)."
+  else
+    warn "Could not update the stored local.nix; scripts/rebuild.sh will retry after activation."
+  fi
+else
+  if "$OP" document create "$LOCAL_FILE" --title "$LOCAL_DOC_TITLE" --vault "$LOCAL_DOC_VAULT" --file-name local.nix >/dev/null 2>&1; then
+    say "Stored local.nix in 1Password for future restores ($LOCAL_DOC_TITLE)."
+  else
+    warn "Could not store local.nix; scripts/rebuild.sh will retry after activation."
+  fi
+fi
+fi
 
 stage "Apply the final identity" 3
 if confirm "Validate and apply the final local identity now?"; then

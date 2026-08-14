@@ -22,9 +22,22 @@ Run:
 ```
 
 The wizard detects non-secret Mac fields, creates safe bootstrap placeholders,
-runs the first switch, pauses for 1Password sign-in, lets you choose the signing
-key and any additional SSH keys, writes ignored `local.nix`, and runs the final
-switch. Private keys never leave 1Password.
+runs the first switch, and pauses for 1Password sign-in. It then **restores
+the ignored `local.nix` from 1Password**: each host's canonical copy lives as
+a Document item titled `nix-config local.nix <LocalHostName>`, validated
+against the detected account/hostname/architecture before it is trusted. On a
+wiped machine that already has a stored copy, no identity or deploy wiring is
+ever retyped — the Connect host, 1Password item IDs, and AWS profiles all come
+back with the restore, and the final switch is the last step.
+
+Only a brand-new host (no stored copy, or a mismatched one) continues into the
+interactive stage: choose the signing key and any additional SSH keys, the
+wizard writes ignored `local.nix` and uploads it as the host's stored copy for
+next time. Private keys never leave 1Password either way.
+
+`scripts/rebuild.sh` keeps the stored copy current: after every successful
+activation it compares `local.nix` against the Document item and re-uploads it
+when they differ.
 
 ## Manual fallback
 

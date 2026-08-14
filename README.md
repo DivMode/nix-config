@@ -48,8 +48,14 @@ The repeatable setup wizard handles the two-pass bootstrap:
 ```
 
 The first pass installs 1Password and every other declared application. After
-sign-in, the wizard discovers public SSH metadata, writes ignored `local.nix`,
-and applies the final identity. The complete manual fallback is in
+sign-in, the wizard **restores the ignored `local.nix` from 1Password** — a
+Document item titled `nix-config local.nix <LocalHostName>` — and applies the
+final identity. Nothing is retyped on a wiped machine: the host's deploy
+wiring (the Connect host, 1Password item IDs, AWS profiles) comes back with
+the restore, and `scripts/rebuild.sh` re-uploads the stored copy after any
+activation whose `local.nix` changed. Only a **brand-new host** (no stored
+copy) falls through to the interactive identity stage, which writes
+`local.nix` and uploads it for next time. The complete manual fallback is in
 [`docs/setup/new-mac.md`](docs/setup/new-mac.md).
 
 The manual short path is:

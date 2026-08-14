@@ -27,6 +27,33 @@ echo "==> Building $host"
 nix build --no-link --impure ".#darwinConfigurations.${host}.system"
 
 echo "==> Activating $host (password dialog will appear)"
-exec /usr/bin/sudo -A env NIX_CONFIG_LOCAL="$NIX_CONFIG_LOCAL" \
+/usr/bin/sudo -A env NIX_CONFIG_LOCAL="$NIX_CONFIG_LOCAL" \
   /run/current-system/sw/bin/darwin-rebuild switch --impure \
   --flake "path:${repository}#${host}"
+
+# ── Keep the 1Password copy of local.nix current ────────────────────────────
+# local.nix is git-ignored (public repository) but is this machine's whole
+# deploy identity — the Connect host, 1Password item IDs, and AWS profile
+# wiring. scripts/setup-mac.sh restores it on a wiped machine from a Document
+# item titled "nix-config local.nix <LocalHostName>" (vault <vault>), so
+# that item must track every local.nix edit. Best-effort: runs only after a
+# SUCCESSFUL activation (set -e above), and a locked or unauthenticated
+# 1Password only warns.
+host_name=$(/usr/sbin/scutil --get LocalHostName 2>/dev/null || true)
+op_bin=$(command -v op || true)
+if [[ -n "$host_name" && -n "$op_bin" ]]; then
+  doc_title="nix-config local.nix $host_name"
+  if stored=$("$op_bin" document get "$doc_title" --vault <vault> 2>/dev/null); then
+    if [[ "$stored" != "$(cat local.nix)" ]]; then
+      if "$op_bin" document edit "$doc_title" local.nix --vault <vault> >/dev/null 2>&1; then
+        echo "==> Synced local.nix to 1Password ($doc_title)"
+      else
+        echo "warning: could not sync local.nix to 1Password — the stored copy is stale" >&2
+      fi
+    fi
+  elif "$op_bin" document create local.nix --title "$doc_title" --vault <vault> --file-name local.nix >/dev/null 2>&1; then
+    echo "==> Stored local.nix in 1Password ($doc_title)"
+  else
+    echo "warning: could not store local.nix in 1Password" >&2
+  fi
+fi

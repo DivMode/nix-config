@@ -92,6 +92,11 @@ in
         cloudflared
         atlas
         talosctl
+        # The //#lint:actions gate (the work monorepo scripts/lint-actions.sh) shells
+        # out to actionlint; a global install the 2026-08 rebuild lost. Found
+        # when the turbo-inputs fix invalidated the long-cached gate and it
+        # actually ran (2026-08-14).
+        actionlint
         # The minimal build retains the GDAL/OGR command suite plus VRT, WebP,
         # SQLite/MBTiles, and projection support without unrelated cloud drivers.
         gdalMinimal

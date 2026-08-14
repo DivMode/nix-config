@@ -63,8 +63,8 @@ let
   # 1Password and are fetched per invocation, which is why this is preferable
   # to writing ~/.aws/credentials.
   #
-  # The original hand-written version of this script (the work monorepo
-  # docs/1Password-AWS-Integration.md) ran `eval $(op signin)` when it found no
+  # The original hand-written version of this script (documented in the work
+  # monorepo) ran `eval $(op signin)` when it found no
   # session. `credential_process` is executed by the AWS SDK with no terminal,
   # so that branch could only ever raise a desktop-app prompt or hang. It loads
   # the cached service-account token instead, and forces service-account mode:
@@ -370,8 +370,8 @@ in
       # ordinary CLI use to fix one deploy path. Each consumer that needs
       # Connect sources this file at its own invocation seam instead: the AWS
       # `credential_process` helper above, and the work monorepo's deploy seams
-      # (scripts/sst-connect-env.sh and scripts/worker-secrets/resolve.ts)
-      # load it themselves when the variables are absent.
+      # (its sst-connect-env.sh and worker-secrets resolver) load it themselves
+      # when the variables are absent.
 
       # Ordered AFTER the service-account entry BY NAME, not merely after
       # writeBoundary: both would otherwise land in one DAG tier with no

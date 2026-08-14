@@ -43,13 +43,15 @@
       # the cask lags the release stream by days. Do not add `claude-code` back,
       # and never add the separate `claude` desktop cask either.
 
-      # Native terminal application. Herdr runs inside it and is installed by
-      # Home Manager from its official flake instead of through Homebrew.
-      "cmux"
+      # cmux is NOT here. Ghostty replaced it; see modules/home/terminal.nix.
 
       # Open-source mouse utility. Home Manager owns its immutable JSON
       # configuration and launch agent; only macOS Accessibility remains manual.
       "linearmouse"
+
+      # Media player and e-book library.
+      "iina"
+      "calibre"
 
       # The desktop app provides authentication and the CLI is a separate
       # vendor bundle; installing it does not enable secret injection.

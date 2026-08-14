@@ -71,10 +71,14 @@ let
             # "Caps Lock and Space" launcher. Space is deliberately reused:
             # Command-Space belongs to Raycast and Spotlight's shortcuts 64/65
             # are disabled in launchers.nix, so nothing else claims it.
-            # `open -a` focuses an existing instance instead of starting a
-            # second one. Karabiner runs shell_command with a minimal PATH, so
-            # the absolute binary path is required.
-            description = "Use Hyper+Space to open cmux";
+            # `open` focuses an existing instance instead of starting a second
+            # one. Karabiner runs shell_command with a minimal PATH, so the
+            # absolute binary path is required. `-b` addresses Ghostty by
+            # bundle identifier rather than by path: Home Manager places the
+            # bundle under `~/Applications/Home Manager Apps/`, a path
+            # containing spaces that would have to be quoted inside this JSON
+            # string, and the identifier is stable wherever the copy lands.
+            description = "Use Hyper+Space to open Ghostty";
             manipulators = [
               {
                 type = "basic";
@@ -87,7 +91,7 @@ let
                     "left_shift"
                   ];
                 };
-                to = [ { shell_command = "/usr/bin/open -a /Applications/cmux.app"; } ];
+                to = [ { shell_command = "/usr/bin/open -b com.mitchellh.ghostty"; } ];
               }
             ];
           }

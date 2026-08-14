@@ -7,6 +7,17 @@ today and is intentionally structured to add NixOS servers later.
 
 - Never commit personal usernames, email addresses, hostnames, tokens, SSH
   material, decrypted secrets, private prompts, chat histories, or session data.
+- Never commit the name of a private repository, project, or 1Password vault —
+  not in code, not in a comment, not in a docs example. Comments describe them
+  generically ("the work monorepo"); values live in `local.nix` and are read at
+  run time, the way `scripts/rebuild.sh` reads the backup vault. This rule is
+  enforced, not trusted: `scripts/check-private-names.sh` derives a denylist
+  from `local.nix` and a `pre-commit` hook blocks any commit that matches.
+  Install it with `scripts/install-hooks.sh` (`rebuild.sh` and `setup-mac.sh`
+  both do), and audit the whole tree with `--tree`. It exists because a
+  2026-08-14 audit found seventeen occurrences already committed: a private
+  monorepo named in nine comments across three modules and a research note, and
+  a vault name hard-coded in six lines of two scripts.
 - Keep machine identity in the ignored `local.nix`; update
   `local.example.nix` only with generic placeholders.
 - Load ignored identity metadata only through an explicit `NIX_CONFIG_LOCAL`
@@ -17,8 +28,10 @@ today and is intentionally structured to add NixOS servers later.
   reconciliation. Never use `"zap"`, which can remove associated application data.
 - Activation must fail on unmanaged-file collisions. Do not silently overwrite,
   move, or delete existing home-directory files.
-- Do not run `darwin-rebuild switch`, install Nix/Homebrew, or alter the current
-  machine unless the user explicitly asks for activation.
+- Do not install Nix/Homebrew or alter the current machine outside this
+  repository. Activating a change you were asked to make is not "altering the
+  machine" — it is how the change gets verified, and it is expected. Do not wait
+  to be told to activate.
 - Prefer small modules with explicit ownership boundaries. Nix owns desired
   configuration; applications own mutable history, auth, caches, and sessions.
 - Nix/Home Manager own Zsh, its plugins, Git, portable CLIs, and Herdr.
@@ -28,7 +41,9 @@ today and is intentionally structured to add NixOS servers later.
   `llm-agents` flake input, declared in `modules/home/development.nix`. It is
   deliberately not the `claude-code` Homebrew cask, which lags the release
   stream by days; do not move it back. Never add the separate `claude` desktop
-  cask. cmux is the native terminal; Herdr runs inside it.
+  cask. Ghostty is the terminal, installed by Home Manager from
+  `pkgs.ghostty-bin` because `pkgs.ghostty` is Linux-only; Herdr runs inside it.
+  cmux was the superseded terminal and was removed entirely on 2026-08-14.
 - Exactly one thing may provide `bin/claude`. `development.nix` withholds the
   unwrapped package whenever the 1Password launcher in `secrets.nix` is enabled,
   because that launcher installs its own executable of the same name.
@@ -50,6 +65,8 @@ today and is intentionally structured to add NixOS servers later.
   password is collected in a native dialog and no controlling terminal is
   needed — that script exists precisely so an agent can activate. Do not
   assemble a `darwin-rebuild switch` command line by hand.
+- Activate and verify BEFORE committing, not after. `nix build` proves a
+  configuration evaluates, not that it works.
 - A change is not finished at activation. Verify the observable behaviour the
   change was for, and prefer the application's own source or stored state over
   assuming the setting means what its name suggests.

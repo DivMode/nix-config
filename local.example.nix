@@ -15,9 +15,33 @@
     signingKey = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
   };
 
+  # Project directories. Each attribute name becomes a Zsh function that changes
+  # into the directory and starts Claude Code there, plus an entry in the `p`
+  # jump function. Private repository names belong here rather than in the
+  # public modules, which is why this file is ignored by Git.
+  #
+  # The name must be a valid shell function name and must not shadow a builtin;
+  # modules/home/projects.nix asserts both at evaluation time.
+  projects = {
+    example-project = "/Users/replace-me/Developer/example-project";
+  };
+
+  # Extra strings scripts/check-private-names.sh must keep out of this public
+  # repository. It already derives a denylist from the fields above — the user,
+  # the host, the home directory, the Git identity, every project name and path,
+  # and every vault named below — so this is only for anything else private that
+  # could be typed into a comment by mistake.
+  privateTerms = [ ];
+
   # 1Password item IDs are local metadata, not secret values. IDs avoid
   # publishing private item or vault names in this reusable repository.
   onePassword.sshAgentKeyIds = [ "aaaaaaaaaaaaaaaaaaaaaaaaaa" ];
+
+  # The vault holding this host's local.nix Document backup. scripts/rebuild.sh
+  # reads it from here rather than hard-coding it, which is what keeps a private
+  # vault name out of the tracked scripts; scripts/setup-mac.sh asks for it once
+  # on a wiped machine, because local.nix is the file it is restoring.
+  onePassword.vault = "ExampleVault";
 
   # Where the service-account token is read from, as an op:// reference. This
   # is a NAME, not a value; the token itself never appears in Nix. Prefer the

@@ -11,7 +11,10 @@
       # declared policy. It may show a question mark until Chrome is opened.
       "${local.homeDirectory}/Applications/Chrome Apps.localized/Gmail.app"
       "/Applications/ChatGPT.app"
-      "/Applications/cmux.app"
+      # Home Manager owns Ghostty (modules/home/terminal.nix) and, from
+      # stateVersion 25.11 onward, copies rather than symlinks bundles into
+      # this directory so Spotlight and LaunchServices resolve them.
+      "${local.homeDirectory}/Applications/Home Manager Apps/Ghostty.app"
     ];
     persistent-others = [ ];
     show-recents = false;

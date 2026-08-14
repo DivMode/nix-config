@@ -13,6 +13,7 @@
     ./launchers.nix
     ./mouse.nix
     ./privacy.nix
+    ./projects.nix
     ./screensaver.nix
     ./secrets.nix
     ./terminal.nix
@@ -107,7 +108,7 @@
   nixConfig.secrets.onePassword.serviceAccount.enable = true;
 
   # Connect credentials for the deploy path only. Cached to a 0600 env file that
-  # the work monorepo's scripts/sst-connect-env.sh sources at the sst invocation seam, so
+  # the work monorepo's sst-connect-env.sh sources at the sst invocation seam, so
   # deploys use Connect — which does not spend the service account's rolling 24h
   # request cap — while interactive `op` keeps working with `--fields`.
   nixConfig.secrets.onePassword.connect.enable = true;
@@ -159,6 +160,36 @@
   home.activation.ensureScreenshotsDirectory = lib.hm.dag.entryAfter [ "writeBoundary" ] ''
     run mkdir -p "${config.home.homeDirectory}/Documents/Screenshots"
   '';
+
+  # Home Manager's App Management preflight makes activation impossible from an
+  # agent session, so it is off. `copyApps` itself stays on — apps are still
+  # copied, and Spotlight still indexes them.
+  #
+  # The check (home-manager modules/targets/darwin/copyapps.nix) touches
+  # `.DS_Store` inside every bundle in ~/Applications/Home Manager Apps to probe
+  # for kTCCServiceSystemPolicyAppBundles, and on failure runs
+  # `tccutil reset SystemPolicyAppBundles` before probing once more. Two
+  # consequences, both measured on 2026-08-14:
+  #
+  #   1. It runs unconditionally, so it aborts activations that would have
+  #      copied nothing. Both failures that day were of exactly this shape —
+  #      Ghostty.app was unchanged and there was no work for `copyApps` to do.
+  #   2. macOS resolves the permission against the tree's RESPONSIBLE process,
+  #      which inside a Claude Code session is the agent's own wrapper binary,
+  #      not Ghostty. `/usr/bin/touch` on the bundle returns "Operation not
+  #      permitted" from this session while the same command from a Ghostty tab
+  #      succeeds. The wrapper lives on a Nix store path that changes on every
+  #      update, so granting it the permission would not survive one.
+  #
+  # And the reset in step 1 is destructive: it revoked the App Management grant
+  # the user had just given Ghostty, which is what produced the denial
+  # notification. Skipping the preflight also skips that reset.
+  #
+  # What is lost: a real permission failure now surfaces as an rsync EPERM from
+  # `copyApps` rather than a friendly message. That only happens when a bundle
+  # genuinely changes — a Ghostty version bump — and it fails loudly, which is
+  # the correct behaviour for the case the check was written for.
+  targets.darwin.copyApps.enableChecks = false;
 
   # Bump only after reviewing Home Manager release notes.
   home.stateVersion = "26.05";

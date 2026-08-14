@@ -260,8 +260,8 @@ what our agents get wrong with evidence about what they actually got wrong.
 
 ## What our project files already do well
 
-Worth recording so it is not "improved" away. The the work monorepo instruction file
-already implements several of these without naming them:
+Worth recording so it is not "improved" away. The work monorepo's instruction
+file already implements several of these without naming them:
 
 - Its DO/DON'T tables are exactly the paired good and bad examples the first
   source recommends, and they are specific rather than generic.

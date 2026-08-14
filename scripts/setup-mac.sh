@@ -202,6 +202,11 @@ NIX_BIN=$(command -v nix || true)
 [[ -n "$NIX_BIN" ]] || NIX_BIN="/nix/var/nix/profiles/default/bin/nix"
 [[ -x "$NIX_BIN" ]] || { warn "Install Nix before running this wizard."; exit 1; }
 
+# Install the private-name guard before anything else can be committed from
+# this clone. `.git/hooks` is per-clone and untracked, so a fresh machine has
+# no guard until this runs.
+"$REPO_ROOT/scripts/install-hooks.sh"
+
 validate_nix_text() {
   local label="$1" value="$2"
   if [[ "$value" == *'${'* ]] || printf '%s' "$value" | LC_ALL=C grep -q '[[:cntrl:]]'; then
@@ -236,6 +241,12 @@ write_local_nix() {
       [[ -n "$item_id" ]] && printf '    "%s"\n' "$item_id"
     done < "$key_ids_file"
     printf '  ];\n'
+    # The vault this host's local.nix is backed up to. Written here so that
+    # scripts/rebuild.sh reads it from local.nix on every later run and the
+    # name never returns to a tracked file.
+    if [[ -n "${OP_VAULT:-}" ]]; then
+      printf '  onePassword.vault = "%s";\n' "$(nix_escape "$OP_VAULT")"
+    fi
     printf '}\n'
   } > "$tmp"
   chmod 600 "$tmp"
@@ -343,16 +354,25 @@ pause "Press Enter after those settings are enabled."
 
 stage "Restore local.nix from 1Password" 1
 # The canonical local.nix for each host lives in 1Password as a Document item
-# titled "nix-config local.nix <LocalHostName>" (vault <vault>). Restoring
-# it here is what makes a wiped machine a no-retyping setup: the Connect host,
-# the 1Password item IDs, and the AWS profile wiring all come back without a
-# human ever knowing them. scripts/rebuild.sh re-uploads the stored copy after
-# every activation whose local.nix differs, and the identity stage below
-# uploads a fresh copy when it runs (first-ever setup of a brand-new host).
+# titled "nix-config local.nix <LocalHostName>". Restoring it here is what makes
+# a wiped machine a no-retyping setup: the Connect host, the 1Password item IDs,
+# and the AWS profile wiring all come back without a human ever knowing them.
+# scripts/rebuild.sh re-uploads the stored copy after every activation whose
+# local.nix differs, and the identity stage below uploads a fresh copy when it
+# runs (first-ever setup of a brand-new host).
+#
+# The vault is ASKED FOR, not written here. This wizard is the one moment the
+# name cannot come from local.nix — local.nix is what it is about to restore —
+# so the answer is remembered in the ignored .setup-mac.env and then written
+# into local.nix, from which every later run reads it. It was hard-coded in
+# this file until 2026-08-14; this repository is public.
 BREW_PREFIX=$([[ "$MAC_SYSTEM" == "aarch64-darwin" ]] && printf /opt/homebrew || printf /usr/local)
 OP="$BREW_PREFIX/bin/op"
 LOCAL_DOC_TITLE="nix-config local.nix $MAC_HOST"
-LOCAL_DOC_VAULT="<vault>"
+ask OP_VAULT "1Password vault holding this host's local.nix:"
+validate_nix_text "The vault name" "$OP_VAULT"
+write_env OP_VAULT "$OP_VAULT"
+LOCAL_DOC_VAULT="$OP_VAULT"
 IDENTITY_RESTORED=0
 if [[ -x "$OP" ]]; then
   restored=$(mktemp "$REPO_ROOT/.local.nix.restore.XXXXXX")

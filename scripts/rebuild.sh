@@ -21,6 +21,10 @@ fi
 export NIX_CONFIG_LOCAL="$repository/local.nix"
 export SUDO_ASKPASS="$repository/scripts/sudo-askpass.sh"
 
+# Every activation re-asserts the private-name guard, so a fresh clone is
+# protected from its first rebuild rather than from whenever someone remembers.
+"$repository/scripts/install-hooks.sh"
+
 host="${1:-example-mac}"
 
 echo "==> Building $host"
@@ -38,23 +42,30 @@ echo "==> Activating $host (password dialog will appear)"
 # local.nix is git-ignored (public repository) but is this machine's whole
 # deploy identity — the Connect host, 1Password item IDs, and AWS profile
 # wiring. scripts/setup-mac.sh restores it on a wiped machine from a Document
-# item titled "nix-config local.nix <LocalHostName>" (vault <vault>), so
-# that item must track every local.nix edit. Best-effort: runs only after a
-# SUCCESSFUL activation (set -e above), and a locked or unauthenticated
-# 1Password only warns.
+# item titled "nix-config local.nix <LocalHostName>", so that item must track
+# every local.nix edit. Best-effort: runs only after a SUCCESSFUL activation
+# (set -e above), and a locked or unauthenticated 1Password only warns.
+#
+# The vault comes FROM local.nix. It was hard-coded here until 2026-08-14, when
+# an audit found the vault name — a private name — in four lines of this script
+# and two of the wizard, in a public repository.
 host_name=$(/usr/sbin/scutil --get LocalHostName 2>/dev/null || true)
 op_bin=$(command -v op || true)
-if [[ -n "$host_name" && -n "$op_bin" ]]; then
+vault=$(LOCAL_PATH="$repository/local.nix" nix eval --impure --raw --expr \
+  '(import (builtins.toPath (builtins.getEnv "LOCAL_PATH"))).onePassword.vault or ""' 2>/dev/null || true)
+if [[ -z "$vault" ]]; then
+  echo "warning: local.nix has no onePassword.vault — skipping the 1Password sync" >&2
+elif [[ -n "$host_name" && -n "$op_bin" ]]; then
   doc_title="nix-config local.nix $host_name"
-  if stored=$("$op_bin" document get "$doc_title" --vault <vault> 2>/dev/null); then
+  if stored=$("$op_bin" document get "$doc_title" --vault "$vault" 2>/dev/null); then
     if [[ "$stored" != "$(cat local.nix)" ]]; then
-      if "$op_bin" document edit "$doc_title" local.nix --vault <vault> >/dev/null 2>&1; then
+      if "$op_bin" document edit "$doc_title" local.nix --vault "$vault" >/dev/null 2>&1; then
         echo "==> Synced local.nix to 1Password ($doc_title)"
       else
         echo "warning: could not sync local.nix to 1Password — the stored copy is stale" >&2
       fi
     fi
-  elif "$op_bin" document create local.nix --title "$doc_title" --vault <vault> --file-name local.nix >/dev/null 2>&1; then
+  elif "$op_bin" document create local.nix --title "$doc_title" --vault "$vault" --file-name local.nix >/dev/null 2>&1; then
     echo "==> Stored local.nix in 1Password ($doc_title)"
   else
     echo "warning: could not store local.nix in 1Password" >&2

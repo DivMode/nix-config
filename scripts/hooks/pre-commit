@@ -1,0 +1,11 @@
+#!/usr/bin/env bash
+#
+# Pre-commit: block private names from entering this public repository.
+#
+# Thin on purpose. All the logic — and therefore everything testable — lives in
+# scripts/check-private-names.sh, which can be run by hand against the whole
+# tree with `--tree`.
+
+set -euo pipefail
+
+exec "$(git rev-parse --show-toplevel)/scripts/check-private-names.sh" --staged

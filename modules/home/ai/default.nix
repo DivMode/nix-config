@@ -34,6 +34,9 @@ let
   # vendored twice.
   mattPocockSkills = inputs.mattpocock-skills;
 
+  # Status line packages, segment layout, and the two helper scripts.
+  ccstatusline = import ./ccstatusline.nix { inherit inputs lib pkgs; };
+
   # The plugin manifest is the authoritative list; deriving it here means a
   # skill added or removed upstream is picked up by a lock update alone.
   mattPocockManifest = builtins.fromJSON (
@@ -122,13 +125,22 @@ let
   # file is installed real and reasserted instead, exactly as karabiner.nix and
   # mouse.nix do for applications that own their configuration at runtime.
   #
-  # The consequence is deliberate and worth knowing: values changed at runtime
-  # are reverted at the next activation, and keys not declared here are dropped.
-  # Change them in this file instead.
+  # Values changed at runtime are reverted at the next activation. Keys the
+  # client writes that Nix does not declare are kept; see installClaudeSettings.
   claudeSettings = {
     skipDangerousModePermissionPrompt = true;
     theme = "dark";
     tui = "fullscreen";
+
+    # ccstatusline formats the status bar. Claude Code reads this key on
+    # startup and invokes the command once per render. See ./ccstatusline.nix.
+    statusLine = ccstatusline.statusLine;
+
+    # Every session starts with permission prompts off. The nix-only-guard
+    # PreToolUse hook below still runs and still denies under this mode, so the
+    # machine boundary is unaffected; what bypassing removes is the prompts.
+    # It does not protect against prompt injection — the guard does.
+    permissions.defaultMode = "bypassPermissions";
 
     # Bash runs unsandboxed, matching how this machine is actually worked.
     #
@@ -190,6 +202,26 @@ in
 
       context = ai.instructions;
       agents = mapAttrs claudeAgentText ai.agents;
+    };
+
+    # Session launchers, declared beside the client they launch.
+    #
+    # The flag is not redundant with `permissions.defaultMode` above. Settings
+    # precedence is managed > command line > project > this user file, which is
+    # lowest, so a repository declaring its own mode overrides claudeSettings
+    # but not this flag.
+    #
+    # `cc` shadows the C compiler at /usr/bin/cc in INTERACTIVE shells only —
+    # aliases are not expanded by scripts, Makefiles, or build tools, so this
+    # cannot affect a compile. It only means a hand-typed `cc foo.c` starts an
+    # agent. Renaming this one attribute is the whole fix if that ever bites.
+    programs.zsh.shellAliases = {
+      cc = "claude --dangerously-skip-permissions";
+      # Interactive session picker. `-r` with no value lists the conversations
+      # for the current directory rather than resuming blindly.
+      ccr = "claude --resume --dangerously-skip-permissions";
+      # The most recent conversation in this directory, with no picker.
+      ccc = "claude --continue --dangerously-skip-permissions";
     };
 
     # Both would install an executable named `claude`. The 1Password launcher
@@ -277,24 +309,50 @@ in
     # to replace. So install a real file and reassert it, the same arrangement
     # karabiner.nix and mouse.nix use for applications that own their own
     # configuration file at runtime.
+    # MERGE the declared keys into the live file rather than replacing it, so
+    # keys Claude Code writes for itself survive activation.
+    #
+    # The tradeoff: deleting a key from `claudeSettings` no longer removes it
+    # from the live file, because a merge cannot tell "Nix stopped declaring
+    # this" from "the client wrote this". Remove it there once by hand too.
     home.activation.installClaudeSettings = lib.hm.dag.entryAfter [ "writeBoundary" ] ''
       claudeDirectory="$HOME/.claude"
+      settingsFile="$claudeDirectory/settings.json"
 
-      # An older generation may have linked this into the store.
-      if [[ -L "$claudeDirectory/settings.json" ]]; then
-        run rm -f "$claudeDirectory/settings.json"
+      # An older generation may have linked this into the store. A symlink is
+      # wrong here for the reason this whole entry exists: Claude Code writes
+      # to this file, and the store is read-only.
+      if [[ -L "$settingsFile" ]]; then
+        run rm -f "$settingsFile"
       fi
 
       run mkdir -p "$claudeDirectory"
 
+      # Unparseable or absent live file degrades to an empty object rather than
+      # failing activation; the declared keys are then written on their own.
+      claudeCurrent="$(${lib.getExe pkgs.jq} --sort-keys '.' "$settingsFile" 2>/dev/null || echo '{}')"
+      claudeMerged="$(
+        printf '%s' "$claudeCurrent" \
+          | ${lib.getExe pkgs.jq} --sort-keys --slurpfile declared ${claudeSettingsJson} '. * $declared[0]'
+      )"
+
       # Only rewrite on a real difference, so an unrelated activation does not
-      # touch the file the client is reading.
-      if /usr/bin/cmp -s ${claudeSettingsJson} "$claudeDirectory/settings.json"; then
+      # touch the file the client is reading. Both sides are sorted, so
+      # key order alone never counts as a change.
+      if [[ "$claudeCurrent" == "$claudeMerged" ]]; then
         verboseEcho "Claude Code settings are already current"
       else
-        run /usr/bin/install -m 0644 ${claudeSettingsJson} \
-          "$claudeDirectory/settings.json"
+        run mkdir -p "$claudeDirectory"
+        printf '%s\n' "$claudeMerged" > "$settingsFile.nix-config.tmp"
+        run chmod 0644 "$settingsFile.nix-config.tmp"
+        run mv "$settingsFile.nix-config.tmp" "$settingsFile"
       fi
     '';
+
+    # ccstatusline's own configuration. A symlink is correct here: the tool
+    # reads this file, and only its interactive TUI configurator writes it.
+    # Reconfigure in ./ccstatusline.nix rather than through that TUI, which
+    # would fail against a read-only store path.
+    xdg.configFile."ccstatusline/settings.json".text = builtins.toJSON ccstatusline.settings;
   };
 }

@@ -26,8 +26,8 @@ was never stored in a declarative or provider-backed system.
 - Gmail and Chrome authentication; Nix declares Gmail's installation policy,
   while Chrome owns each profile's PWA registration and generated app shim
 - Application databases, caches, logs, indexes, and temporary files
-- cmux and Herdr runtime preferences and session state other than cmux's
-  declarative Ghostty-compatible font selection
+- Ghostty and Herdr runtime preferences and session state other than
+  Ghostty's declarative `~/.config/ghostty/config`
 - LinearMouse's macOS Accessibility approval; its app, launch agent, and JSON
   configuration are declarative
 - Karabiner's macOS background-service, Accessibility, and Driver Extension
@@ -50,8 +50,9 @@ renderer is explicitly enabled, declarative Codex TOML is generated under
 `~/.config/nix-config/ai/` for inspection until a merge-safe adapter exists.
 Immutable instructions, skills, and agents remain Home Manager-owned.
 
-Declaring the cmux cask and Herdr package makes the software rebuildable, but it
-does not currently manage either program's runtime preferences or sessions.
+Declaring the Ghostty and Herdr packages makes the software rebuildable.
+Ghostty's `~/.config/ghostty/config` is declarative; neither program's runtime
+preferences or sessions are managed.
 
 LinearMouse's documented JSON is generated directly by Home Manager. It matches
 the mouse device category so wheel reversal remains portable across Bluetooth

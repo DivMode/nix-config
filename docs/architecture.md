@@ -29,8 +29,8 @@ reusable user choices belong in `profiles/`. Future NixOS servers should add
   system-wide JetBrains Mono Nerd Font installation.
   `modules/darwin/macos-defaults.nix` is the focused owner of the supported
   Finder, keyboard, and global natural-scrolling baseline.
-- **Home Manager/Nix** own Zsh and its plugins, Starship, cmux's
-  Ghostty-compatible terminal-rendering configuration, Git, portable CLI
+- **Home Manager/Nix** own Zsh and its plugins, Starship, Ghostty and its
+  terminal-rendering configuration, Git, portable CLI
   packages, dotfiles, and Herdr. Integrated Home Manager activates with nix-darwin; no
   standalone Home Manager CLI is installed. The canonical package list is in
   `modules/home/development.nix`.
@@ -39,9 +39,13 @@ reusable user choices belong in `profiles/`. Future NixOS servers should add
   reconciliation and data-removing `zap` cleanup forbidden. Formulae are
   exceptions requiring a documented nixpkgs gap; the current list is empty.
   `modules/darwin/homebrew.nix` is the canonical cask/formula list.
-- **cmux** is the native terminal application. **Herdr** is the persistent,
-  tmux-style terminal workspace manager that runs inside cmux; it is not a
-  separate terminal application. cmux owns mutable sessions and UI state.
+- **Ghostty** is the terminal application, installed by Home Manager from
+  `pkgs.ghostty-bin` — the vendor's signed macOS build, because nixpkgs cannot
+  build Ghostty from source on Darwin. **Herdr** is the persistent, tmux-style
+  terminal workspace manager that runs inside it; it is not a separate terminal
+  application. Ghostty owns mutable window and UI state.
+- **IINA** is the media player and **Calibre** manages the e-book library. Both
+  are Homebrew casks, like every other native GUI application here.
 - **mise** owns Node runtime installation and selection; the global fallback is
   Node 24, while exact production pins belong to project repositories.
 - **uv** owns Python interpreters, environments, dependencies, and tools. Python

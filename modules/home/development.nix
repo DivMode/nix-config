@@ -70,17 +70,17 @@ in
         kubectl
         pulumi
         crane
-        # the work monorepo's SST deploys drive the Pulumi gcp provider through
+        # The work monorepo's SST deploys drive the Pulumi gcp provider through
         # Application Default Credentials (`gcloud auth application-default
         # login` — one-time browser consent; JSON keys are blocked by org
-        # policy, see the work monorepo ADR-0016). gcloud was a global install before
+        # policy, see that repository's ADR-0016). gcloud was a global install before
         # this machine was rebuilt, so nothing restored it and every infra
         # deploy failed with "could not find default credentials". The ADC
         # file itself is auth — application-owned, deliberately not declared.
         google-cloud-sdk
         # The remaining deploy-path CLIs the 2026-08 machine rebuild lost, all
         # found the same way — an sst deploy failing one tool at a time
-        # (2026-08-14, the work monorepo #4116's deploy):
+        # (2026-08-14, during the work monorepo's #4116 deploy):
         #   oci         — the OKE kubeconfig authenticates through an exec
         #                 plugin that spawns `oci`; without it every OKE
         #                 resource reads as "unreachable cluster".
@@ -92,7 +92,7 @@ in
         cloudflared
         atlas
         talosctl
-        # The //#lint:actions gate (the work monorepo scripts/lint-actions.sh) shells
+        # The //#lint:actions gate (the work monorepo's lint-actions.sh) shells
         # out to actionlint; a global install the 2026-08 rebuild lost. Found
         # when the turbo-inputs fix invalidated the long-cached gate and it
         # actually ran (2026-08-14).

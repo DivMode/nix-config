@@ -141,6 +141,27 @@ editing the hook path, and uninstalling the hooks.
 Rewording a command so it no longer matches a pattern is a bypass. Genuinely
 doing something different is not.
 
+**But most blocks are false positives, and treating them as violations wastes
+the user's time.** Guards match the text of a command, not its effect, so they
+fire on reading about a forbidden thing as readily as on doing it. Measured
+across this machine's session history: eleven of sixteen blocks were triggered
+by commands that changed nothing — listing a directory, grepping a hook's own
+source, `git check-ignore`, `readlink`, `git config --get`, and twice by a
+commit message that merely *named* the forbidden mechanisms while explaining
+the rule against them.
+
+So separate the two cases before reacting:
+
+- **The command would not have changed anything** — a read, a search, or prose
+  that happens to contain a matched string. Rephrase the inspection and
+  continue. This is not a bypass, because there was nothing to bypass. Do not
+  ask the user for permission to read something.
+- **The command would have changed something** — then the guard is doing its
+  job. Fix the underlying cause or ask, and never rephrase to slip past it.
+
+Say which case it was. "A guard matched my grep, rephrasing it" is a different
+sentence from "a guard stopped me, here is what I was about to do".
+
 ## Reporting
 
 Report outcomes faithfully. If a check failed, say so and show the output. If a

@@ -68,7 +68,31 @@ in
         # than util-linux, which exists mainly for Linux.
         flock
         kubectl
-        pulumi
+        # Bare `pulumi` is only the CLI engine: its store path contains exactly
+        # one executable, `bin/pulumi`. Every Pulumi program actually runs
+        # inside a language host, a separate `pulumi-language-<runtime>`
+        # process the engine looks for on PATH. Pulumi's own installer ships
+        # the hosts with the engine; under Nix each is its own derivation, so
+        # nothing here provided one and every TypeScript program — the
+        # property-data repository's plain Pulumi stack — died before the first
+        # resource with a missing language-host error (2026-08-15).
+        #
+        # `withPackages` is nixpkgs' sanctioned way to combine them, rather
+        # than listing `pulumiPackages.pulumi-nodejs` beside the engine. It
+        # builds a wrapper whose only executable is still `bin/pulumi`, with
+        # the host's bin suffixed onto PATH for that process alone
+        # (`makeCWrapper ... --suffix PATH`, readable in the wrapper binary).
+        # So the host stays scoped to the engine instead of entering the
+        # interactive PATH, and the two versions cannot drift apart across a
+        # lock update.
+        #
+        # Every run still prints "using pulumi-language-nodejs from $PATH".
+        # That is expected on this pin and not a misconfiguration: because the
+        # wrapper hands the host over on PATH rather than installing it beside
+        # the engine, Pulumi notes where it found it. A verified preview on
+        # 2026-08-15 emitted the warning and then ran the program to
+        # completion.
+        (pulumi.withPackages (ps: [ ps.pulumi-nodejs ]))
         crane
         # The work monorepo's SST deploys drive the Pulumi gcp provider through
         # Application Default Credentials (`gcloud auth application-default
@@ -105,6 +129,18 @@ in
         # when the turbo-inputs fix invalidated the long-cached gate and it
         # actually ran (2026-08-14).
         actionlint
+        # Same gate family as helm and actionlint, but this one was never
+        # declared anywhere at all — not nixpkgs, not Homebrew, not npm — and
+        # it fails OPEN, which is why it went unnoticed. Lefthook runs the
+        # commit-msg and pre-push guards in the property-data repository, and
+        # the shims it writes into `.git/hooks/` walk a list of fallbacks
+        # (`lefthook -h`, an npx cache path, node_modules, mise, uv, devbox)
+        # and, when every one misses, print "Can't find lefthook in PATH" and
+        # exit 0. Measured 2026-08-15: that clone's commit-msg hook returned 0
+        # on a message that violates the conventional-commit rule it enforces,
+        # so the guards had been passing by never running. A missing tool
+        # reading as a green gate is worse than one reading as a red gate.
+        lefthook
         # The minimal build retains the GDAL/OGR command suite plus VRT, WebP,
         # SQLite/MBTiles, and projection support without unrelated cloud drivers.
         gdalMinimal

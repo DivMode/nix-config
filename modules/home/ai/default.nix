@@ -111,6 +111,22 @@ let
     }
   ) ai.agents;
 
+  # This repository's own shared skills, in Codex's layout. Claude Code gets
+  # the same directories through `programs.claude-code.skills` below, which
+  # takes a directory path and links the whole tree.
+  #
+  # `recursive` matters: without it Home Manager symlinks the directory itself,
+  # and a client that resolves a skill's supporting files relative to a real
+  # directory sees a store path instead. Linking the entries individually keeps
+  # the tree shaped the way each client expects.
+  sharedCodexSkills = mapAttrs' (
+    name: path:
+    nameValuePair ".codex/skills/${name}" {
+      source = path;
+      recursive = true;
+    }
+  ) ai.skills;
+
   # Claude Code's user-scoped settings. This is desired configuration, so it is
   # declared here rather than left as whatever the client last wrote — the whole
   # point being that an agent, or anything else, can delete ~/.claude and
@@ -174,6 +190,32 @@ let
         ];
       }
     ];
+
+    # Herdr's sidebar draws each agent's running/waiting/idle state from this.
+    # `herdr integration install claude` writes the same registration pointing
+    # at a loose copy in ~/.claude/hooks/; pointing at the store path instead
+    # means wiping ~/.claude cannot disarm it, exactly as for the guard above.
+    #
+    # The cost is that `herdr integration status` reports `claude: not
+    # installed`, because it tests for its own file path rather than reading
+    # this registration. That report is wrong about the behaviour: running this
+    # store copy with a SessionStart payload was verified to set the pane's
+    # agent session through `pane.report_agent_session`, which is the whole job
+    # of the hook. Do not "fix" the status line by running `herdr integration
+    # install claude` — that rewrites this key to the loose path, which the
+    # next activation reverts, and reintroduces the undeclared file.
+    hooks.SessionStart = [
+      {
+        matcher = "*";
+        hooks = [
+          {
+            type = "command";
+            command = "${lib.getExe pkgs.bash} ${ai.hooks.herdrAgentState} session";
+            timeout = 10;
+          }
+        ];
+      }
+    ];
   };
 
   claudeSettingsJson = pkgs.writeText "claude-settings.json" (builtins.toJSON claudeSettings);
@@ -202,6 +244,11 @@ in
 
       context = ai.instructions;
       agents = mapAttrs claudeAgentText ai.agents;
+
+      # Directory paths, which the module links as whole trees under
+      # ~/.claude/skills/<name>/ — so a skill that grows references/ or
+      # rules/ beside its SKILL.md needs no change here.
+      skills = ai.skills;
     };
 
     # Session launchers, declared beside the client they launch.
@@ -245,6 +292,7 @@ in
     home.file =
       codexSkillFiles
       // mattPocockCodexSkills
+      // sharedCodexSkills
       // {
         ".codex/AGENTS.md".source = ai.instructions;
         # Codex mutates ~/.codex/config.toml at runtime. Keep the declarative
@@ -288,19 +336,32 @@ in
     # made local changes that are not in this repository and should not be
     # silently discarded.
     home.activation.removeLegacyClaudeGuardHook = lib.hm.dag.entryAfter [ "writeBoundary" ] ''
-      legacyGuard="$HOME/.claude/hooks/nix-only-guard.py"
+      # Each pair is a loose copy under ~/.claude/hooks and the committed file
+      # that now replaces it. The guard was orphaned when it moved into this
+      # repository; the Herdr hook was written by `herdr integration install
+      # claude` and is orphaned by declaring the same registration against the
+      # store path in claudeSettings above.
+      removeOrphanedHook() {
+        local loose="$1" committed="$2" source="$3"
 
-      if [[ -f "$legacyGuard" && ! -L "$legacyGuard" ]]; then
-        if /usr/bin/cmp -s ${ai.hooks.nixOnlyGuard} "$legacyGuard"; then
-          run rm -f "$legacyGuard"
-          # Only if nothing else lives there; rmdir refuses a non-empty
-          # directory, which is exactly the check wanted.
-          rmdir "$HOME/.claude/hooks" 2>/dev/null || true
+        [[ -f "$loose" && ! -L "$loose" ]] || return 0
+
+        if /usr/bin/cmp -s "$committed" "$loose"; then
+          run rm -f "$loose"
         else
-          warnEcho "Leaving modified legacy hook in place: $legacyGuard"
-          warnEcho "It is no longer referenced. Fold any changes into ai/hooks/nix-only-guard.py."
+          warnEcho "Leaving modified legacy hook in place: $loose"
+          warnEcho "It is no longer referenced. Fold any changes into $source."
         fi
-      fi
+      }
+
+      removeOrphanedHook "$HOME/.claude/hooks/nix-only-guard.py" \
+        ${ai.hooks.nixOnlyGuard} "ai/hooks/nix-only-guard.py"
+      removeOrphanedHook "$HOME/.claude/hooks/herdr-agent-state.sh" \
+        ${ai.hooks.herdrAgentState} "ai/hooks/herdr-agent-state.sh"
+
+      # Only if nothing else lives there; rmdir refuses a non-empty directory,
+      # which is exactly the check wanted.
+      rmdir "$HOME/.claude/hooks" 2>/dev/null || true
     '';
 
     # settings.json cannot be a store symlink for two independent reasons:

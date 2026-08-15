@@ -9,6 +9,7 @@
   imports = [
     ./ai
     ./development.nix
+    ./herdr
     ./karabiner.nix
     ./launchers.nix
     ./mouse.nix

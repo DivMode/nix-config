@@ -1,10 +1,11 @@
 # Media file handlers.
 #
-# IINA is the video player; modules/darwin/homebrew.nix installs the cask,
-# because it is a signed vendor application with no nixpkgs Darwin build. This
-# module only decides what opens when a video file is double-clicked.
+# IINA is the media player for both video and audio;
+# modules/darwin/homebrew.nix installs the cask, because it is a signed vendor
+# application with no nixpkgs Darwin build. This module only decides what opens
+# when a media file is double-clicked.
 #
-# macOS has no "default video player" setting. The mechanism is the
+# macOS has no "default media player" setting. The mechanism is the
 # LaunchServices document-type handler, one binding per UTI, and `duti` is the
 # supported CLI for writing it — the same arrangement ./terminal.nix uses to
 # claim shell scripts for Ghostty.
@@ -57,6 +58,44 @@ let
     "io.iina.vob" # vob
     "io.iina.wtv" # wtv
   ];
+
+  # Audio, resolved the same way. This takes mp3, m4a, wav and aiff from
+  # Music.app, and aac and ac3 from Books, which is the point rather than a
+  # side effect: IINA is the media player on this machine.
+  audioTypes = [
+    "com.apple.coreaudio-format" # caf
+    "com.apple.m4a-audio" # m4a
+    "com.microsoft.waveform-audio" # wav
+    "com.microsoft.windows-media-wma" # wma
+    "com.real.realaudio" # ra, ram
+    "org.xiph.flac" # flac
+    "org.xiph.ogg-audio" # ogg, oga
+    "public.aac-audio" # aac
+    "public.ac3-audio" # ac3
+    "public.aiff-audio" # aiff, aif
+    "public.mp2" # mp2
+    "public.mp3" # mp3
+
+    # Formats macOS defines no type for.
+    "io.iina.ac3" # a52
+    "io.iina.ape" # ape
+    "io.iina.cue" # cue
+    "io.iina.dff" # dff
+    "io.iina.dsf" # dsf
+    "io.iina.mka" # mka
+    "io.iina.mpeg-audio" # m2a, mp1, mpa
+    "io.iina.mpeg3-audio" # mpg3
+    "io.iina.opus" # opus
+    "io.iina.wv" # wv
+  ];
+
+  # Playlists. Separate from audio because they are pointers to media rather
+  # than media, but claimed for the same reason — they were opening in
+  # Music.app, so this is one player handing off to another.
+  playlistTypes = [
+    "public.m3u-playlist" # m3u, m3u8
+    "public.pls-playlist" # pls
+  ];
 in
 {
   # `viewer` mirrors IINA's own CFBundleTypeRole. LaunchServices ignores a role
@@ -64,22 +103,24 @@ in
   #
   # Deliberately not claimed:
   #
-  #   * Audio — IINA plays mp3, m4a, flac and the rest, but claiming them would
-  #     take every music file away from Music.app. That is a separate decision
-  #     from "what opens a video", so it is not made here.
+  #   * m4b — it resolves to com.apple.protected-mpeg-4-audio-b, the FairPlay
+  #     type, and IINA cannot decrypt it. Claiming it would send purchased
+  #     audiobooks to a player that will refuse to open them, so Books keeps
+  #     the association. Unprotected .m4b files are rare enough that losing
+  #     them to Books is the cheaper mistake of the two.
   #   * public.folder and gif — IINA declares both. A folder would stop opening
   #     in Finder and a GIF would stop opening in Preview.
-  #   * mk3d, mks, amv, xvid, yuv — these resolve to dynamic `dyn.ah62…`
-  #     identifiers, which macOS synthesises from the extension and are not
-  #     stable across systems. Binding one would write a handler entry that
-  #     means nothing on the next machine.
+  #   * mk3d, mks, amv, xvid, yuv, acm, aa3, pcm, tak, tta, vox — these resolve
+  #     to dynamic `dyn.ah62…` identifiers, which macOS synthesises from the
+  #     extension and are not stable across systems. Binding one would write a
+  #     handler entry that means nothing on the next machine.
   #
   # Unconditional, matching ./terminal.nix: `duti -s` is idempotent, writes
   # only the handler database, and restarts nothing, so the "gate activation on
   # a real change" rule in AGENTS.md has nothing to protect here.
-  home.activation.setDefaultVideoHandler = lib.hm.dag.entryAfter [ "writeBoundary" ] (
+  home.activation.setDefaultMediaHandlers = lib.hm.dag.entryAfter [ "writeBoundary" ] (
     lib.concatMapStringsSep "\n" (
       uti: "run ${pkgs.duti}/bin/duti -s com.colliderli.iina ${uti} viewer"
-    ) videoTypes
+    ) (videoTypes ++ audioTypes ++ playlistTypes)
   );
 }

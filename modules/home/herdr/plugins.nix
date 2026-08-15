@@ -55,15 +55,18 @@ let
   # upstream's herdr-plugin.toml, which spawns its entry points by relative
   # path from the plugin root. Getting it wrong produces a plugin that links
   # and lists correctly and then fails only when an action is invoked.
+  # `binaryPath` and `unpackBinary` are omitted together for a plugin that ships
+  # no compiled artifact — the tree alone is the whole plugin.
   mkPlugin =
     {
       pname,
       version,
       src,
-      binaryPath,
+      binaryPath ? null,
       # Shell that leaves the executable at $PWD/herdr-plugin-binary.
-      unpackBinary,
+      unpackBinary ? null,
     }:
+    assert (binaryPath == null) == (unpackBinary == null);
     runCommand "herdr-plugin-${pname}-${version}"
       {
         meta = {
@@ -77,9 +80,11 @@ let
         # add the binary to it.
         chmod -R u+w "$out"
 
-        ${unpackBinary}
+        ${lib.optionalString (binaryPath != null) ''
+          ${unpackBinary}
 
-        install -Dm0555 herdr-plugin-binary "$out/${binaryPath}"
+          install -Dm0555 herdr-plugin-binary "$out/${binaryPath}"
+        ''}
       '';
 
   # A bare executable published as a release asset.
@@ -168,6 +173,35 @@ in
         "https://github.com/thanhdat77/herdr-navigator/releases/download/v0.3.6/herdr-navigator-macos-aarch64.tar.gz"
         "sha256-kcqJEj/YiupIk9u3JiNl3Rs0v0xgbhgDaB+kesppiGU="
         "herdr-navigator/herdr-navigator";
+  };
+
+  # The plugin action UI Herdr itself does not have.
+  #
+  # Verified against herdr 0.8.0's source: `global_menu_actions` in
+  # src/app/input/modal.rs returns a fixed list (settings, keybinds, reload,
+  # what's new, detach), the right-click context menus are hardcoded pane and
+  # tab operations, and `CustomCommandAction::PluginAction` is reachable only
+  # from `invoke_plugin_action_from_keybind`. The `contexts` field every
+  # manifest declares is carried through the API but consumed by no built-in
+  # menu, so without this there is no way to browse actions — only to bind or
+  # type each one.
+  #
+  # It shells `herdr plugin action list`, filters itself out, and pipes the
+  # rest through fzf in an overlay pane. Both of its dependencies are already
+  # declared: fzf in ../default.nix and jq in ../development.nix. It would die
+  # with a readable message rather than silently if either went missing.
+  #
+  # Pinned by commit because upstream publishes no tags. It has no [[build]]
+  # step and ships no binary — the five bash files are the whole plugin.
+  herdr-command-palette = mkPlugin {
+    pname = "herdr-command-palette";
+    version = "0-unstable-2026-06-29";
+    src = fetchFromGitHub {
+      owner = "JanTvrdik";
+      repo = "herdr-command-palette";
+      rev = "eab940018c2135ac23718efa11e23e9dddcd2a75";
+      hash = "sha256-A43Dl365S/5w2wrttV1RnQ1g7YRJmsD3tb5EUUZcQQY=";
+    };
   };
 
   # Apply a whole workspace layout — tabs, panes, startup commands — from YAML.

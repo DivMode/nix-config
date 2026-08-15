@@ -12,6 +12,7 @@
     ./herdr
     ./karabiner.nix
     ./launchers.nix
+    ./media.nix
     ./mouse.nix
     ./privacy.nix
     ./projects.nix

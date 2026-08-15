@@ -92,6 +92,14 @@ in
         cloudflared
         atlas
         talosctl
+        # Same rebuild loss, found the same way but by a GATE rather than a
+        # deploy (2026-08-14): the work monorepo's pre-push helm-template-check
+        # renders every Helm release with `helm template` before a push. Without
+        # the binary it reported four charts as FAIL with "(no helm output)" —
+        # a missing tool reading as four broken charts, which is the expensive
+        # kind of wrong. The gate only fires on changes under
+        # `infra/kubernetes-*.ts`, so it stayed invisible until one landed.
+        kubernetes-helm
         # The //#lint:actions gate (the work monorepo's lint-actions.sh) shells
         # out to actionlint; a global install the 2026-08 rebuild lost. Found
         # when the turbo-inputs fix invalidated the long-cached gate and it

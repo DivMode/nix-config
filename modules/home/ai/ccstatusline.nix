@@ -38,6 +38,11 @@ let
   # turn, so an uncached implementation would call the API continuously. Three
   # minutes is well inside the resolution of a five-hour window, and a failed
   # request falls back to the stale cache rather than blanking the segment.
+  #
+  # The token lives in two different places depending on the platform. Linux
+  # gets ~/.claude/.credentials.json; macOS keeps it in the login Keychain and
+  # writes no such file, so reading only the file left both quota segments
+  # rendering as empty strings behind their labels.
   usageRemaining = pkgs.writeTextFile {
     name = "ccstatusline-usage-remaining";
     destination = "/bin/ccstatusline-usage-remaining";
@@ -48,6 +53,7 @@ let
       const https = require("https");
       const os = require("os");
       const path = require("path");
+      const { execFileSync } = require("child_process");
 
       const bucketName = process.argv[2];
       if (!["five_hour", "seven_day"].includes(bucketName)) {
@@ -99,9 +105,37 @@ let
         return printRemaining(readJson(cacheFile));
       }
 
+      function tokenFrom(credentials) {
+        const token = credentials
+          && credentials.claudeAiOauth
+          && credentials.claudeAiOauth.accessToken;
+        return typeof token === "string" && token.length > 0 ? token : null;
+      }
+
+      // macOS stores the credentials as a login Keychain generic password
+      // rather than a file. `security` is a system binary with no nixpkgs
+      // equivalent, so it is called by absolute path to stay independent of
+      // whatever PATH the status line inherits. A locked Keychain, a missing
+      // entry, or a denied prompt all throw, which falls back to the cache.
+      function readKeychainToken() {
+        if (process.platform !== "darwin") {
+          return null;
+        }
+        try {
+          const entry = execFileSync(
+            "/usr/bin/security",
+            ["find-generic-password", "-s", "Claude Code-credentials", "-w"],
+            { encoding: "utf8", timeout: 5000, stdio: ["ignore", "pipe", "ignore"] },
+          );
+          return tokenFrom(JSON.parse(entry));
+        } catch {
+          return null;
+        }
+      }
+
       function readToken() {
-        const credentials = readJson(path.join(configDir, ".credentials.json"));
-        return credentials && credentials.claudeAiOauth && credentials.claudeAiOauth.accessToken;
+        return tokenFrom(readJson(path.join(configDir, ".credentials.json")))
+          || readKeychainToken();
       }
 
       function fetchUsage(token) {
@@ -142,7 +176,7 @@ let
 
       if (!tryFreshCache()) {
         const token = readToken();
-        if (typeof token === "string" && token.length > 0) {
+        if (token) {
           fetchUsage(token);
         } else {
           tryStaleCache();

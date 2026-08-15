@@ -13,9 +13,9 @@
 # instead follows the rule ../ai/default.nix already states for Claude Code
 # plugins: load from the store, never from a client's own installer.
 {
-  config,
   inputs,
   lib,
+  local,
   pkgs,
   ...
 }:
@@ -38,6 +38,7 @@ let
     "cloudmanic.herdr-plus" = plugins.herdr-plus;
     "herdr-navigator" = plugins.herdr-navigator;
     "herdr-spreader" = plugins.herdr-spreader;
+    "jt.command-palette" = plugins.herdr-command-palette;
   };
 
   # The desired set as `<id>\t<store path>` lines, sorted, so activation can
@@ -89,6 +90,91 @@ let
       show_agent_labels_on_pane_borders = true;
       toast.delivery = "herdr";
     };
+
+    # Plugin actions are otherwise unreachable from the UI, so each one worth
+    # a muscle-memory key gets one, and the palette covers everything else —
+    # including any plugin added later, with no change here.
+    #
+    # Every key below is checked free against `herdr --default-config`. Note
+    # `prefix+d` is safe: the default binds close_workspace to prefix+shift+d,
+    # not to plain d. Rebinding a default is a different decision from filling
+    # a gap in it, and this file only does the latter.
+    keys.command = [
+      {
+        key = "prefix+space";
+        type = "plugin_action";
+        command = "jt.command-palette.open";
+        description = "command palette (every plugin action)";
+      }
+      {
+        key = "prefix+f";
+        type = "plugin_action";
+        command = "herdr-file-viewer.open-file-viewer";
+        description = "file viewer";
+      }
+      {
+        key = "prefix+d";
+        type = "plugin_action";
+        command = "persiyanov.reviewr.toggle";
+        description = "review agent diff";
+      }
+      {
+        key = "prefix+m";
+        type = "plugin_action";
+        command = "herdr-navigator.open";
+        description = "navigator";
+      }
+      {
+        key = "prefix+a";
+        type = "plugin_action";
+        command = "cloudmanic.herdr-plus.quick-actions";
+        description = "quick actions";
+      }
+      {
+        key = "prefix+shift+o";
+        type = "plugin_action";
+        command = "cloudmanic.herdr-plus.projects";
+        description = "projects";
+      }
+      {
+        key = "prefix+shift+a";
+        type = "plugin_action";
+        command = "herdr-spreader.apply";
+        description = "apply workspace layout";
+      }
+    ];
+  };
+
+  # One workspace per declared project, each with a shell and a `git status`
+  # split beneath it.
+  #
+  # Derived from local.projects rather than written out here, for two reasons.
+  # It is the only place project paths are allowed to live — AGENTS.md forbids
+  # committing a private repository's name or path, and
+  # scripts/check-private-names.sh enforces that from a denylist built out of
+  # exactly this attrset. And it means the layout describes whatever this
+  # machine actually has, with no second list to fall out of step.
+  #
+  # Deliberately no agent panes. `apply` builds every workspace at once, so a
+  # `claude` command here would launch one agent per project on a single
+  # keypress. Start them yourself in the workspace you want.
+  spreaderLayout = (pkgs.formats.yaml { }).generate "herdr-spreader-layout.yaml" {
+    workspaces = lib.mapAttrsToList (name: root: {
+      inherit name root;
+      tabs = [
+        {
+          label = "shell";
+          panes = [
+            { }
+            {
+              split = "down";
+              ratio = 0.3;
+              command = "git status";
+            }
+          ];
+        }
+      ];
+    }) (local.projects or { });
   };
 in
 {
@@ -123,6 +209,21 @@ in
       fi
     fi
   '';
+
+  # herdr-spreader's workspace layout.
+  #
+  # It searches $HERDR_PLUGIN_CONFIG_DIR/config.yaml first and this path
+  # second. The plugin config directory is Herdr-provisioned mutable state, so
+  # the layout goes here instead, where Home Manager can own it — and a file
+  # written into the plugin directory by hand would silently take precedence.
+  #
+  # Only nix-config is described. AGENTS.md forbids committing the name of a
+  # private repository, and scripts/check-private-names.sh enforces it from a
+  # denylist derived from local.nix, so a layout naming the work repositories
+  # cannot live in this file. Adding those means rendering the workspace list
+  # from local.nix at build time, the way scripts/rebuild.sh reads the backup
+  # vault — a separate change, deliberately not smuggled into this one.
+  xdg.configFile."herdr-spreader/config.yaml".source = spreaderLayout;
 
   # Reconcile the linked plugin set against the declared one.
   #

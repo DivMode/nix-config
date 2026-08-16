@@ -60,7 +60,7 @@ echo "==> Tag-pinned inputs (moved by editing flake.nix, not by this script)"
 if ! command -v jq >/dev/null 2>&1; then
   echo "    warning: jq not found — cannot check tag-pin staleness" >&2
 else
-  while IFS=$'\t' read -r name owner repo ref; do
+  while IFS=$'\t' read -r name owner repo ref via; do
     release_json=""
     if command -v gh >/dev/null 2>&1; then
       release_json="$(gh api "repos/${owner}/${repo}/releases/latest" 2>/dev/null || true)"
@@ -74,14 +74,29 @@ else
       echo "    ${name}: pinned ${ref} — could not determine latest release of ${owner}/${repo} (offline, rate-limited, or no releases)" >&2
     elif [[ "$latest" == "$ref" ]]; then
       echo "    ${name}: ${ref} (current)"
-    else
+    elif [[ "$via" == "direct" ]]; then
       echo "    ${name}: pinned ${ref}, upstream has ${latest} — to adopt, edit the tag in flake.nix"
+    else
+      # A transitive pin is not ours to edit: it moves when ITS owner bumps
+      # the tag and this lock re-locks that input. brew-src (nix-homebrew's
+      # tested pin of the brew program) is the expected case here.
+      echo "    ${name}: pinned ${ref} by the ${via} input, upstream has ${latest} — adopts automatically via './scripts/update.sh ${via}' once ${via} bumps it"
     fi
   done < <(jq -r '
-    .nodes | to_entries[]
-    | select(.value.original.type == "github"
+    .nodes as $nodes
+    | ($nodes.root.inputs | [to_entries[].value]) as $rootKeys
+    | $nodes | to_entries[]
+    | select(.key != "root"
+             and .value.original.type == "github"
              and ((.value.original.ref // "") | test("^v?[0-9]")))
-    | [.key, .value.original.owner, .value.original.repo, .value.original.ref]
+    | .key as $k
+    | (if ($rootKeys | index($k)) then "direct" else
+         ([$nodes | to_entries[]
+           | select(.key != "root"
+                    and ((.value.inputs // {}) | [to_entries[].value] | flatten | index($k)))
+           | .key] | first // "unknown")
+       end) as $via
+    | [$k, .value.original.owner, .value.original.repo, .value.original.ref, $via]
     | @tsv' flake.lock)
 fi
 echo

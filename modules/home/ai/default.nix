@@ -47,6 +47,31 @@ let
   # across an update.
   gcxClaudePlugin = "${inputs.gcx-src}/claude-plugin";
 
+  # The same gcx skills for Codex. Upstream's official cross-agent path is
+  # `gcx agent skills install --all`, which copies this identical bundle (the
+  # binary embeds claude-plugin/skills/, its canonical source) into
+  # ~/.agents/skills as mutable un-restorable state — so it is composed from
+  # the store instead, exactly like Matt Pocock's skills below.
+  #
+  # Enumerated by reading the skills directory rather than a manifest, because
+  # the gcx plugin manifest does not list its skills; a skill added or removed
+  # upstream is picked up by moving the tag pin alone. Prefixed to mirror the
+  # `gcx:` namespacing Claude Code gets for free from the plugin.
+  gcxCodexSkills =
+    mapAttrs'
+      (
+        name: _type:
+        nameValuePair ".codex/skills/gcx-${name}" {
+          source = "${inputs.gcx-src}/claude-plugin/skills/${name}";
+          recursive = true;
+        }
+      )
+      (
+        lib.filterAttrs (_: type: type == "directory") (
+          builtins.readDir "${inputs.gcx-src}/claude-plugin/skills"
+        )
+      );
+
   # Status line packages, segment layout, and the two helper scripts.
   ccstatusline = import ./ccstatusline.nix { inherit inputs lib pkgs; };
 
@@ -308,6 +333,7 @@ in
     home.file =
       codexSkillFiles
       // mattPocockCodexSkills
+      // gcxCodexSkills
       // sharedCodexSkills
       // {
         ".codex/AGENTS.md".source = ai.instructions;

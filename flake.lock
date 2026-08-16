@@ -71,6 +71,23 @@
         "type": "github"
       }
     },
+    "gcx-src": {
+      "flake": false,
+      "locked": {
+        "lastModified": 1786704046,
+        "narHash": "sha256-RbXa5ZCGOy9TQ/Cm/21JES4C0vl0owsFfLiMlEQ2MfQ=",
+        "owner": "grafana",
+        "repo": "gcx",
+        "rev": "a94d0b90b2940e6634b7c4b73b3e85b35247f20c",
+        "type": "github"
+      },
+      "original": {
+        "owner": "grafana",
+        "ref": "v1.1.0",
+        "repo": "gcx",
+        "type": "github"
+      }
+    },
     "herdr": {
       "inputs": {
         "nixpkgs": [
@@ -257,6 +274,7 @@
     },
     "root": {
       "inputs": {
+        "gcx-src": "gcx-src",
         "herdr": "herdr",
         "home-manager": "home-manager",
         "homebrew-cask": "homebrew-cask",

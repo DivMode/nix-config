@@ -74,6 +74,12 @@ in
         # shared build cache, so it looks like a broken branch rather than a
         # missing tool. Declared here so it comes back with the machine.
         cmake
+        # GNU coreutils with the g- prefix (gtimeout, gdate, ...). Deploy
+        # recipes wrap long-running steps in GNU `timeout`, which macOS does
+        # not ship under any name; the prefixed build provides it as
+        # `gtimeout` without shadowing the BSD userland the rest of the
+        # system expects.
+        coreutils-prefixed
         # Package manager and runtime for repositories that declare it in
         # `packageManager`. It was previously a global install, so nothing
         # restored it when this machine was rebuilt and every task that shells

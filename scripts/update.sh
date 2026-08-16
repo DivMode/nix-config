@@ -45,6 +45,47 @@ done
 
 host="${HOST:-example-mac}"
 
+# ── Tag-pinned inputs: staleness notice ─────────────────────────────────────
+# Inputs pinned to a release tag (gcx-src, herdr) are deliberately NOT moved
+# by `nix flake update` — a new version arrives by editing the tag in
+# flake.nix, as a reviewable decision. The gcx 1.0→1.1 output-shape change
+# (2026-08-16) is why adoption stays manual: it silently inverted a health
+# check's verdict, and a deliberate update surfaced that within minutes
+# instead of at 3am. Detection, though, should be automatic — a pin nobody
+# remembers is how a tool goes stale for six months. So every update run
+# reports each tag pin against the latest upstream release, one line per pin,
+# and prints failures rather than skipping silently: a check that cannot run
+# must not read as "everything current".
+echo "==> Tag-pinned inputs (moved by editing flake.nix, not by this script)"
+if ! command -v jq >/dev/null 2>&1; then
+  echo "    warning: jq not found — cannot check tag-pin staleness" >&2
+else
+  while IFS=$'\t' read -r name owner repo ref; do
+    release_json=""
+    if command -v gh >/dev/null 2>&1; then
+      release_json="$(gh api "repos/${owner}/${repo}/releases/latest" 2>/dev/null || true)"
+    fi
+    if [[ -z "$release_json" ]]; then
+      release_json="$(curl -fsSL --max-time 10 \
+        "https://api.github.com/repos/${owner}/${repo}/releases/latest" 2>/dev/null || true)"
+    fi
+    latest="$(jq -r '.tag_name // empty' <<<"$release_json" 2>/dev/null || true)"
+    if [[ -z "$latest" ]]; then
+      echo "    ${name}: pinned ${ref} — could not determine latest release of ${owner}/${repo} (offline, rate-limited, or no releases)" >&2
+    elif [[ "$latest" == "$ref" ]]; then
+      echo "    ${name}: ${ref} (current)"
+    else
+      echo "    ${name}: pinned ${ref}, upstream has ${latest} — to adopt, edit the tag in flake.nix"
+    fi
+  done < <(jq -r '
+    .nodes | to_entries[]
+    | select(.value.original.type == "github"
+             and ((.value.original.ref // "") | test("^v?[0-9]")))
+    | [.key, .value.original.owner, .value.original.repo, .value.original.ref]
+    | @tsv' flake.lock)
+fi
+echo
+
 # Keep the pre-update lock so the summary below reports what actually changed
 # rather than what was requested.
 lockBefore="$(mktemp)"

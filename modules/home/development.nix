@@ -67,6 +67,13 @@ in
         mise
         uv
         rustup
+        # Rust crates that vendor C/C++ (BoringSSL and friends, via *-sys build
+        # scripts) shell out to cmake to compile it. Without it a from-scratch
+        # cargo build of such a crate dies mid-gate with "is `cmake` not
+        # installed?" — which surfaces only when a fresh worktree misses the
+        # shared build cache, so it looks like a broken branch rather than a
+        # missing tool. Declared here so it comes back with the machine.
+        cmake
         # Package manager and runtime for repositories that declare it in
         # `packageManager`. It was previously a global install, so nothing
         # restored it when this machine was rebuilt and every task that shells

@@ -40,6 +40,21 @@
       flake = false;
     };
 
+    # Grafana's gcx CLI, pinned to a release tag. One input feeds two
+    # consumers: modules/home/development.nix builds the CLI binary from it
+    # (nixpkgs packages gcx, but its pinned release trails upstream), and
+    # modules/home/ai loads the repository's claude-plugin/ directory as a
+    # Claude Code plugin. Building both from the same pin keeps the binary and
+    # the skills that describe it at one version by construction.
+    #
+    # A tag pin does not advance with `nix flake update` — updating gcx means
+    # moving the tag HERE, then letting the vendor-hash mismatch in
+    # development.nix report the new hash if Go dependencies changed.
+    gcx-src = {
+      url = "github:grafana/gcx/v1.1.0";
+      flake = false;
+    };
+
     nix-homebrew.url = "github:zhaofengli/nix-homebrew";
 
     homebrew-core = {

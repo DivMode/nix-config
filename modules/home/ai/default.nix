@@ -8,6 +8,8 @@
 }:
 let
   inherit (lib)
+    concatMapStringsSep
+    elem
     listToAttrs
     mapAttrs
     mapAttrs'
@@ -45,7 +47,42 @@ let
   # that builds the CLI itself. development.nix builds the binary from the
   # SAME input, so the skills and the CLI they drive cannot drift apart
   # across an update.
-  gcxClaudePlugin = "${inputs.gcx-src}/claude-plugin";
+  #
+  # Skills excluded from both clients. Checked 2026-08-16 against the live
+  # stack, not guessed: the SLO product has zero definitions, IRM/OnCall has
+  # zero schedules and zero integrations, there is no LLM product to
+  # instrument with Agent Observability, no Entity Graph workflow, and
+  # Grafana resources are managed from the work monorepo's own
+  # infrastructure code, not a gcx-scaffolded Go project. Demo and
+  # from-scratch-onboarding tours round out the list. Every bundled skill's
+  # description is injected into every session's context (~3.8k tokens for
+  # all 24 skills, ~2.5k of it these), so an unused skill is paid for on
+  # every prompt. A listed name that later vanishes upstream is a harmless
+  # no-op; a product adopted later (an SLO defined, OnCall wired up) means
+  # deleting its names from this list.
+  gcxSkillsExcluded = [
+    "agento11y"
+    "agento11y-instrument"
+    "agento11y-prod-setup"
+    "agento11y-test-starter"
+    "diagnose-entity-graph"
+    "gcx-demo"
+    "gcx-observability"
+    "generate-resource-stubs"
+    "import-dashboards"
+    "oncall-triage"
+    "scaffold-project"
+    "slo-check-status"
+    "slo-investigate"
+    "slo-manage"
+    "slo-optimize"
+  ];
+
+  gcxClaudePlugin = pkgs.runCommand "gcx-claude-plugin" { } ''
+    cp -r ${inputs.gcx-src}/claude-plugin $out
+    chmod -R u+w $out
+    ${concatMapStringsSep "\n" (name: "rm -rf $out/skills/${name}") gcxSkillsExcluded}
+  '';
 
   # The same gcx skills for Codex. Upstream's official cross-agent path is
   # `gcx agent skills install --all`, which copies this identical bundle (the
@@ -67,9 +104,9 @@ let
         }
       )
       (
-        lib.filterAttrs (_: type: type == "directory") (
-          builtins.readDir "${inputs.gcx-src}/claude-plugin/skills"
-        )
+        lib.filterAttrs (
+          name: type: type == "directory" && !(elem name gcxSkillsExcluded)
+        ) (builtins.readDir "${inputs.gcx-src}/claude-plugin/skills")
       );
 
   # Status line packages, segment layout, and the two helper scripts.

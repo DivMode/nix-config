@@ -74,6 +74,13 @@ in
         # shared build cache, so it looks like a broken branch rather than a
         # missing tool. Declared here so it comes back with the machine.
         cmake
+        # Docker CLIENT only — no daemon on this machine. Repo migration
+        # gates provision ephemeral Postgres containers on a remote engine
+        # via DOCKER_HOST=ssh://…, which needs just the local CLI. An
+        # unmanaged copy predating this config was lost in the cutover and
+        # first resurfaced 2026-08-17 as "docker: command not found" inside
+        # a pre-push hook. Declared so it comes back with the machine.
+        docker-client
         # GNU coreutils with the g- prefix (gtimeout, gdate, ...). Deploy
         # recipes wrap long-running steps in GNU `timeout`, which macOS does
         # not ship under any name; the prefixed build provides it as

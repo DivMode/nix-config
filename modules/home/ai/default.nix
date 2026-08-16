@@ -34,6 +34,19 @@ let
   # vendored twice.
   mattPocockSkills = inputs.mattpocock-skills;
 
+  # Grafana's official Claude Code plugin for the gcx CLI — skills for
+  # querying dashboards, metrics, logs and alerts, plus a `grafana-debugger`
+  # agent. Upstream documents installation through its plugin marketplace
+  # (`/plugin marketplace add grafana/gcx`), which writes mutable state under
+  # ~/.claude; loaded from the pinned source tree instead, for the same
+  # reason as Matt Pocock's skills above.
+  #
+  # The plugin lives in a subdirectory: the repository root is the Go module
+  # that builds the CLI itself. development.nix builds the binary from the
+  # SAME input, so the skills and the CLI they drive cannot drift apart
+  # across an update.
+  gcxClaudePlugin = "${inputs.gcx-src}/claude-plugin";
+
   # Status line packages, segment layout, and the two helper scripts.
   ccstatusline = import ./ccstatusline.nix { inherit inputs lib pkgs; };
 
@@ -240,7 +253,10 @@ in
       # Loaded straight from the Nix store. `claude plugins install` would
       # write mutable state under ~/.claude that this repository could not
       # restore, which is the whole thing this configuration exists to avoid.
-      plugins = [ mattPocockSkills ];
+      plugins = [
+        mattPocockSkills
+        gcxClaudePlugin
+      ];
 
       context = ai.instructions;
       agents = mapAttrs claudeAgentText ai.agents;

@@ -104,9 +104,9 @@ let
         }
       )
       (
-        lib.filterAttrs (
-          name: type: type == "directory" && !(elem name gcxSkillsExcluded)
-        ) (builtins.readDir "${inputs.gcx-src}/claude-plugin/skills")
+        lib.filterAttrs (name: type: type == "directory" && !(elem name gcxSkillsExcluded)) (
+          builtins.readDir "${inputs.gcx-src}/claude-plugin/skills"
+        )
       );
 
   # Status line packages, segment layout, and the two helper scripts.

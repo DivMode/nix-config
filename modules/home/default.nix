@@ -22,6 +22,19 @@
     ./terminal.nix
   ];
 
+  # The signers git checks signatures against. Generated from the SAME local.nix
+  # values that configure signing, so the key that signs and the key trusted to
+  # verify cannot drift apart — declaring them separately is how a history stops
+  # verifying after a key rotation, silently and long after the change.
+  #
+  # The principal is the committer email: git matches it against the identity on
+  # the commit, so a mismatch reads as an untrusted signature rather than an
+  # error, which is worse than no configuration at all.
+  #
+  # Public key material only. A private key must never reach this file, and
+  # would be copied into the world-readable store if it did.
+  xdg.configFile."git/allowed_signers".text = "${local.git.email} ${local.git.signingKey}\n";
+
   programs.git = {
     enable = true;
 
@@ -52,6 +65,22 @@
       gpg = {
         format = "ssh";
         ssh.program = "/Applications/1Password.app/Contents/MacOS/op-ssh-sign";
+
+        # Without this, git SIGNS correctly and then cannot verify what it just
+        # signed: `git log --show-signature` reports "No signature" and %G?
+        # yields N, on commits whose objects carry a complete BEGIN/END SSH
+        # SIGNATURE block. Signing and verification are separate mechanisms and
+        # only one of them was configured.
+        #
+        # Measured on 2026-08-21, and the timing is the point: it surfaced while
+        # proving a moved SSH key could still sign, and for a moment it read as
+        # a second failure stacked on the one being diagnosed. This reports
+        # itself broken at exactly the moment you are checking whether you broke
+        # something.
+        #
+        # GitHub verifies independently of this file, so nothing was wrong
+        # upstream. This is about trusting your own history locally.
+        ssh.allowedSignersFile = "${config.xdg.configHome}/git/allowed_signers";
       };
       commit.gpgSign = true;
       tag.gpgSign = true;

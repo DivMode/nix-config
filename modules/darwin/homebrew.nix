@@ -45,9 +45,41 @@
 
       # cmux is NOT here. Ghostty replaced it; see modules/home/terminal.nix.
 
-      # Open-source mouse utility. Home Manager owns its immutable JSON
-      # configuration and launch agent; only macOS Accessibility remains manual.
+      # Open-source mouse utility, and the ONLY owner of mouse EVENTS here.
+      # Home Manager owns its JSON configuration, written as a real file it can
+      # still save over; its login item, not a launch agent, starts it. Only
+      # macOS Accessibility approval remains manual.
       "linearmouse"
+
+      # Logitech's own utility, declared as a deliberate exception to the rule
+      # one line above and in modules/darwin/README.md: do not run a second
+      # mouse tool alongside LinearMouse.
+      #
+      # It is here for exactly one thing LinearMouse cannot do. The MX Master
+      # MagSpeed wheel has two MECHANICAL modes, ratchet and free-spin, and they
+      # are a HID++ feature of the mouse firmware — not an event stream anything
+      # on this Mac can filter. docs/research/2026-08-13-linearmouse-high-
+      # resolution-wheel-mx-master-3.md states it plainly: LinearMouse's
+      # highResolutionWheel flag "does not configure SmartShift, SmartShift
+      # sensitivity, ratchet mode, free-spin mode, or the top mode-shift
+      # button". A wheel stuck in free-spin is therefore unfixable from this
+      # repository, and was, for most of 2026-08-21.
+      #
+      # Every alternative was checked before adding a second daemon. logiops,
+      # logiops-rs and OpenLogi do SmartShift but are Linux; Mouser, mx3-lite,
+      # optune and nibble are macOS but do not expose it; SteerMouse remaps
+      # input events and cannot reach a firmware feature at all. This cask is
+      # the only macOS option that can, and it is the only reason it is here.
+      #
+      # The wheel mode lives on the MOUSE, so this may be removable once set:
+      # configure ratchet and SmartShift, confirm the setting survives, then
+      # delete this line and let strict cleanup uninstall it. Verify before
+      # relying on that — it is device-firmware behaviour, not a promise.
+      #
+      # It needs Accessibility and Input Monitoring approval, which Nix cannot
+      # grant. Grant them only if you keep it; a permission outliving the app it
+      # was for is exactly the mutable state docs/state-boundary.md warns about.
+      "logi-options+"
 
       # Media player and e-book library.
       "iina"

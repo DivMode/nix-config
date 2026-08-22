@@ -72,6 +72,14 @@ let
   # Connect refuses every non-JSON output format.
   awsCredentialProcess = pkgs.writeShellApplication {
     name = "op-aws-credential-process";
+
+    # curl is declared, not inherited. `credential_process` is executed by the
+    # AWS SDK, not by a login shell, so PATH is whatever that caller happened to
+    # have — and a heartbeat probe that silently fails to find curl would send
+    # every read down the service-account path, quietly spending the daily
+    # budget this helper exists to protect.
+    runtimeInputs = [ pkgs.curl ];
+
     text = ''
       vault="''${1:?vault name required}"
       item="''${2:?1Password item title required}"
@@ -79,24 +87,83 @@ let
       # Prefer Connect, which serves reads from the LAN server and does NOT
       # spend the service account's 1,000 request/24h account-wide budget.
       # `credential_process` runs on EVERY aws invocation, so charging that
-      # budget here would exhaust it through ordinary use. Falls back to the
-      # service-account token only when Connect is absent (off-LAN).
-      if [ -r ${escapeShellArg cfg.connect.envPath} ]; then
-        set -a
-        # shellcheck source=/dev/null
-        . ${escapeShellArg cfg.connect.envPath}
-        set +a
-      elif [ -r ${escapeShellArg cfg.serviceAccount.tokenPath} ]; then
-        OP_SERVICE_ACCOUNT_TOKEN="$(cat ${escapeShellArg cfg.serviceAccount.tokenPath})"
-        export OP_SERVICE_ACCOUNT_TOKEN
+      # budget here would exhaust it through ordinary use.
+      #
+      # The choice is made on REACHABILITY, not on whether connect.env exists —
+      # and that distinction is the whole bug this replaced. The previous
+      # version tested `[ -r connect.env ]` and its comment claimed it fell back
+      # "only when Connect is absent (off-LAN)". Going off-LAN does not delete
+      # the file. It stayed readable, Connect was sourced anyway, `op read` then
+      # tried to reach a LAN address that was not there, and the `elif` holding
+      # the service-account fallback could never execute. The fallback was
+      # unreachable code, so every `aws` call away from the LAN failed with no
+      # second chance — a deploy path that worked at a desk and not on a train.
+      #
+      # A one-second heartbeat is cheap on-LAN (single-digit milliseconds) and
+      # bounds the off-LAN penalty rather than waiting out op's own timeout.
+      connectEnv=${escapeShellArg cfg.connect.envPath}
+      tokenPath=${escapeShellArg cfg.serviceAccount.tokenPath}
+      useConnect=0
+
+      if [ -r "$connectEnv" ]; then
+        connectHost=$(
+          # shellcheck source=/dev/null
+          . "$connectEnv" >/dev/null 2>&1
+          printf '%s' "''${OP_CONNECT_HOST:-}"
+        )
+        if [ -n "$connectHost" ] \
+          && curl -fsS -m 1 -o /dev/null "$connectHost/heartbeat" 2>/dev/null; then
+          useConnect=1
+        fi
       fi
+
+      # Reads through whichever path is live, and if the preferred one fails
+      # anyway — Connect up but refusing, a rotated token — tries the other
+      # rather than surfacing a partial credential.
+      readSecret() {
+        if [ "$useConnect" = 1 ]; then
+          if value=$(
+            set -a
+            # shellcheck source=/dev/null
+            . "$connectEnv"
+            set +a
+            ${escapeShellArg opExecutable} read "$1" 2>/dev/null
+          ); then
+            printf '%s' "$value"
+            return 0
+          fi
+        fi
+
+        if [ -r "$tokenPath" ]; then
+          if value=$(
+            OP_SERVICE_ACCOUNT_TOKEN="$(cat "$tokenPath")" \
+              ${escapeShellArg opExecutable} read "$1" 2>/dev/null
+          ); then
+            printf '%s' "$value"
+            return 0
+          fi
+        fi
+
+        return 1
+      }
 
       # `op read` with an item ID, not `op item get --fields`: under Connect the
       # CLI refuses every non-JSON output format, so `--fields` cannot work
       # there. The ID also sidesteps the reference parser rejecting the '(' in
       # these items' titles — both constraints measured 2026-08-13.
-      access_key_id=$(${escapeShellArg opExecutable} read "op://$vault/$item/access key id")
-      secret_access_key=$(${escapeShellArg opExecutable} read "op://$vault/$item/secret access key")
+      if ! access_key_id=$(readSecret "op://$vault/$item/access key id") \
+        || ! secret_access_key=$(readSecret "op://$vault/$item/secret access key"); then
+        printf '%s\n' "could not read AWS credentials for $item from 1Password (Connect unreachable and no usable service-account token)" >&2
+        exit 1
+      fi
+
+      # Both or neither. A half-resolved pair printed as JSON is accepted by the
+      # AWS SDK and then fails much further downstream as an opaque signature
+      # error, rather than here where the cause is obvious.
+      if [ -z "$access_key_id" ] || [ -z "$secret_access_key" ]; then
+        printf '%s\n' "1Password returned an empty AWS credential field for $item" >&2
+        exit 1
+      fi
 
       printf '{"Version":1,"AccessKeyId":"%s","SecretAccessKey":"%s"}\n' \
         "$access_key_id" "$secret_access_key"

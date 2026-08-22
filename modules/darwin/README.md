@@ -37,10 +37,20 @@ the remaining declared applications are explicit. The Dock auto-hides, excludes
 recent applications and persistent file/folder entries, and uses recent-use
 Spaces arrangement.
 
-`chrome-web-apps.nix` declares Google's real Gmail PWA through Chrome's supported
-`WebAppInstallForceList` platform policy. Chrome—not Nix—creates the native
-`~/Applications/Chrome Apps.localized/Gmail.app` shim after each profile first
-processes the policy. The Dock pins that shim immediately after Chrome.
+`chrome.nix` is the single Chrome policy file. It declares Google's real Gmail
+PWA through Chrome's supported `WebAppInstallForceList` platform policy.
+Chrome—not Nix—creates the native `~/Applications/Chrome Apps.localized/Gmail.app`
+shim after each profile first processes the policy. The Dock pins that shim
+immediately after Chrome.
+
+It also pins downloads to the `/Volumes/downloads` SMB share, using the
+mandatory `DownloadDirectory` policy plus `PromptForDownloadLocation = false` so neither
+a profile setting nor the "ask where to save each file" checkbox can move them.
+The recommended-form `DefaultDownloadDirectory` is deliberately not used: a
+profile may override it, so it cannot make that guarantee. Note the precondition
+— **the share is not mounted declaratively by this repository.** If
+`/Volumes/downloads` is not mounted when Chrome starts a download, the path is
+not there to write to. See the Chrome section of `docs/state-boundary.md`.
 
 The system-wide policy applies to every local Chrome profile and makes Chrome
 display **Managed by your organization**. Nix owns only the public install URL

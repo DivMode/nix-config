@@ -16,7 +16,12 @@
       # this directory so Spotlight and LaunchServices resolve them.
       "${local.homeDirectory}/Applications/Home Manager Apps/Ghostty.app"
     ];
-    persistent-others = [ ];
+    # The downloads share, as a Dock stack. Absolute path deliberately: a
+    # relative path or a `~` produces a Dock item that renders but opens
+    # nothing, and it fails silently (nix-darwin#968, nix-darwin#1398).
+    #
+    # Same single definition Chrome's DownloadDirectory and the mount agent use.
+    persistent-others = [ "/Volumes/${local.networkShares.downloadsShare}" ];
     show-recents = false;
   };
 

@@ -20,8 +20,9 @@
 #                      lines, so a leak cannot ride along in a file you were
 #                      editing anyway)
 #   --tree             audit every tracked file in the working tree
-#   --commits <range>  check what each commit in <range> ADDS (what the pre-push
-#                      hook runs)
+#   --commits <rev-list-args...>
+#                      check what each commit in the supplied `git rev-list`
+#                      arguments ADDS (what the pre-push hook runs)
 #
 # --commits exists because a pre-commit hook only ever sees the commit being
 # made. On 2026-08-14 this script blocked three commits successfully and then
@@ -38,15 +39,17 @@
 set -euo pipefail
 
 repository="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+git_common_dir="$(git -C "$repository" rev-parse --path-format=absolute --git-common-dir)"
+canonical_repository="$(cd "$(dirname "$git_common_dir")" && pwd)"
 cd "$repository"
 
 mode="${1:---staged}"
-range="${2:-}"
+commit_args=("${@:2}")
 case "$mode" in
   --staged | --tree) ;;
   --commits)
-    if [[ -z "$range" ]]; then
-      echo "usage: ${BASH_SOURCE[0]##*/} --commits <range>" >&2
+    if (( ${#commit_args[@]} == 0 )); then
+      echo "usage: ${BASH_SOURCE[0]##*/} --commits <rev-list-args...>" >&2
       exit 1
     fi
     ;;
@@ -78,15 +81,19 @@ terms_file="$work_dir/terms"
 # so an older local.nix without one of these keys narrows the denylist rather
 # than failing the commit.
 #
-# This repository's own checkout is excluded by PATH, not by name: whichever
-# entry in `projects` points here is public by definition, and matching its
-# name case-insensitively would flag every `nixConfig.*` option in the tree.
-if ! LOCAL_PATH="$local_file" REPO_PATH="$repository" nix eval --impure --raw --expr '
+# This repository's own checkout is excluded by PATH, not by name. A linked
+# worktree has a different root, so its primary checkout is public by
+# definition too; matching that project's name case-insensitively would flag
+# every `nixConfig.*` option in the tree.
+if ! LOCAL_PATH="$local_file" REPO_PATH="$repository" CANONICAL_REPO_PATH="$canonical_repository" nix eval --impure --raw --expr '
   let
     local = import (builtins.toPath (builtins.getEnv "LOCAL_PATH"));
     repository = builtins.getEnv "REPO_PATH";
+    canonicalRepository = builtins.getEnv "CANONICAL_REPO_PATH";
     projects = local.projects or { };
-    public = builtins.filter (name: projects.${name} == repository) (builtins.attrNames projects);
+    public = builtins.filter (
+      name: builtins.elem projects.${name} [ repository canonicalRepository ]
+    ) (builtins.attrNames projects);
     privateProjects = builtins.removeAttrs projects public;
     awsVaults = map (profile: profile.vault or "") (
       builtins.attrValues (local.onePassword.awsProfiles or { })
@@ -175,7 +182,7 @@ if [[ "$mode" == "--commits" ]]; then
       term=$(printf '%s\n' "$added" | grep -oiF -f "$terms_file" | head -n1) || true
       [[ -n "$term" ]] && report "$subject — $file adds \"$term\""
     done < <(git show --format= --unified=0 "$commit")
-  done < <(git rev-list --no-merges "$range")
+  done < <(git rev-list --no-merges "${commit_args[@]}")
 else
   if [[ "$mode" == "--staged" ]]; then
     files=$(git diff --cached --name-only --diff-filter=ACMR)

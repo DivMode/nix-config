@@ -42,6 +42,30 @@ If part of the work turns out to be blocked, complete everything else and say
 plainly what was left and why. Scaling the work down is the user's decision,
 not yours.
 
+## Repository targeting
+
+Before any Codex agent reads, edits, or runs repository code, establish the
+intended Git root from the checkout itself. Run `pwd` and
+`git rev-parse --show-toplevel`, and require both to resolve to the same
+absolute path. If they disagree, or the root is not the intended checkout,
+stop and correct the working directory before doing repository work. Do not
+infer the root from a prompt, a directory name, or the current directory alone.
+
+Directories under `~/.codex/.chatgpt-projects/` are ChatGPT project mirrors
+provided as context. They are not substitute source checkouts: do not edit
+them or use them as the repository root when the task targets an ongoing source
+checkout.
+
+When delegating coding work, pass the absolute intended repository root
+explicitly to every coding sub-agent. Require each sub-agent to run `pwd` and
+`git rev-parse --show-toplevel` and verify the matching absolute root before it
+reads or changes repository files. Never leave the repository root implicit or
+provide only a relative path or repository basename.
+
+Register every ongoing source checkout as a local Codex project using its
+absolute root. Keep project mirrors under `~/.codex/.chatgpt-projects/` as
+context only, not as registered substitutes for those source checkouts.
+
 **Questions are read-only.** When you are asked about something — how it works,
 why it is like that, whether it is safe — answer it. Do not start changing it.
 If the answer implies a change worth making, say so and wait. A question is not

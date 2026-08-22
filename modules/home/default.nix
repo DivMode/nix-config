@@ -14,6 +14,7 @@
     ./launchers.nix
     ./media.nix
     ./mouse.nix
+    ./network-shares.nix
     ./privacy.nix
     ./projects.nix
     ./screensaver.nix

@@ -1,8 +1,9 @@
 # Mouse configuration
 
 LinearMouse is the sole mouse-event owner. Homebrew installs the native app;
-Home Manager starts it with a launch agent and owns the documented immutable
-`~/.config/linearmouse/linearmouse.json`.
+LinearMouse's own login item starts it, and Home Manager owns the documented
+`~/.config/linearmouse/linearmouse.json` — written as a real file, in place, so
+the app's watcher sees the change and so its settings window can still save.
 
 The baseline reverses vertical scrolling for devices categorized as mice while
 preserving natural trackpad scrolling. Logitech HID++ high-resolution wheel mode
@@ -11,6 +12,14 @@ it does produce fine-grained smooth scrolling, but that was tried on 2026-08-13
 and rejected as worse in daily use. Off keeps the wheel's discrete, notched
 steps. This does not change MagSpeed free-spin, pointer DPI, or the horizontal
 thumb wheel.
+
+It was tried a second time between 2026-08-13 and 2026-08-21, that time paired
+with a tuned `scrolling.smoothed` engine on a receiver-specific scheme, and
+rejected again. Both attempts are worth knowing about, because the second one
+looked like a tuning problem and was not: discrete clicks are the thing wanted,
+and removing them is precisely what the smoothed engine is for. There is no
+value of inertia, response, or speed that produces a detent. The knob is
+`logitech.highResolutionWheel`, and it stays off.
 
 Home Manager also converges the visible general settings without replacing the
 entire preferences domain: show the menu-bar item only when attention is needed,

@@ -156,19 +156,46 @@ in
         elif [ ! -x ${escapeShellArg opExecutable} ]; then
           printf '%s\n' '1Password CLI unavailable; the network share password was not seeded. The first mount will prompt.' >&2
         else
-          # Activation runs from darwin-rebuild, not a login shell, so the
-          # service-account token is not in this environment and `op` would
-          # otherwise fall back to the desktop app and raise a biometric
-          # prompt on every rebuild — the failure secrets.nix already
-          # documents for its own activation entries.
+          # TWO authentication paths, tried in order, because the vault holding
+          # this password is deliberately not one the shell-exported service
+          # account can reach.
+          #
+          # 1Password service account vault access is IMMUTABLE. That is
+          # documented behaviour, not a quirk of this setup: "After you create
+          # a service account, you can't add additional vaults or edit any
+          # vault permissions it has." The account this machine exports was
+          # minted against one vault, so a reference into any other vault is
+          # unreachable to it and always will be. There is no "add vault"
+          # control to go looking for.
+          #
+          # So: try the service-account token, then fall back to the desktop
+          # app integration. The fallback is not a regression to the biometric
+          # prompt secrets.nix warns about, because this entry is gated on the
+          # Keychain entry being ABSENT — it is one authorization, once per
+          # machine, at a moment (setup-mac.sh) when a human is already signing
+          # into the 1Password app anyway.
           tokenPath="$HOME/.config/op/service-account-token"
+          sharePassword=""
+
           if [ -r "$tokenPath" ]; then
-            OP_SERVICE_ACCOUNT_TOKEN="$(cat "$tokenPath")"
-            export OP_SERVICE_ACCOUNT_TOKEN
+            sharePassword="$(
+              OP_SERVICE_ACCOUNT_TOKEN="$(cat "$tokenPath")" \
+                ${escapeShellArg opExecutable} read ${escapeShellArg (toString passwordReference)} 2>/dev/null || true
+            )"
           fi
 
-          if sharePassword="$(${escapeShellArg opExecutable} read ${escapeShellArg (toString passwordReference)} 2>/dev/null)" \
-            && [ -n "$sharePassword" ]; then
+          if [ -z "$sharePassword" ]; then
+            # `env -u`, not OP_SERVICE_ACCOUNT_TOKEN="". op prefers the
+            # variable whenever it is SET, so blanking it authenticates as a
+            # service account with an empty token and fails rather than
+            # reaching the desktop app.
+            sharePassword="$(
+              env -u OP_SERVICE_ACCOUNT_TOKEN \
+                ${escapeShellArg opExecutable} read ${escapeShellArg (toString passwordReference)} 2>/dev/null || true
+            )"
+          fi
+
+          if [ -n "$sharePassword" ]; then
             # -r 'smb ' — four characters, trailing space included. That is a
             # SecProtocolType FourCharCode, not a typo, and an entry written
             # without it is not the entry NetAuthSysAgent looks up.

@@ -137,6 +137,51 @@ apply the final identity. This distinction follows the
 
 5. Create a local signed test commit before publishing anything.
 
+### The service account and its vaults
+
+**Scope the service account to every vault this machine reads, at the moment you
+create it.** 1Password states it plainly: "Service account permissions, vault
+access, and Environment access are immutable." There is no control anywhere —
+website, app, or CLI — to add a vault afterwards. Getting it wrong costs a new
+account and a token swap on every machine.
+
+This configuration currently reads two vaults:
+
+- the business vault, for the AWS profiles, the Connect credentials, and the
+  `local.nix` document backup that `scripts/rebuild.sh` uploads after every
+  activation
+- the homelab vault, for the service-account token itself and the network share
+  password
+
+Grant `read_items` **and** `write_items` on both. Write is not optional on the
+vault holding the `local.nix` backup: `rebuild.sh` only *warns* when the upload
+fails, so a read-only token leaves the backup silently stale — which is exactly
+the file a wiped machine needs.
+
+Leave `share_items` off. Nothing here shares items, and it is the one permission
+that turns a leaked token into an exfiltration path needing no 1Password
+credentials to redeem.
+
+Allowing the account to create vaults is harmless: a service account can only
+delete vaults it created, never a pre-existing one it was merely granted.
+
+### Network shares
+
+`modules/home/network-shares.nix` mounts the declared SMB shares at login and
+reconciles them on a timer. The password is never in this repository or in
+`local.nix`; it lives in the login Keychain.
+
+On a machine with no Keychain entry yet, activation seeds one from 1Password
+using `local.networkShares.passwordReference`, so nothing is typed. That read
+tries the service-account token first and falls back to the desktop app
+integration — which is why the integration above is enabled, not merely
+convenient. Leave `passwordReference` null to skip seeding entirely and answer
+one Finder authentication dialog on the first mount instead.
+
+Verified end to end on 2026-08-21 by deleting the Keychain entry outright:
+activation recreated it with a byte-identical password, and the mount agent then
+mounted the share off it with no prompt.
+
 Home Manager configures SSH-format commit and tag signing through 1Password's
 `op-ssh-sign`; the private key remains inside 1Password.
 

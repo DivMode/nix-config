@@ -14,6 +14,8 @@ was never stored in a declarative or provider-backed system.
 - Home Manager's declared Zsh, prompt, terminal-font configuration, Git
   settings, and global mise fallback
 - Public AI instructions, agents, skills, and MCP endpoint metadata
+- The generic Codex approval, sandbox, and app defaults merged into its live
+  user configuration
 - Secret identifiers, `op://` references, and environment mappings, but never
   secret values
 
@@ -26,6 +28,8 @@ was never stored in a declarative or provider-backed system.
 - Gmail and Chrome authentication; Nix declares Gmail's installation policy,
   while Chrome owns each profile's PWA registration and generated app shim
 - Application databases, caches, logs, indexes, and temporary files
+- Codex configuration outside the narrow declared preference layer, including
+  project trust, plugins, marketplaces, generated paths, and desktop state
 - Ghostty and Herdr runtime preferences and session state other than
   Ghostty's declarative `~/.config/ghostty/config`
 - LinearMouse's macOS Accessibility approval; its app, launch agent, and JSON
@@ -45,9 +49,11 @@ Home Manager activation should fail if a managed path collides with an unmanaged
 file. Resolve ownership explicitly instead of enabling automatic overwrite,
 renaming, or deletion.
 
-`~/.codex/config.toml` is application-owned mutable state. When the dormant AI
-renderer is explicitly enabled, declarative Codex TOML is generated under
-`~/.config/nix-config/ai/` for inspection until a merge-safe adapter exists.
+`~/.codex/config.toml` remains application-owned mutable state and a normal
+writable file. Home Manager uses a comment-preserving, atomic merge adapter to
+reassert only the generic approval, sandbox, and app defaults; every unknown
+key and table remains Codex-owned. The exact managed input and MCP metadata are
+generated separately under `~/.config/nix-config/ai/` for inspection.
 Immutable instructions, skills, and agents remain Home Manager-owned.
 
 Declaring the Ghostty and Herdr packages makes the software rebuildable.

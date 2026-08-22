@@ -33,6 +33,13 @@
   # could be typed into a comment by mistake.
   privateTerms = [ ];
 
+  # The opposite of privateTerms: terms the guard's derivation picks up from the
+  # fields above that are NOT actually private, and so may appear in tracked
+  # files. Use it only for names that would mean nothing to a stranger reading
+  # this public repository — a generic vault name, say. Anything identifying a
+  # person, employer, client, host, or private path belongs in privateTerms.
+  publicTerms = [ ];
+
   # 1Password item IDs are local metadata, not secret values. IDs avoid
   # publishing private item or vault names in this reusable repository.
   onePassword.sshAgentKeyIds = [ "aaaaaaaaaaaaaaaaaaaaaaaaaa" ];

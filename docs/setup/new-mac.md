@@ -147,16 +147,30 @@ account and a token swap on every machine.
 
 This configuration currently reads two vaults:
 
-- the business vault, for the AWS profiles, the Connect credentials, and the
-  `local.nix` document backup that `scripts/rebuild.sh` uploads after every
-  activation
-- the homelab vault, for the service-account token itself and the network share
-  password
+- the **business vault**, for the AWS profiles and the Connect credentials
+- the **homelab vault**, for the service-account token itself, the network share
+  password, and the `local.nix` document backup that `scripts/rebuild.sh`
+  uploads after every activation
+
+The `local.nix` backup lives in the homelab vault deliberately. It is the
+machine's own recovery material — `setup-mac.sh` restores it on a wiped Mac — so
+it must not sit behind access that can be revoked independently of the machine,
+such as a client or employer relationship ending. Losing that vault means losing
+the ability to set up your own computer, and you would discover it at the worst
+possible moment.
 
 Grant `read_items` **and** `write_items` on both. Write is not optional on the
 vault holding the `local.nix` backup: `rebuild.sh` only *warns* when the upload
 fails, so a read-only token leaves the backup silently stale — which is exactly
 the file a wiped machine needs.
+
+`setup-mac.sh` offers the homelab vault as the default answer when it asks which
+vault holds `local.nix`, so the usual case is a single Enter. That name can be
+written into a tracked script only because `local.nix` lists it in
+`publicTerms`; the private-name guard derives its denylist from
+`onePassword.vault`, so without that entry a generic vault name is guarded as
+though it were secret. A vault named after a company or a client must never be
+added to `publicTerms`.
 
 Leave `share_items` off. Nothing here shares items, and it is the one permission
 that turns a leaked token into an exfiltration path needing no 1Password

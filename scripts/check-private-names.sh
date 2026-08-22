@@ -105,8 +105,31 @@ if ! LOCAL_PATH="$local_file" REPO_PATH="$repository" nix eval --impure --raw --
         (local.onePassword.connectHost or "")
       ]
       ++ (local.privateTerms or [ ]);
+
+    # Terms the fields above yield that are NOT actually private.
+    #
+    # NOTE: this whole expression sits inside a single-quoted shell string, so
+    # an apostrophe anywhere in these comments ends that string and breaks the
+    # script. Write around it. Measured the hard way on 2026-08-21.
+    #
+    # The denylist is derived, which is what keeps it current — but derivation
+    # cannot tell a generic name like Homelab from the name of a company; both
+    # arrive through onePassword.vault. With no way to say which is which, a
+    # generic vault name gets guarded as if it were secret, leaving only two
+    # ways forward: hard-code nothing, so a wiped Mac must be told its vault by
+    # hand, or skip the hook. The guidance at the top of this file rejects the
+    # second and calls this exact case a misfire to be fixed in the derivation.
+    # This is that fix.
+    #
+    # Subtracted LAST, so it also clears a term that arrived from several
+    # fields at once. Keep it to names that would mean nothing to a stranger
+    # reading this public repository — anything that identifies a person,
+    # employer, client, host, or private path belongs in privateTerms instead.
+    publicTerms = local.publicTerms or [ ];
+    isPublic = term: builtins.elem term publicTerms;
+
     usable = builtins.filter (
-      term: builtins.isString term && builtins.stringLength term > 2
+      term: builtins.isString term && builtins.stringLength term > 2 && !(isPublic term)
     ) candidates;
     deduplicated = builtins.attrNames (
       builtins.listToAttrs (map (term: { name = term; value = true; }) usable)

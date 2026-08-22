@@ -65,4 +65,22 @@
       region = "us-west-2";
     };
   };
+
+  # SMB shares mounted at login by modules/home/network-shares.nix. Leave
+  # `mounts` empty to disable the module entirely.
+  #
+  # The PASSWORD IS NOT HERE and must never be. It lives in the login Keychain.
+  # This file names only the server and the account — the two halves of the
+  # Keychain lookup key.
+  networkShares = {
+    server = "fileserver.example.invalid";
+    account = "replace-me";
+    mounts = [ ];
+    # The share Chrome downloads into and the Dock pins.
+    downloadsShare = "replace-me-share";
+    # Optional op:// reference used ONLY to seed the login Keychain on a machine
+    # that has no entry yet. A reference, never a password: any literal value in
+    # a Nix option is copied into the world-readable store.
+    passwordReference = null;
+  };
 }

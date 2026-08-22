@@ -47,3 +47,23 @@ The app UI is not the source of truth: edit `mouse.nix` and rebuild instead.
 Do not run another mouse remapper alongside LinearMouse. Karabiner remains
 keyboard-only. SteerMouse is no longer part of the desired configuration; global
 Homebrew cleanup still remains `"uninstall"`, not `"zap"`.
+
+Logi Options+ is the one declared exception, and it is not a remapper here. The
+MagSpeed wheel has two MECHANICAL modes — ratchet and free-spin — and they are a
+HID++ feature of the mouse firmware, not an event stream anything on this Mac can
+filter. LinearMouse cannot reach them, which the research note above states
+outright, so a wheel stuck in free-spin cannot be fixed from this repository. On
+2026-08-21 that cost most of a day: the smooth scrolling was assumed to be the
+declared `scrolling.smoothed` engine, the engine was removed, and the wheel still
+had no detents, because the two are unrelated.
+
+Every alternative was checked first. logiops, logiops-rs and OpenLogi handle
+SmartShift but are Linux-only; Mouser, mx3-lite, optune and nibble run on macOS
+but do not expose it; SteerMouse remaps input events and cannot touch a firmware
+feature. Logi Options+ is the only macOS tool that can, which is the whole
+justification for a second mouse daemon.
+
+The mode is stored on the mouse, so Options+ may be usable as a one-time
+configuration tool: set ratchet, confirm it survives, then remove the cask and
+let strict cleanup uninstall it. Verify before depending on that. If it is kept,
+it needs Accessibility and Input Monitoring approval, which stays manual.

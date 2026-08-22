@@ -34,7 +34,29 @@ echo "==> Activating $host (password dialog will appear)"
 # --preserve-env, NOT an `env` wrapper: sudoers matches the literal command,
 # and the NOPASSWD rule names darwin-rebuild — wrapping in `env` makes sudo
 # see `env` and prompt despite the rule (measured 2026-08-14).
-/usr/bin/sudo -A --preserve-env=NIX_CONFIG_LOCAL \
+#
+# SUDO_ASKPASS is preserved alongside NIX_CONFIG_LOCAL. Necessary, but NOT
+# sufficient on its own, and the distinction is worth writing down.
+#
+# Homebrew starts a SECOND, nested sudo for any cask shipping an installer
+# script rather than an app bundle. Per sudo(8), SUDO_ASKPASS is used
+# automatically "if no terminal is available" — exactly that case — but only if
+# the variable is still in the environment by then, and it is not. nix-darwin
+# performs a further hop of its own during activation:
+#
+#   sudo --preserve-env=PATH --user=<user> --set-home ... brew bundle
+#
+# --preserve-env is a whitelist naming only PATH, so SUDO_ASKPASS is dropped
+# there regardless of what this script exports. Passing it from here fixes the
+# first hop and cannot fix the second.
+#
+# Measured 2026-08-21 installing logi-options+: "sudo: a terminal is required
+# to read the password", the cask failed, the bundle reported that failure, and
+# darwin-rebuild still exited 0 — so activation looked successful with the
+# application simply absent. A cask with a sudo installer therefore cannot be
+# installed by an unattended activation today. It needs either a terminal, or
+# an askpass path declared in sudo.conf(5), which no environment hop can strip.
+/usr/bin/sudo -A --preserve-env=NIX_CONFIG_LOCAL,SUDO_ASKPASS \
   /run/current-system/sw/bin/darwin-rebuild switch --impure \
   --flake "path:${repository}#${host}"
 

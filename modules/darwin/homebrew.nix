@@ -65,6 +65,25 @@
       # button". A wheel stuck in free-spin is therefore unfixable from this
       # repository, and was, for most of 2026-08-21.
       #
+      # The precise reason, so nobody has to ask "why not just fix it in
+      # LinearMouse" a second time. Two DIFFERENT HID++ features are involved:
+      #
+      #   0x2121 hiResWheel  - setWheelMode: resolution, invert, event routing.
+      #                        Reports ratchet state; does not set it.
+      #   0x2110 SmartShift  - setRatchetControlMode: the authoritative control
+      #                        for ratchet vs free-spin. autoDisengage 0xFF
+      #                        means "ratchet always engaged", which is exactly
+      #                        what turning SmartShift off in Options+ does.
+      #
+      # LinearMouse implements ONLY 0x2121, and within it only the single bit
+      # 0x02 - its controller defines getMode, setMode and
+      # highResolutionModeBit, and nothing else. There is no 0x2110 code in it
+      # and no ratchet field in linearmouse.json's schema. So LinearMouse did
+      # not turn ratchet off and cannot turn it back on: it has never been able
+      # to address that feature. It is a missing capability upstream, not a
+      # protocol limit, and it also means LinearMouse cannot clobber whatever
+      # Options+ sets here.
+      #
       # Every alternative was checked before adding a second daemon. logiops,
       # logiops-rs and OpenLogi do SmartShift but are Linux; Mouser, mx3-lite,
       # optune and nibble are macOS but do not expose it; SteerMouse remaps

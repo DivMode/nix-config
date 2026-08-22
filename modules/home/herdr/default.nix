@@ -245,38 +245,65 @@ in
     else
       # `plugin list` emits one JSON envelope; pull id and root back out as the
       # same tab-separated, sorted shape as the desired file.
-      livePlugins="$(
-        ${herdrBin} plugin list --json 2>/dev/null \
-          | ${lib.getExe pkgs.jq} -r '.result.plugins[]? | "\(.plugin_id)\t\(.plugin_root)"' \
-          | sort
-      )" || livePlugins=""
-
-      if [[ "$livePlugins" == "$(cat ${desiredPlugins})" ]]; then
-        verboseEcho "Herdr plugins are already current"
+      #
+      # A FAILED call is not an empty registry, and conflating the two is what
+      # broke activation on 2026-08-21. Upgrading Herdr leaves a new CLI talking
+      # to the still-running old server, which answers every command with
+      # {"error":{"code":"protocol_mismatch"}}. The old code sent that down the
+      # `|| livePlugins=""` path, concluded that nothing was linked, and went on
+      # to relink the whole declared set against a server that could not accept
+      # a single one of them — so `plugin link` failed, and because it was
+      # unguarded it aborted the entire Home Manager activation. Everything
+      # ordered after this entry silently never ran, including setupLaunchAgents,
+      # while darwin-rebuild still exited 0.
+      #
+      # So the envelope is inspected rather than assumed: `.result.plugins` must
+      # actually be present before any reconciliation happens.
+      if ! pluginRegistry="$(${herdrBin} plugin list --json 2>/dev/null)" \
+        || ! printf '%s' "$pluginRegistry" \
+             | ${lib.getExe pkgs.jq} -e 'has("result") and (.result | has("plugins"))' >/dev/null 2>&1; then
+        # A BRANCH, not an early return. Home Manager concatenates every
+        # activation snippet into one script body rather than into functions,
+        # so `return` here is "can only return from a function or sourced
+        # script" — which would abort activation exactly like the failure this
+        # guard exists to prevent.
+        warnEcho "Herdr's CLI could not read the plugin registry; skipping plugin reconciliation. If Herdr was just upgraded, the running server is older than the CLI — run 'herdr server stop' (this exits pane processes) and rebuild."
       else
-        # Unlink anything whose id is declared but whose root has moved, and
-        # anything not declared at all. Plugins installed outside this
-        # repository are left alone: this removes only ids it owns.
-        while IFS=$'\t' read -r liveId liveRoot; do
-          [[ -n "$liveId" ]] || continue
-          if ! grep -qF "$liveId	$liveRoot" ${desiredPlugins} \
-            && grep -qF "$liveId	" ${desiredPlugins}; then
-            run ${herdrBin} plugin unlink "$liveId"
-          fi
-        done <<< "$livePlugins"
+          livePlugins="$(
+          printf '%s' "$pluginRegistry" \
+            | ${lib.getExe pkgs.jq} -r '.result.plugins[]? | "\(.plugin_id)\t\(.plugin_root)"' \
+            | sort
+        )"
 
-        while IFS=$'\t' read -r wantId wantRoot; do
-          [[ -n "$wantId" ]] || continue
-          if ! printf '%s\n' "$livePlugins" | grep -qF "$wantId	$wantRoot"; then
-            run ${herdrBin} plugin link "$wantRoot"
-          fi
-        done < ${desiredPlugins}
+        if [[ "$livePlugins" == "$(cat ${desiredPlugins})" ]]; then
+          verboseEcho "Herdr plugins are already current"
+        else
+          # Unlink anything whose id is declared but whose root has moved, and
+          # anything not declared at all. Plugins installed outside this
+          # repository are left alone: this removes only ids it owns.
+          while IFS=$'\t' read -r liveId liveRoot; do
+            [[ -n "$liveId" ]] || continue
+            if ! grep -qF "$liveId	$liveRoot" ${desiredPlugins} \
+              && grep -qF "$liveId	" ${desiredPlugins}; then
+              run ${herdrBin} plugin unlink "$liveId" \
+                || warnEcho "Herdr refused to unlink $liveId; leaving the registry alone"
+            fi
+          done <<< "$livePlugins"
+
+          while IFS=$'\t' read -r wantId wantRoot; do
+            [[ -n "$wantId" ]] || continue
+            if ! printf '%s\n' "$livePlugins" | grep -qF "$wantId	$wantRoot"; then
+              run ${herdrBin} plugin link "$wantRoot" \
+                || warnEcho "Herdr refused to link $wantRoot; leaving the registry alone"
+            fi
+          done < ${desiredPlugins}
+        fi
+
+        # config.toml is a symlink whose target changes when `settings` above
+        # changes; the running server holds the old contents until told.
+        run ${herdrBin} server reload-config || \
+          warnEcho "Herdr is running but refused reload-config; restart it to pick up config.toml"
       fi
-
-      # config.toml is a symlink whose target changes when `settings` above
-      # changes; the running server holds the old contents until told.
-      run ${herdrBin} server reload-config || \
-        warnEcho "Herdr is running but refused reload-config; restart it to pick up config.toml"
     fi
   '';
 }

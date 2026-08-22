@@ -1,6 +1,6 @@
 {
   imports = [
-    ./chrome-web-apps.nix
+    ./chrome.nix
     ./dock.nix
     ./firewall.nix
     ./fonts.nix

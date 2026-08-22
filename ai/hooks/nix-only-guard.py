@@ -46,8 +46,63 @@ def deny(reason):
     sys.exit(0)
 
 
+# A heredoc introducer: <<EOF, <<-EOF, <<'EOF', << "EOF".
+HEREDOC_RE = re.compile(r"<<-?\s*(['\"]?)([A-Za-z_][A-Za-z0-9_]*)\1")
+
+# Interpreters that EXECUTE a heredoc body instead of consuming it as data.
+SHELL_INTERPRETERS = {"bash", "sh", "zsh", "dash", "ksh", "fish", "csh", "tcsh"}
+
+
+def strip_heredoc_bodies(command):
+    """Remove heredoc bodies that are DATA, so they are not read as commands.
+
+    This is the guard's single largest source of false positives, and every
+    instance looks the same: text that merely NAMES a blocked mechanism gets
+    sliced up by split_segments() and checked as though it were being run.
+
+    Two things routinely carry such text, and neither changes the machine:
+
+      - `git commit -F -` heredocs. A commit message explaining why a rule
+        exists has to name the thing it forbids. Twice already, a commit
+        describing this very guard was blocked by it.
+      - `python3 - <<'PY' ... PY` heredocs that WRITE a Nix module. Declaring
+        a machine change in the repository is what the guard's own denial
+        message instructs you to do, so blocking it told the author to do the
+        one thing it then refused to let them do.
+
+    Bodies fed to a shell are deliberately NOT stripped. `bash <<'EOF'` really
+    does execute what it contains, so that text is a command and must stay
+    checked. The distinction is effect, not spelling.
+    """
+    lines = command.split("\n")
+    kept = []
+    index = 0
+    while index < len(lines):
+        line = lines[index]
+        kept.append(line)
+        index += 1
+
+        terminators = [match.group(2) for match in HEREDOC_RE.finditer(line)]
+        if not terminators:
+            continue
+
+        # If this line hands the body to a shell, the body is executable and
+        # every line of it stays in scope for checking.
+        words = re.findall(r"[A-Za-z0-9_./-]+", line)
+        if any(os.path.basename(word) in SHELL_INTERPRETERS for word in words):
+            continue
+
+        for terminator in terminators:
+            while index < len(lines) and lines[index].strip() != terminator:
+                index += 1
+            if index < len(lines):
+                index += 1  # drop the terminator line itself
+    return "\n".join(kept)
+
+
 def split_segments(command):
     """Split a compound command into individually-checkable segments."""
+    command = strip_heredoc_bodies(command)
     return [s for s in re.split(r"&&|\|\||[;&|\n]", command) if s.strip()]
 
 

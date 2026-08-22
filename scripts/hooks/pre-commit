@@ -8,4 +8,13 @@
 
 set -euo pipefail
 
-exec "$(git rev-parse --show-toplevel)/scripts/check-private-names.sh" --staged
+repository="$(git rev-parse --show-toplevel)"
+
+# The PreToolUse guard denies commands, so a regression in it is expensive in
+# both directions: loosened, it stops protecting the machine; tightened, it
+# blocks work that changes nothing and teaches whoever hit it to look for a way
+# around it. Both directions are asserted, and it runs here because the guard is
+# edited from this repository like anything else.
+python3 "$repository/ai/hooks/nix-only-guard-test.py"
+
+exec "$repository/scripts/check-private-names.sh" --staged

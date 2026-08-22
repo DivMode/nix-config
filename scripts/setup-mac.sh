@@ -369,6 +369,13 @@ stage "Restore local.nix from 1Password" 1
 BREW_PREFIX=$([[ "$MAC_SYSTEM" == "aarch64-darwin" ]] && printf /opt/homebrew || printf /usr/local)
 OP="$BREW_PREFIX/bin/op"
 LOCAL_DOC_TITLE="nix-config local.nix $MAC_HOST"
+# Seeded, not hard-coded into the prompt: `ask` offers whatever is already in
+# the ignored .setup-mac.env as the default, so writing one first turns the
+# common case into a single Enter while still letting a different vault be
+# typed. "Homelab" is safe to name here because local.nix lists it in
+# publicTerms — it identifies nothing. A vault named after a company or client
+# must NOT be seeded this way; leave it to be asked.
+[[ -n "$(_existing OP_VAULT || true)" ]] || write_env OP_VAULT "Homelab"
 ask OP_VAULT "1Password vault holding this host's local.nix:"
 validate_nix_text "The vault name" "$OP_VAULT"
 write_env OP_VAULT "$OP_VAULT"

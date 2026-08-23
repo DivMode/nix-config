@@ -1,8 +1,8 @@
 # AI configuration source
 
-`default.nix` is the canonical public source for shared instructions, specialist
-agents, client hook programs, and MCP server metadata. `modules/home/ai` renders
-it into client-native files.
+This directory is the canonical public source for shared instructions,
+specialist agents, client hook programs, Codex preferences, and MCP server
+metadata. `modules/home/ai` renders or merges them into client-native files.
 
 The point of declaring any of this is recoverability. A coding agent deleted a
 previous machine's assistant configuration; everything here is restored by
@@ -15,6 +15,7 @@ previous machine's assistant configuration; everything here is restored by
 | `instructions/global.md` | `~/.claude/CLAUDE.md`, `~/.codex/AGENTS.md` |
 | `agents/*/prompt.md` | `~/.claude/agents/<name>.md`, `~/.codex/skills/<name>/SKILL.md` |
 | `hooks/nix-only-guard.py` | referenced by absolute Nix store path from Claude Code's settings |
+| `codex/default.nix` | narrowly merged into mutable `~/.codex/config.toml` |
 | `mcp/servers.nix` | `~/.config/nix-config/ai/` review artifacts |
 
 Instructions here are global, so they apply to every project. Repository facts
@@ -66,43 +67,49 @@ Code does not install on its own.
 
 ## Codex
 
-Codex mutates `~/.codex/config.toml` at runtime, so its declarative TOML is
-emitted as a review artifact rather than linked over the live file. Claude's
-mutable user state is likewise not overwritten. Both clients need merge-safe
-adapters before those generated settings can become live configuration.
+Codex mutates `~/.codex/config.toml` at runtime. The live file therefore remains
+a normal user-writable file; it is never replaced by a Nix-store symlink. Home
+Manager now overlays one durable, machine-wide preference layer while leaving
+Codex's application state in place.
 
-### `~/.codex/config.toml` is deliberately not managed
+### `~/.codex/config.toml` has a narrowly managed preference layer
 
-Investigated on 2026-08-13 and rejected, so it is not re-investigated. Unlike
-`~/.claude`, there is nothing here worth declaring, and declaring it would be
-actively wrong for three separate reasons.
+The [official Codex configuration reference](https://developers.openai.com/codex/config-reference/)
+defines the approval, sandbox, and app-default keys this machine needs to keep
+across every project:
 
-**It is mostly not configuration.** Of roughly forty keys, six are genuine
-preferences — `model`, `model_reasoning_effort`, and four `[desktop]` display
-toggles. Everything else is state Codex writes about itself: `last_updated`
-timestamps on marketplaces, `source` paths into `~/.codex/.tmp/` and
-`~/.cache/codex-runtimes/`, `[plugins."<name>@<marketplace>"]` enable flags for
-plugins Codex installs on its own, an `[mcp_servers.node_repl]` block full of
-paths into `/Applications/ChatGPT.app` with a pinned SHA256 and the app's build
-version, and `[projects."<path>"]` trust levels that accumulate as you work.
+```toml
+approval_policy = "never"
+approvals_reviewer = "auto_review"
+sandbox_mode = "danger-full-access"
 
-**This repository is public.** The file is full of absolute home-directory
-paths and the names of private project checkouts. Committing it would breach
-the first safety rule in `AGENTS.md`.
+[apps._default]
+approvals_reviewer = "auto_review"
+default_tools_approval_mode = "approve"
+destructive_enabled = true
+enabled = true
+open_world_enabled = true
+```
 
-**There is no merge-safe way to write it.** The Defaults domain used for Claude
-Code can be applied key-by-key with `defaults import`; TOML has no equivalent,
-so managing six keys inside a forty-key file that the application rewrites at
-runtime needs a real merge adapter. That is why the declarative TOML in this
-repository is emitted as a review artifact and not linked over the live file.
+`codex/default.nix` generates exactly that document and packages
+`merge-config.py` with nixpkgs' pinned Python and TomlKit. On activation the
+merger parses the existing file, updates only those leaves, and round-trips all
+unknown keys, tables, comments, plugin and marketplace entries, project trust
+entries, MCP paths, and ordering as far as TomlKit's preserving parser allows.
+The generated preferences are also linked under
+`~/.config/nix-config/ai/codex-managed-preferences.toml` for review.
 
-**And the recovery case is weak.** Losing this file costs a model preference and
-four display toggles. The plugins reinstall themselves and the trust levels
-regenerate as you use them. Compare `~/.claude`, which held a 151-line guard
-hook that existed nowhere else — that one was worth closing.
+Invalid TOML fails activation without touching the original. Changed content is
+written to a `0600` temporary file in the same directory, flushed, and atomically
+renamed over the live path. Identical bytes are not rewritten; an otherwise
+current file with broader permissions is tightened to `0600` without changing
+its contents or modification time.
 
-Revisit only if Codex grows settings that are expensive to lose and cannot be
-recreated by using the application.
+Everything outside the document above remains application-owned mutable state:
+model and desktop choices, update timestamps, plugins and marketplaces, project
+trust, generated MCP launch paths, and client-specific metadata. The public
+repository never imports or commits the live file, because it can contain
+private checkout paths and application-generated values.
 
 ### Codex plugins
 
@@ -110,7 +117,8 @@ Codex has a plugin system of its own. Plugins carry a
 `.codex-plugin/plugin.json` manifest, marketplaces are declared as
 `[marketplaces.<name>]`, and installed plugins as
 `[plugins."<plugin>@<marketplace>"]` — all in `~/.codex/config.toml`, which
-Codex writes itself. That state is currently unmanaged.
+Codex writes itself. That state remains application-managed; the preference
+merger preserves it but does not declare it.
 
 This matters when sharing a third-party skill set between clients: the Claude
 Code and Codex plugin formats are **different**, and a repository shipping

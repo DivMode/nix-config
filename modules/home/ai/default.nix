@@ -172,6 +172,11 @@ let
     mcp_servers = codexServers;
   };
 
+  # Codex owns config.toml as mutable application state. This packages the
+  # comment-preserving merger and the narrow preference document it overlays;
+  # the live file remains a normal writable file rather than a store symlink.
+  codexConfig = import ../../../ai/codex { inherit pkgs; };
+
   mcpRegistryJson = pkgs.writeText "ai-mcp-registry.json" (
     builtins.toJSON {
       schemaVersion = 1;
@@ -374,12 +379,30 @@ in
       // sharedCodexSkills
       // {
         ".codex/AGENTS.md".source = ai.instructions;
-        # Codex mutates ~/.codex/config.toml at runtime. Keep the declarative
-        # desired state as a reviewable artifact instead of replacing the live
-        # file with an immutable Nix-store symlink.
+        # MCP endpoints remain a review artifact. Codex's live config paths and
+        # plugin state are application-owned and may include private metadata.
         ".config/nix-config/ai/codex-config.toml".source = codexToml;
+        ".config/nix-config/ai/codex-managed-preferences.toml".source = codexConfig.preferencesToml;
         ".config/nix-config/ai/mcp-registry.json".source = mcpRegistryJson;
       };
+
+    # config.toml mixes a small set of durable preferences with state Codex
+    # writes itself: plugin and marketplace registrations, project trust,
+    # generated MCP paths, timestamps, and desktop settings. Overlay only the
+    # generic preference document above with tomlkit, which preserves unknown
+    # keys, tables, comments, and ordering while updating values in place.
+    #
+    # The merger parses before writing, refuses a symlink or invalid TOML, and
+    # commits changed bytes through a 0600 temporary file in the same directory
+    # followed by atomic rename. Identical content is not rewritten; a matching
+    # file with broader permissions is chmodded to 0600 without changing bytes.
+    home.activation.installCodexPreferences = lib.hm.dag.entryAfter [ "writeBoundary" ] ''
+      codexDirectory="$HOME/.codex"
+      configFile="$codexDirectory/config.toml"
+
+      run mkdir -p "$codexDirectory"
+      run ${lib.getExe codexConfig.merger} --declared ${codexConfig.preferencesToml} "$configFile"
+    '';
 
     # Codex creates an empty ~/.codex/AGENTS.md on first run. Home Manager
     # refuses to replace an unmanaged file, so activation would abort before

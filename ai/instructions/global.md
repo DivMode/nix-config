@@ -130,9 +130,25 @@ anything:
 - **A plausible mechanism supported by real source code is still a guess.**
   Several mutually exclusive theories can each be well supported. Find the
   observation that separates them.
+- **Confirm the check can SEE the thing before trusting that it passed.** A
+  matching fingerprint is not matching bytes. Many checks are summaries — a
+  hash, an aggregate, a sampled view — and a summary that normalises away the
+  field in question reports "identical" for two things that differ on the wire.
+  Ask what the check is blind to, and go to the raw observation when the claim
+  is about the raw thing.
+- **A measurement that cannot come back negative is not a measurement.** Before
+  running it, say which result would falsify the hypothesis. If no possible
+  output would, it is decoration: passive sampling that only ever confirms, a
+  probe pointed at the wrong context, a success-only log filter.
 
 When you do state a root cause, carry the evidence that proves it: the source
 file, the log line, the stored bytes. Write anything unproven as a hypothesis.
+
+**Be wary of "we have ruled everything out."** That claim ends a search, so it
+needs a real enumeration behind it — and the enumeration is usually the weakest
+part of the argument, because it silently omits whatever nobody thought to name.
+Prefer the narrower claim that survives contact: "these N things were tested and
+did not move it."
 
 ## Changing a machine
 

@@ -69,9 +69,9 @@ reusable user choices belong in `profiles/`. Future NixOS servers should add
 
 ## AI source model
 
-`ai/default.nix` is canonical. Renderers consume the same instructions and agent
-prompts but produce client-native files. Client-specific settings should remain in
-renderer modules rather than leaking into the shared source.
+The `ai/` directory is canonical. `ai/default.nix` supplies shared instructions
+and agent prompts, while client-specific declarations stay in their own source
+and renderer modules rather than leaking into the shared layer.
 
 The renderers are enabled, and the reason is recoverability: a coding agent
 deleted a previous machine's assistant configuration, so the instruction file,
@@ -87,10 +87,12 @@ from the `llm-agents` flake input, and `settings.json` is installed as a real
 reasserted file because that option would make an application-writable file a
 read-only store symlink. The Claude desktop cask is not installed.
 
-Codex's declarative MCP TOML is rendered to a review artifact, not linked over its
-mutable `~/.codex/config.toml`. Claude's user-scoped MCP state is likewise not
-overwritten because it is mixed with mutable client state. Both need merge-safe
-adapters before the generated registry becomes live client configuration.
+Codex's declarative MCP TOML is rendered to a review artifact, not linked over
+its mutable `~/.codex/config.toml`. A separate TomlKit adapter atomically merges
+only the generic approval, sandbox, and app defaults into that live file while
+preserving its unknown application-owned state. Claude's user-scoped MCP state
+is likewise not overwritten because it is mixed with mutable client state; the
+generated MCP registry remains review-only for both clients.
 
 ## Runtime secret flow
 

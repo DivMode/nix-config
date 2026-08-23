@@ -160,6 +160,18 @@
         modules = [ ./hosts/example-mac ];
       };
 
+      checks =
+        nixpkgs.lib.genAttrs
+          [
+            "aarch64-darwin"
+            "x86_64-darwin"
+            "aarch64-linux"
+            "x86_64-linux"
+          ]
+          (system: {
+            codex-config-merge = (import ./ai/codex { pkgs = nixpkgs.legacyPackages.${system}; }).tests;
+          });
+
       # `nixfmt-tree`, not bare `nixfmt`. `nix fmt` invokes the formatter with
       # the paths to format, and passing none makes bare `nixfmt` read stdin —
       # so the documented `nix fmt` workflow silently formatted nothing and

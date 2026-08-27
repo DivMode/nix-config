@@ -51,7 +51,7 @@
     # moving the tag HERE, then letting the vendor-hash mismatch in
     # development.nix report the new hash if Go dependencies changed.
     gcx-src = {
-      url = "github:grafana/gcx/v1.1.0";
+      url = "github:grafana/gcx/v1.2.0";
       flake = false;
     };
 

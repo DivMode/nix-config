@@ -17,13 +17,14 @@ let
 
   # Grafana's kubectl-style CLI for dashboards, alerts, metrics, logs and
   # traces, agent-optimized. Rebuilt from the flake-pinned release tag rather
-  # than taken from nixpkgs as-is: nixpkgs trails upstream (1.0.0 against a
-  # v1.1.0 released 2026-08-14), and ../ai loads the SAME source's
-  # claude-plugin/ directory into Claude Code, so the binary and the skills
-  # that describe it must move together. The derivation is finalAttrs-style,
-  # so overriding version and src recomputes the tag-dependent ldflags;
-  # vendorHash carries over until a Go dependency changes, at which point the
-  # build fails with the new hash to declare here.
+  # than taken from nixpkgs as-is: nixpkgs trails upstream badly — nixos-26.05
+  # still packages 0.2.14 on 2026-08-27, against the v1.2.0 released
+  # 2026-08-25 — and ../ai loads the SAME source's claude-plugin/ directory
+  # into Claude Code, so the binary and the skills that describe it must move
+  # together. The derivation is finalAttrs-style, so overriding version and src
+  # recomputes the tag-dependent ldflags; vendorHash carries over until a Go
+  # dependency changes, at which point the build fails with the new hash to
+  # declare here.
   #
   # Why it is declared at all: the work monorepo's health and alert-liveness
   # scripts spawn `gcx` from PATH and hard-exit without it. On 2026-08-16 its
@@ -31,11 +32,11 @@ let
   # incident — a missing tool reading as a broken system, the expensive kind
   # of wrong.
   gcx = pkgs.gcx.overrideAttrs (old: {
-    version = "1.1.0";
+    version = "1.2.0";
     src = inputs.gcx-src;
     vendorHash = "sha256-OvIK8sgWUo3t0+oure7+PpU7SFzbLyppyeaWQtKyZXg=";
     meta = old.meta // {
-      changelog = "https://github.com/grafana/gcx/releases/tag/v1.1.0";
+      changelog = "https://github.com/grafana/gcx/releases/tag/v1.2.0";
     };
   });
 

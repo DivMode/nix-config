@@ -37,6 +37,7 @@ class MergeCodexConfigTests(unittest.TestCase):
 
     def assert_managed_values(self, parsed: dict[str, object]) -> None:
         self.assertEqual(parsed["approval_policy"], "never")
+        self.assertEqual(parsed["model_reasoning_effort"], "xhigh")
         self.assertEqual(parsed["approvals_reviewer"], "auto_review")
         self.assertEqual(parsed["sandbox_mode"], "danger-full-access")
         defaults = parsed["apps"]["_default"]  # type: ignore[index]

@@ -39,10 +39,59 @@ let
 
   mountScript = pkgs.writeShellApplication {
     name = "mount-network-shares";
-    runtimeInputs = [ ];
+    runtimeInputs = [ pkgs.coreutils ];
     text = ''
       server=${escapeShellArg (shares.server or "")}
       account=${escapeShellArg (shares.account or "")}
+
+      # Is this server on the network the Mac is attached to RIGHT NOW?
+      #
+      # Asked before anything touches NetFS, because NetFS reports an
+      # unreachable server by DRAWING A MODAL DIALOG — "There was a problem
+      # connecting to the server". That dialog comes from NetAuthAgent, a
+      # separate process, so the >/dev/null on the osascript call below cannot
+      # suppress it and never could. Observed 2026-08-27: on an iPhone hotspot
+      # (172.20.10.0/28, the file server nowhere on it) this agent's 300s timer
+      # put that dialog on screen three times every five minutes, and
+      # ~/Library/Logs/mount-network-shares.log recorded the matching "could
+      # not mount ... after 5 attempts" for all three shares.
+      #
+      # Being off the home network is a NORMAL state for this Mac, not a
+      # fault. So the answer here decides between doing nothing quietly and
+      # mounting — it is not an error path.
+      serverPresent() {
+        probe=''${server%.}
+
+        case "$probe" in
+          *._smb._tcp.local)
+            # A Bonjour service instance name is not a hostname — getaddrinfo
+            # cannot resolve it, so only DNS-SD can answer, which is also why
+            # `nc` is no use in this branch.
+            #
+            # `dns-sd` never exits on its own: `timeout` is what ends it, so
+            # its exit status is always 124 and says nothing. The OUTPUT is
+            # the signal. Captured into a variable rather than piped into
+            # `grep -q`, because grep closes the pipe on its first match and
+            # `set -o pipefail` would then report the SUCCESSFUL case as a
+            # failure.
+            #
+            # Verified 2026-08-27 by advertising an instance locally with
+            # `dns-sd -R`: present prints "can be reached at <host>.local.:<port>"
+            # within milliseconds, absent prints nothing at all.
+            resolved=$(timeout 3 /usr/bin/dns-sd -L "''${probe%._smb._tcp.local}" _smb._tcp local 2>/dev/null || true)
+            case "$resolved" in
+              *"can be reached at"*) return 0 ;;
+              *) return 1 ;;
+            esac
+            ;;
+          *)
+            # A plain hostname or address: ask the SMB port itself. -z sends
+            # nothing, -G bounds the connect so an unroutable address cannot
+            # hold this agent open for the whole TCP timeout.
+            /usr/bin/nc -z -G 2 -w 2 "$server" 445 >/dev/null 2>&1
+            ;;
+        esac
+      }
 
       # Reconcile one share. Idempotent: this runs at login AND on a timer, so
       # doing nothing when the share is already there is the common path.
@@ -60,28 +109,45 @@ let
           return 0
         fi
 
-        # At login the agent can start before the network is reachable. Retry a
-        # few times close together so a cold boot settles in under a minute,
-        # rather than waiting out the whole StartInterval.
-        attempt=0
-        while [ "$attempt" -lt 5 ]; do
-          # The ACCOUNT is in the URL deliberately. A bare smb://server/share
-          # leaves NetFS to pick a username, and the Keychain item is keyed on
-          # (server, account) — miss the account and the stored password is not
-          # found, so a mount that should be silent raises an authentication
-          # dialog instead. It also matches the form the existing mounts
-          # already have: //<account>@<server>/<share>.
-          if /usr/bin/osascript ${mountVolume} "smb://''${account}@''${server}/''${share}" >/dev/null 2>&1; then
-            mountedSomething=1
-            return 0
-          fi
-          attempt=$((attempt + 1))
-          sleep 10
-        done
+        # ONE attempt, deliberately. The retry loop that used to be here existed
+        # for "the network is not up yet", and that job now belongs to
+        # serverPresent — by the time execution reaches this line the server
+        # has answered, so a failure means something a retry cannot fix: a
+        # share that no longer exists, or a password the Keychain no longer
+        # matches. Each such failure costs one NetFS dialog, so five attempts
+        # would put five on screen. This is a reconciler; the 300s timer is
+        # the retry.
+        #
+        # The ACCOUNT is in the URL deliberately. A bare smb://server/share
+        # leaves NetFS to pick a username, and the Keychain item is keyed on
+        # (server, account) — miss the account and the stored password is not
+        # found, so a mount that should be silent raises an authentication
+        # dialog instead. It also matches the form the existing mounts already
+        # have: //<account>@<server>/<share>.
+        if /usr/bin/osascript ${mountVolume} "smb://''${account}@''${server}/''${share}" >/dev/null 2>&1; then
+          mountedSomething=1
+          return 0
+        fi
 
-        printf 'could not mount smb://%s/%s after 5 attempts\n' "$server" "$share" >&2
+        printf 'could not mount smb://%s/%s\n' "$server" "$share" >&2
         return 1
       }
+
+      # At login this agent can start before Wi-Fi has associated, so give the
+      # server a short window to appear before concluding it is absent — the
+      # same 5 x 10s the per-share retry used to spend, now spent once, and
+      # spent on a probe that draws no UI.
+      attempt=0
+      until serverPresent; do
+        attempt=$((attempt + 1))
+        if [ "$attempt" -ge 5 ]; then
+          # Silent on purpose, and exit 0 rather than 1. This agent runs every
+          # 300s forever, so logging every off-site pass would grow an
+          # unbounded log describing a machine that is working correctly.
+          exit 0
+        fi
+        sleep 10
+      done
 
       status=0
       mountedSomething=0

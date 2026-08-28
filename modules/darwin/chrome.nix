@@ -6,11 +6,29 @@
 }:
 let
   plist = pkgs.formats.plist { };
-  # The SMB share downloads land on, derived from the SAME local.nix definition
-  # that modules/home/network-shares.nix mounts and that dock.nix pins. Written
-  # once, read three times: a literal repeated in three files is three things
-  # that will disagree the first time the share is renamed.
-  downloadDirectory = "/Volumes/${local.networkShares.downloadsShare}";
+  # Where downloads land: a LOCAL path, and the reason is that this policy has
+  # no fallback to give.
+  #
+  # `DownloadDirectory` takes one static string, read at launch, and it is
+  # mandatory. There is no second choice for Chrome to try. So for as long as
+  # this named an SMB mount — it did until 2026-08-27 — every download started
+  # off the home network was aimed at a path that did not exist and that Chrome
+  # could not create, /Volumes being root:wheel drwxr-xr-x.
+  #
+  # That is not an edge case on this machine. The home connection drops often
+  # enough to run on a phone hotspot instead, and on 2026-08-27 it did exactly
+  # that: 172.20.10.0/28, all three shares unmounted, for the whole morning.
+  #
+  # Serving the share when it is mounted and a disk when it is not was
+  # considered and rejected. It can only be built by flipping what one fixed
+  # path points at, which scatters downloads across two locations according to
+  # which network happened to be up, and puts a flip between Chrome writing
+  # <name>.crdownload and renaming it. One always-present destination cannot
+  # half-work.
+  #
+  # Read from local.nix because it names a volume on this machine.
+  # modules/home/downloads.nix owns creating it; dock.nix pins the same value.
+  downloadDirectory = local.downloadsDirectory;
 
   chromePolicy = plist.generate "com.google.Chrome.plist" {
     WebAppInstallForceList = [
@@ -24,7 +42,7 @@ let
       }
     ];
 
-    # Every download goes to the network share, and the setting is not the
+    # Every download goes to that one directory, and the setting is not the
     # user's to move.
     #
     # Chrome's own policy definition is unambiguous about the guarantee: it
@@ -38,11 +56,11 @@ let
     # recommendation a profile may overrule — so it cannot express "downloads
     # go here, and that is not yours to change".
     #
-    # This was already the effective value before it was declared, but only as
-    # `download.default_directory` inside the profile's own Preferences JSON,
-    # which docs/state-boundary.md correctly lists as mutable state Nix does not
-    # own. A new profile, a reset, or a new Mac would have quietly gone back to
-    # ~/Downloads with no error. The policy is what survives all three.
+    # The policy is also what survives a new profile, a reset, or a new Mac.
+    # Setting it through `download.default_directory` in the profile's own
+    # Preferences JSON does not: docs/state-boundary.md correctly lists that as
+    # mutable state Nix does not own, and all three of those events send it
+    # quietly back to ~/Downloads with no error.
     DownloadDirectory = downloadDirectory;
 
     # Strictly redundant for the path guarantee — DownloadDirectory already
@@ -88,7 +106,8 @@ let
   # manual step docs/setup/new-mac.md exists to eliminate. Writing to
   # /Library/Preferences instead would survive boot but only ever be a
   # RECOMMENDED policy — Chromium's own Mac guide says so plainly — and a
-  # recommendation is not what "downloads go to the share" means here.
+  # recommendation is not what "downloads go here, and that is not yours to
+  # change" means.
   installPolicy = pkgs.writeShellApplication {
     name = "install-chrome-managed-policy";
     text = ''

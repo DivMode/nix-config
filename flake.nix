@@ -90,6 +90,7 @@
         "homeDirectory"
         "git"
         "onePassword"
+        "downloadsDirectory"
       ];
       missingLocalFields = builtins.filter (name: !(builtins.hasAttr name rawLocal)) requiredLocalFields;
       gitFieldsPresent =
@@ -130,6 +131,11 @@
           throw "local.nix identity values must be non-empty strings"
         else if builtins.match "^/Users/[^/]+$" rawLocal.homeDirectory == null then
           throw "local.nix homeDirectory must be an absolute /Users/<name> path"
+        else if
+          !(builtins.isString rawLocal.downloadsDirectory)
+          || builtins.match "^/.+[^/]$" rawLocal.downloadsDirectory == null
+        then
+          throw "local.nix downloadsDirectory must be an absolute path with no trailing slash; Chrome's DownloadDirectory policy has no fallback, so it must also name a location that is always present"
         else if
           !(builtins.elem rawLocal.system [
             "aarch64-darwin"

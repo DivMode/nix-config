@@ -10,6 +10,7 @@
     ./ai
     ./development.nix
     ./downloads.nix
+    ./fluidvoice.nix
     ./herdr
     ./karabiner.nix
     ./launchers.nix

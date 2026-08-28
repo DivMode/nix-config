@@ -125,7 +125,6 @@ let
         # dialog instead. It also matches the form the existing mounts already
         # have: //<account>@<server>/<share>.
         if /usr/bin/osascript ${mountVolume} "smb://''${account}@''${server}/''${share}" >/dev/null 2>&1; then
-          mountedSomething=1
           return 0
         fi
 
@@ -150,29 +149,15 @@ let
       done
 
       status=0
-      mountedSomething=0
       ${concatMapStringsSep "\n      " (share: "reconcile ${escapeShellArg share} || status=1") (
         shares.mounts or [ ]
       )}
 
-      # Refresh the Dock, but ONLY when a share actually went from absent to
-      # mounted.
-      #
-      # dock.nix pins one of these shares as a stack, and the Dock resolves its
-      # tiles when it starts — which at boot is before this agent has mounted
-      # anything. A folder tile whose path does not exist yet renders as a
-      # question mark, and the Dock never re-checks on its own, so it stays
-      # wrong until something restarts it. Observed on 2026-08-21: the tile was
-      # written at 14:19, the shares mounted at 14:22, and the Dock showed "?"
-      # in between.
-      #
-      # Gated on the transition rather than run every pass, because this agent
-      # fires on a 300s timer and an unconditional refresh would flicker the
-      # Dock every five minutes forever.
-      if [ "$mountedSomething" -eq 1 ]; then
-        /usr/bin/killall -qu "$(/usr/bin/id -un)" Dock || true
-      fi
-
+      # No Dock refresh here any more. It existed because dock.nix pinned one of
+      # these shares as a stack and the Dock, which resolves its tiles at start
+      # and never re-checks, rendered a question mark for as long as the mount
+      # was missing. Since 2026-08-27 the stack is a local directory that is
+      # always present, so there is nothing left for a restart to fix.
       exit "$status"
     '';
   };

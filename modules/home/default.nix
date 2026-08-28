@@ -9,6 +9,7 @@
   imports = [
     ./ai
     ./development.nix
+    ./downloads.nix
     ./herdr
     ./karabiner.nix
     ./launchers.nix

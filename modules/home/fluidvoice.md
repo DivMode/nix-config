@@ -26,67 +26,95 @@ Undeclared on purpose, beyond the ordinary application state:
   either way, because changing a diagnostic setting nobody asked about does not
   belong in a configuration commit.
 
-## Changing the hotkey
+## The hotkey
 
-The shortcut keys are **CFData holding JSON**, not plain values:
+Hyper + S — hold Caps Lock, which `karabiner.nix` emits as
+`Ctrl+Opt+Cmd+Shift`, and press S. Declared in `fluidvoice.nix`, applied at
+activation, and reproducible on a new machine.
+
+It replaced plain `Shift+S`, which was unusable for the obvious reason: that is
+the chord for typing a capital S. Hyper+S is not, because FluidVoice matches on
+an **equality** of the relevant modifier set
+(`HotkeyShortcut.matches(keyCode:modifiers:)`), and a capital S carries Shift
+alone.
+
+### How it is stored, and why it needs its own activation entry
+
+`HotkeyShortcutKey` and `PrimaryDictationShortcuts` are **CFData holding JSON**:
 
 ```
-HotkeyShortcutKey          = {"kind":"keyboard","modifierFlagsRawValue":131072,"keyCode":1}
-PrimaryDictationShortcuts  = [{"kind":"keyboard","modifierFlagsRawValue":131072,"keyCode":1}]
-HotkeyMode                 = "hold"
+{"kind":"keyboard","modifierFlagsRawValue":1966080,"keyCode":1}
 ```
 
-`131072` is `NSEventModifierFlagShift`; keyCode `1` is `S`.
+`1966080` is `shift|control|option|command` as `NSEvent.ModifierFlags` raw
+values; `1` is `kVK_ANSI_S`. The schema is FluidVoice's own `HotkeyShortcut`
+type in `Sources/Fluid/Models/HotkeyShortcut.swift`, read rather than guessed.
 
-Two rules apply, and they point the same way:
+`targets.darwin.defaults` cannot carry it. It renders through
+`lib.generators.toPlist`, which has no `<data>` output and no bytes type. So
+these two keys are written by `home.activation.installFluidVoiceHotkey` using
+`defaults write -data`, ordered after `setDarwinDefaults` so the two writers to
+this domain cannot race.
 
-1. `AGENTS.md` forbids hand-deriving the stored form of anything that is not a
-   plain bool, string or integer. Set it in FluidVoice's own settings window,
-   read the bytes back, declare exactly those.
-2. Nix cannot express it anyway. `targets.darwin.defaults` renders through
-   `lib.generators.toPlist`, which has no `<data>` output and no bytes type.
+The JSON is generated with `builtins.toJSON` from a typed Nix attribute set, so
+what gets reviewed is the structure and the encoding is mechanical — no
+hand-authored hex.
 
-So declaring a shortcut needs an activation entry using
-`defaults write com.FluidApp.app <key> -data <hex>`, ordered
-`entryAfter [ "setDarwinDefaults" ]` the way `mouse.nix` orders its restart.
-That entry is not written yet, because the value it would carry has not been
-chosen.
+The entry compares the **decoded JSON** before writing, so an equivalent
+re-encoding does not read as a change, and restarts FluidVoice only when the
+shortcut actually changed. The restart is necessary because FluidVoice reads
+its preferences at launch and a running process can write its stale in-memory
+value back; gating it is what stops every unrelated rebuild killing the
+dictation application mid-sentence.
 
-`HotkeyMode`, `PressAndHoldMode` and `PromptModeShortcutEnabled` are withheld
-alongside it as one cluster. They describe how the shortcut fires, and
-declaring half a shortcut is how the application and this file end up
-disagreeing — the failure `mouse.nix` documents at length.
+## Why not a modifier-only key
 
-### Procedure
+FluidVoice's own default is Right Option, and a modifier-only shortcut is
+genuinely better in one way: there is no letter to collide with and none to
+auto-repeat. It was rejected for a **left-hand** shortcut specifically, on the
+evidence of `Sources/Fluid/Services/GlobalHotkeyManager.swift`.
 
-1. Set the shortcut in FluidVoice > Settings.
-2. Read back exactly what it stored:
+In `hold` mode a modifier-only shortcut arms with **no threshold**.
+`scheduleModifierOnlyStart` calls `behavior.onHoldStart()` directly on the
+modifier's key-down; the only tap threshold in that file,
+`automaticTapThresholdSeconds = 0.4`, belongs to `automatic` mode. So the
+microphone opens the instant the modifier goes down.
 
-   ```
-   plutil -p ~/Library/Preferences/com.FluidApp.app.plist | grep -iE 'Hotkey|Shortcut|PressAndHold'
-   ```
+That is fine for Right Option, a key this keyboard never otherwise uses. It is
+wrong for every left-hand modifier:
 
-3. Declare those bytes, then rebuild.
+| Key | What it would fire on |
+| --- | --- |
+| Left Option | every `Option+E` accent, every Option-click and Option-drag |
+| Left Control | every terminal `Ctrl-C`, `Ctrl-A`, `Ctrl-R` |
+| Left Command | essentially every keyboard shortcut on the system |
 
-FluidVoice reads its preferences at launch, so a changed value applies at its
-next start. There is deliberately no activation restart: killing the dictation
-application mid-sentence to apply a preference is the worse trade.
+The press is discarded on release — `wasCleanPress` goes false as soon as
+another key joins — but the microphone has already opened. Left-handed and
+modifier-only are not compatible here.
 
-## Choosing a shortcut
+## Things that are true and worth not re-deriving
 
-Avoid `Shift` plus a letter. That was the setting until 2026-08-27, on
-`Shift+S`, which is the same chord as typing a capital S — the two cannot
-coexist.
+- **Holding the chord does not type `sssss`.** The event tap consumes a
+  matching key-down, auto-repeats included: `GlobalHotkeyManager` returns `nil`
+  for the primary shortcut.
+- **The cost is a Karabiner dependency.** Without it Caps Lock is Caps Lock, so
+  dictation stops working AND the keyboard latches into capitals.
+  `karabiner.md` records how that chain breaks. It is a dependency this
+  keyboard already carries for its arrow keys and its Escape.
+- **What other tools default to**, for when this is revisited: FluidVoice ships
+  Right Option, Wispr Flow holds Fn, superwhisper uses Option+Space. All three
+  are single-purpose keys the user does not otherwise press — the same property
+  Hyper+S gets from requiring four modifiers at once.
 
-A modifier-only shortcut avoids the whole class of problem: there is no
-character to collide with and none to auto-repeat while the key is held.
-FluidVoice supports them (`ModifierOnlyShortcutBehavior`,
-`activeModifierOnlyShortcut`, `modifierPressStartTime` in the binary) and its
-own default is Right Option, per its shortcut recorder's placeholder text.
+## Changing it later
 
-A Karabiner Hyper chord — hold Caps Lock, which `karabiner.nix` emits as
-`Ctrl+Opt+Cmd+Shift` — also works and never collides with typing, since a
-capital letter carries only one of those four modifiers. It costs a dependency:
-without Karabiner running, Caps Lock is Caps Lock, so dictation stops working
-AND the keyboard latches into capitals. `karabiner.md` records how easily that
-chain breaks.
+Edit `dictationShortcut` in `fluidvoice.nix` and rebuild. Key codes are in
+`HotkeyShortcut.keyCodeToString`; modifier raw values are `NSEvent.ModifierFlags`.
+There is no need to touch the application's settings window, which is the point.
+
+Verify with:
+
+```
+defaults export com.FluidApp.app - | plutil -extract HotkeyShortcutKey raw -o - - | base64 -d
+```

@@ -16,12 +16,15 @@
       # this directory so Spotlight and LaunchServices resolve them.
       "${local.homeDirectory}/Applications/Home Manager Apps/Ghostty.app"
     ];
-    # The downloads share, as a Dock stack. Absolute path deliberately: a
+    # The downloads directory, as a Dock stack. Absolute path deliberately: a
     # relative path or a `~` produces a Dock item that renders but opens
     # nothing, and it fails silently (nix-darwin#968, nix-darwin#1398).
     #
-    # Same single definition Chrome's DownloadDirectory and the mount agent use.
-    persistent-others = [ "/Volumes/${local.networkShares.downloadsShare}" ];
+    # Same single local.nix definition Chrome's DownloadDirectory uses, and
+    # that modules/home/downloads.nix creates. It named an SMB share until
+    # 2026-08-27; a stack pinned to an unmounted share is the question-mark
+    # tile this comment used to describe as a first-activation quirk.
+    persistent-others = [ local.downloadsDirectory ];
     show-recents = false;
   };
 

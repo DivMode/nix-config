@@ -73,6 +73,17 @@
     };
   };
 
+  # Where browser downloads land. modules/darwin/chrome.nix declares it as a
+  # mandatory Chrome policy, modules/darwin/dock.nix pins it as a stack, and
+  # modules/home/downloads.nix creates it.
+  #
+  # It must be a path that is ALWAYS present. Chrome's DownloadDirectory policy
+  # takes one static string, read at launch, with no fallback — so a path that
+  # comes and goes, an SMB mount or a disk that is sometimes unplugged, aims
+  # every download made while it is away at somewhere that does not exist and
+  # that Chrome cannot create.
+  downloadsDirectory = "/Volumes/ExampleDisk/Downloads";
+
   # SMB shares mounted at login by modules/home/network-shares.nix. Leave
   # `mounts` empty to disable the module entirely.
   #
@@ -83,8 +94,6 @@
     server = "fileserver.example.invalid";
     account = "replace-me";
     mounts = [ ];
-    # The share Chrome downloads into and the Dock pins.
-    downloadsShare = "replace-me-share";
     # Optional op:// reference used ONLY to seed the login Keychain on a machine
     # that has no entry yet. A reference, never a password: any literal value in
     # a Nix option is copied into the world-readable store.

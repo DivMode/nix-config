@@ -65,6 +65,21 @@ The runtime API key is in neither list, because this repository never handles
 it. Nix stores the **path** it is read from; the file itself is yours to
 create.
 
+Three things this module explicitly does **not** do, each considered and
+rejected rather than merely left out:
+
+- **It installs, builds, and vendors no coding agent.** Claude Code comes from
+  `modules/home/development.nix`; Codex is whatever the host already has. No
+  agent is compiled from source here, and no release stream of someone else's
+  becomes this repository's problem.
+- **It changes no global `PATH`.** `home.packages` adds Tandem, `tunnel-client`,
+  and the wrappers. `workspacePath` is handed to Herdr as
+  `workspace.create.env.PATH` for Tandem's own disposable workspaces only, so
+  an agent Tandem can see does not thereby appear in your shell.
+- **It touches no Herdr configuration, plugin, or session.**
+  `modules/home/herdr/` owns those. Tandem attaches to a session that is
+  already running and never resets or reloads it.
+
 ## Host configuration
 
 Everything host-specific lives in the ignored `local.nix`, under `tandem`. See
@@ -81,6 +96,44 @@ is arbitrary command execution, and the Herdr backend will not start it. Claude
 permission bypass is never set. Codex is opt-in through `extraEngines` and
 should stay off until a real Tandem → Herdr → Codex session has been proven on
 the host.
+
+### Making an agent visible to Tandem's workspaces
+
+A Herdr workspace inherits the environment of the **Herdr server**, not of the
+shell that configured anything. An agent the server cannot see does not exist
+as far as Tandem is concerned — and that failure does not announce itself:
+`agent.start` is accepted, the pane prints `codex: command not found`, the
+command exits, the managed agent name disappears with it, and Tandem reports
+
+```text
+failed to open session: agent target <name> not found
+```
+
+which reads like a Herdr lifecycle bug and is not one.
+
+`tandem.workspacePath` in `local.nix` is the fix. It is passed as
+`workspace.create.env.PATH` and applies to Tandem's own disposable workspaces
+and nothing else — no global `PATH`, no shim, no change to your Herdr session.
+
+The usual case is Codex, which the ChatGPT desktop app ships inside its bundle
+and puts on no `PATH` at all:
+
+```nix
+tandem.workspacePath = [ "/Applications/ChatGPT.app/Contents/Resources" ];
+```
+
+Confirm what that directory actually holds before pointing at it:
+
+```sh
+/Applications/ChatGPT.app/Contents/Resources/codex --version
+```
+
+This is **not required of every host**. A machine whose Herdr already sees its
+agents needs nothing here, and leaving the list empty is the right answer
+there. `tandem-doctor` tells you which case you are in: with `workspacePath`
+set it resolves `codex` against exactly the directories Tandem will pass and
+fails if it is not there; with the list empty it says the inheritance is
+unverifiable rather than pretending to know, and does not fail on it.
 
 ## Fresh-Mac check
 
@@ -117,9 +170,14 @@ tandem-doctor
 
 It checks the protected runtime configuration and its permissions, that a
 tunnel id is configured, that the runtime key file exists, is non-empty and is
-not readable by anyone else, and that Herdr answers — then hands off to
-`tunnel-client doctor --explain`. It exits non-zero if anything is wrong, so it
-works as a gate and not only as something to read.
+not readable by anyone else, and that Herdr answers. When Codex is enabled it
+also resolves `codex` against the workspace `PATH` described above. Then it
+hands off to `tunnel-client doctor --explain`. It exits non-zero if anything is
+wrong, so it works as a gate and not only as something to read.
+
+The Codex check is deliberately not part of what gates the tunnel service: a
+Codex `PATH` problem must never stop the tunnel from serving Claude, which is
+the engine that is always on.
 
 It never prints the key. Existence, size, and mode answer "is this usable"
 without the value reaching a terminal, a log, or an issue comment.
@@ -203,9 +261,12 @@ herdr agent focus <agent>
 `open_session` also returns a real `herdr agent attach` command as its attach
 hint.
 
-Repeat with `engine=codex` before enabling Codex in `local.nix`, and check that
-Codex still has its own harness, project instructions, and tool surface — Herdr
-manages the PTY, it does not replace what runs inside it.
+Repeat with `engine=codex` before enabling Codex in `local.nix`. Run
+`tandem-doctor` first: if it cannot resolve `codex`, set `tandem.workspacePath`
+as described above, because the session will otherwise fail as a missing agent
+target rather than as a missing command. Check that Codex still has its own
+harness, project instructions, and tool surface — Herdr manages the PTY, it
+does not replace what runs inside it.
 
 ## Watching a live session
 

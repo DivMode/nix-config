@@ -26,6 +26,48 @@
     example-project = "/Users/replace-me/Developer/example-project";
   };
 
+  # Tandem, the MCP facade ChatGPT drives through the Secure MCP Tunnel.
+  # modules/home/ai/tandem reads this; leave `cwdAllowlist` empty to disable the
+  # whole module, the way `networkShares.mounts` disables its own below.
+  #
+  # `cwdAllowlist` is the admission boundary for every session a remote model
+  # can open on this Mac, so it is named here explicitly and never derived. It
+  # must not contain `/`, `/Users`, or the home directory itself; the module
+  # asserts that. Start with one disposable directory and widen deliberately.
+  tandem = {
+    cwdAllowlist = [ ];
+
+    # Engines beyond Claude, which is always on. Only "codex" is accepted, and
+    # only after a real Tandem -> Herdr -> Codex session has been proven on the
+    # host: Herdr starts Codex natively, and a workspace that cannot find the
+    # CLI fails as a vanished agent rather than as a missing command.
+    extraEngines = [ ];
+
+    # The already-running persistent Herdr session Tandem attaches to. Tandem
+    # never starts, resets, or reloads it.
+    herdrSession = "default";
+
+    # PATH for the Herdr workspaces Tandem creates for itself. A Herdr
+    # workspace inherits the Herdr SERVER's environment, not a login shell's,
+    # so an agent CLI that lives on a user PATH is invisible inside one.
+    # Absolute directories only; empty means "inherit whatever Herdr has".
+    workspacePath = [ ];
+
+    tunnel = {
+      # The Secure MCP Tunnel this host connects to, from
+      # https://platform.openai.com/settings/organization/tunnels. An
+      # account-specific identifier, which is why it lives here and not in the
+      # public modules. Empty leaves the launchd agent loaded but idle.
+      id = "";
+
+      # WHERE the runtime API key is read from — a path, never the key. The
+      # file is yours to create with mode 0600; nothing in this repository
+      # writes it, and any literal value in a Nix option would be copied into
+      # the world-readable Nix store.
+      apiKeyFile = "/Users/replace-me/.config/tandem/tunnel-api-key";
+    };
+  };
+
   # Extra strings scripts/check-private-names.sh must keep out of this public
   # repository. It already derives a denylist from the fields above — the user,
   # the host, the home directory, the Git identity, every project name and path,

@@ -301,6 +301,11 @@ let
   claudeSettingsJson = pkgs.writeText "claude-settings.json" (builtins.toJSON claudeSettings);
 in
 {
+  # Tandem is its own module rather than more of this one: it owns a package,
+  # a launchd service, and a protected runtime file, and it is gated on its own
+  # local configuration instead of on `nixConfig.ai.enable`.
+  imports = [ ./tandem ];
+
   options.nixConfig.ai.enable = mkEnableOption "shared Codex and Claude Code configuration";
 
   config = mkIf config.nixConfig.ai.enable {

@@ -18,6 +18,9 @@ was never stored in a declarative or provider-backed system.
   user configuration
 - Secret identifiers, `op://` references, and environment mappings, but never
   secret values
+- The pinned Tandem fork, its Node runtime, the `tunnel-client` binary, Tandem's
+  non-secret runtime configuration, and the launchd agent for the Secure MCP
+  Tunnel
 
 ## Mutable state outside Nix
 
@@ -39,6 +42,10 @@ was never stored in a declarative or provider-backed system.
 - Spotlight index contents remain mutable; nix-darwin declaratively installs
   the policy daemon that reconciles indexing and searching off for external volumes
 - SSH private keys and API tokens
+- The ChatGPT-side Tandem app and its approval, which is account state rather
+  than machine configuration
+- Tandem's mutable session inventory, the Secure MCP Tunnel's runtime state, and
+  the tunnel runtime API key, which Nix names by path and never reads
 
 Cloud-backed history must be recovered from its provider. Secret material must be
 recovered from an authorized secret manager. Important local-only data needs a
@@ -65,3 +72,11 @@ the mouse device category so wheel reversal remains portable across Bluetooth
 and receiver connections without affecting trackpads. The settings UI cannot
 persist changes through the immutable Home Manager link; edit the Nix module
 instead.
+
+Tandem is packaged from an exact fork commit and is configured for the `herdr`
+terminal backend, so Herdr keeps owning the PTY, the session, and the native
+agent identity while Tandem only supplies the MCP surface in front of them. The
+generated runtime configuration is installed as a real 0600 file rather than a
+store symlink, because Tandem refuses a configuration that a symlink or broad
+permissions would let anyone else substitute or read. `ai/tandem/README.md` is
+the operator runbook.

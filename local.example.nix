@@ -47,10 +47,26 @@
     # never starts, resets, or reloads it.
     herdrSession = "default";
 
-    # PATH for the Herdr workspaces Tandem creates for itself. A Herdr
-    # workspace inherits the Herdr SERVER's environment, not a login shell's,
-    # so an agent CLI that lives on a user PATH is invisible inside one.
-    # Absolute directories only; empty means "inherit whatever Herdr has".
+    # PATH for the Herdr workspaces Tandem creates for itself, and nothing
+    # else — it is passed as `workspace.create.env.PATH`, so it never reaches
+    # a shell, the user's Herdr session, or any other workspace.
+    #
+    # It exists because a Herdr workspace inherits the Herdr SERVER's
+    # environment rather than a login shell's, so an agent the server cannot
+    # see does not exist as far as Tandem is concerned. That failure does not
+    # announce itself: `agent.start` is accepted, the pane prints
+    # `codex: command not found`, the command exits, the managed agent name
+    # disappears with it, and Tandem reports `agent target ... not found`.
+    #
+    # The common case on a Mac is Codex, which the ChatGPT desktop app ships
+    # inside its own bundle and puts on no PATH at all:
+    #
+    #   workspacePath = [ "/Applications/ChatGPT.app/Contents/Resources" ];
+    #
+    # Nothing here installs or builds Codex; this only lets Tandem's own
+    # workspaces see the copy the host already has. Leave it empty if Herdr
+    # can already find the agents you enable — `tandem-doctor` says which
+    # case you are in. Absolute directories only.
     workspacePath = [ ];
 
     tunnel = {

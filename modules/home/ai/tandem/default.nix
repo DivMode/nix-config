@@ -28,6 +28,24 @@
 #   - Herdr workspaces, panes, and native agent sessions;
 #   - tunnel runtime state under ~/Library/Application Support/tunnel-client.
 #
+# AND THREE THINGS IT SPECIFICALLY DOES NOT DO, because each was considered and
+# rejected rather than merely omitted:
+#
+#   - It does not install, build, or vendor a coding agent. Claude Code comes
+#     from ../../development.nix, and Codex is whatever the host already has —
+#     on a Mac running the ChatGPT desktop app that is the `codex` inside the
+#     application bundle. Building an agent CLI from source to satisfy Tandem
+#     would put this repository in the business of shipping someone else's
+#     release stream.
+#   - It does not change any global PATH. `home.packages` adds Tandem, the
+#     tunnel client, and the wrappers, and nothing else reaches an environment.
+#     `workspacePath` is passed to Herdr as `workspace.create.env.PATH` for
+#     Tandem's own disposable workspaces only, so an agent that Tandem can see
+#     does not thereby appear in the user's shell.
+#   - It does not touch Herdr's configuration, plugins, or session. ../../herdr
+#     owns those. Tandem attaches to a session that is already running and is
+#     never allowed to reset or reload it.
+#
 # The whole module is off unless local.nix names at least one allowlisted
 # working directory, the same "empty list disables it" shape ../../network-shares.nix
 # uses for its mounts. That is not a convenience: Tandem's cwd allowlist is the
@@ -192,6 +210,57 @@ let
     fi
   '';
 
+  codexEnabled = lib.elem "codex" cfg.extraEngines;
+
+  # Codex resolvability, checked ONLY when Codex is enabled.
+  #
+  # Deliberately not part of `preflight`: a Codex PATH problem must never stop
+  # the tunnel from serving Claude, which is the engine that is always on. This
+  # belongs to the doctor, where it is a question being asked, not a gate being
+  # applied to an unrelated engine.
+  #
+  # What it can and cannot know is the whole design here:
+  #
+  #   - With `workspacePath` set, Tandem passes exactly that as the workspace
+  #     PATH, so "will Codex resolve" is fully decidable from outside — look in
+  #     those directories. A miss is a real failure and is counted.
+  #   - With `workspacePath` empty, Tandem passes no PATH and the workspace
+  #     inherits the Herdr SERVER's environment, which nothing outside Herdr can
+  #     read. That is not provably broken, so it is an advisory that does not
+  #     count against the exit status. Reporting a guess as a failure would make
+  #     the doctor unusable as a gate.
+  #
+  # This is why `workspacePath` is not required of every host: a machine whose
+  # Herdr already sees Codex needs nothing, and one whose Herdr does not gets
+  # told exactly which knob to turn.
+  codexCheck = optionalString codexEnabled (
+    if cfg.workspacePath == [ ] then
+      ''
+        printf '%s\n' "codex: enabled with no tandem.workspacePath, so its Herdr workspaces inherit the Herdr server's environment. Nothing outside Herdr can read that, so this is unverified rather than wrong. If open_session reports \"agent target ... not found\", read the pane: \"codex: command not found\" means Herdr cannot see the CLI, and tandem.workspacePath in local.nix is the fix."
+      ''
+    else
+      ''
+        tandem_codex_resolved=""
+        ${
+          # One test per configured directory, unrolled at build time. A shell
+          # loop over an interpolated list is a loop over literals when the
+          # list has one entry, which is the usual case and which shellcheck
+          # rejects (SC2043) — correctly, since Nix already knows the entries.
+          lib.concatMapStrings (directory: ''
+            if [ -z "$tandem_codex_resolved" ] && [ -x ${lib.escapeShellArg "${directory}/codex"} ]; then
+              tandem_codex_resolved=${lib.escapeShellArg "${directory}/codex"}
+            fi
+          '') cfg.workspacePath
+        }
+
+        if [ -n "$tandem_codex_resolved" ]; then
+          printf '%s\n' "codex: resolves to $tandem_codex_resolved"
+        else
+          tandem_report "codex: enabled, but no executable 'codex' exists in tandem.workspacePath — which is the exact PATH its Herdr workspaces are given: ${concatStringsSep " " cfg.workspacePath}"
+        fi
+      ''
+  );
+
   # What launchd actually runs.
   #
   # A missing prerequisite exits 0 rather than failing: with KeepAlive on a
@@ -225,6 +294,12 @@ let
         optionalString (cfg.extraEngines != [ ]) ", ${concatStringsSep ", " cfg.extraEngines}"
       }"
       printf '%s\n' "allowlist  ${concatStringsSep " " cfg.cwdAllowlist}"
+      printf '%s\n' "wsp PATH   ${
+        if cfg.workspacePath == [ ] then
+          "(none; Tandem's Herdr workspaces inherit the Herdr server's environment)"
+        else
+          concatStringsSep " " cfg.workspacePath
+      }"
       printf '%s\n' "config     ${runtimeConfigFile}"
       printf '%s\n' "tunnel     ${getExe tunnelClient} ${tunnelClient.version}"
       printf '\n'
@@ -244,6 +319,7 @@ let
     name = "tandem-doctor";
     text = ''
       ${preflight}
+      ${codexCheck}
 
       if [ "$tandem_preflight_problems" -eq 0 ]; then
         printf '%s\n' "prerequisites: ok"

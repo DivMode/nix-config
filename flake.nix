@@ -31,12 +31,12 @@
     # after re-running its typecheck and tests against the new commit.
     #
     # Base: upstream 0.1.0 at a98bcafd2c40ae5473b85fe41183e4f391933799.
-    # Verified at this commit: typecheck passes, 38 test files / 403 tests pass.
+    # Verified at this commit: typecheck passes, 39 test files / 408 tests pass.
     #
     # `flake = false` because upstream ships no flake.nix; the package is built
     # by modules/home/ai/tandem/package.nix.
     tandem = {
-      url = "github:DivMode/tandem/c99f8d0b46e130eda3e78d6efa6a108894d89826";
+      url = "github:DivMode/tandem/485e43c16c5edd2d3d9b2db9154e14976d8cf838";
       flake = false;
     };
 

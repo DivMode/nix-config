@@ -19,6 +19,27 @@
       inputs.nixpkgs.follows = "nixpkgs";
     };
 
+    # The DivMode fork of Maxmedawar/tandem, carrying the native Herdr terminal
+    # backend that lets ChatGPT drive Herdr's agents without tmux. Upstream is
+    # preserved as the fork's `upstream` remote; see DivMode/tandem#1.
+    #
+    # Pinned to an EXACT COMMIT, not to `feat/herdr-backend`. A branch moves,
+    # and an activation that resolved one would install whatever it pointed at
+    # that morning — which for the component that lets a remote model open
+    # sessions on this Mac is not a pin at all. `nix flake update` cannot move
+    # it either: updating Tandem means changing the revision here deliberately,
+    # after re-running its typecheck and tests against the new commit.
+    #
+    # Base: upstream 0.1.0 at a98bcafd2c40ae5473b85fe41183e4f391933799.
+    # Verified at this commit: typecheck passes, 37 test files / 400 tests pass.
+    #
+    # `flake = false` because upstream ships no flake.nix; the package is built
+    # by modules/home/ai/tandem/package.nix.
+    tandem = {
+      url = "github:DivMode/tandem/6c843bd32337b5286f163cfb311c5ad2f28b5928";
+      flake = false;
+    };
+
     # Packages for AI coding agents, updated daily by upstream automation.
     # Claude Code publishes several releases a day, far faster than its Homebrew
     # cask tracks: on 2026-08-13 the newest homebrew-cask commit still described

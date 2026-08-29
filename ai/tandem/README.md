@@ -97,6 +97,23 @@ permission bypass is never set. Codex is opt-in through `extraEngines` and
 should stay off until a real Tandem → Herdr → Codex session has been proven on
 the host.
 
+### What Tandem does and does not decide about permissions
+
+Tandem sets no bypass flag for any engine. What it cannot do is override the
+posture an agent takes from its **own** configuration, and that is worth
+knowing before enabling Codex.
+
+Measured on this host 2026-08-29: a Codex session opened through Tandem
+reported `permissions: YOLO mode` in its own banner. That comes from Codex's
+user configuration, not from anything here — but the practical effect is that
+enabling `codex` in `extraEngines` can hand a remote model full-permission
+execution inside whatever `cwdAllowlist` admits.
+
+So the allowlist is the boundary that matters for Codex, not the engine's
+prompts. Keep it to directories where that posture is acceptable, check
+`codex` in its own configuration if it should be stricter, and treat widening
+the allowlist and enabling Codex as one decision rather than two.
+
 ### Making an agent visible to Tandem's workspaces
 
 A Herdr workspace inherits the environment of the **Herdr server**, not of the

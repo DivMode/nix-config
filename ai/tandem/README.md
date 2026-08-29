@@ -128,6 +128,19 @@ Confirm what that directory actually holds before pointing at it:
 /Applications/ChatGPT.app/Contents/Resources/codex --version
 ```
 
+One entry is enough, and that is measured rather than assumed. What Herdr
+receives is the **initial** environment of the launched process, and the login
+shell then rebuilds `PATH` around it. Probed on 2026-08-29 with a disposable
+workspace created as `--env PATH=/Applications/ChatGPT.app/Contents/Resources`:
+`command -v claude` still resolved to the Home Manager profile, and
+`command -v codex` resolved inside the app bundle. So naming the one directory
+Herdr was missing does not cost you the ones it already had.
+
+The same probe with `--env PATH=/usr/bin` showed the mechanism plainly: zsh's
+own startup reported `command not found: mv` and `mkdir` — both of which live
+in `/bin` — before it finished assembling the full `PATH`. The injected value
+really is the starting point, not the final answer.
+
 This is **not required of every host**. A machine whose Herdr already sees its
 agents needs nothing here, and leaving the list empty is the right answer
 there. `tandem-doctor` tells you which case you are in: with `workspacePath`

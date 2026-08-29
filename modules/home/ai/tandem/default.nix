@@ -311,7 +311,11 @@ let
       printf '\n'
 
       printf '%s\n' "tunnel health:"
-      ${getExe tunnelClient} health --config ${tunnelProfile} 2>&1 || true
+      # An idle agent is the normal state on a host with no tunnel id, so a
+      # failed probe is reported as that rather than as a bare connection error.
+      if ! ${getExe tunnelClient} health --port ${healthPort} 2>&1; then
+        printf '%s\n' "  no live runtime on ${cfg.tunnel.healthListenAddress} (the launchd agent is idle or stopped; see 'tandem-doctor')"
+      fi
     '';
   };
 
@@ -348,6 +352,14 @@ let
       printf '%s\n' "restarted ${launchdLabel}; follow ${tunnelLogFile}"
     '';
   };
+
+  # `tunnel-client health` probes a LIVE daemon and takes --url/--url-file/--port,
+  # not --config: the profile describes how to start a runtime, while health asks
+  # a running one how it is. Passing --config there fails with "unknown flag",
+  # which is how this was found — `tandem-status` ended in that error on the
+  # freshly activated host instead of a health reading. The assertion below
+  # keeps the address on loopback, so the port is the only part health needs.
+  healthPort = lib.last (lib.splitString ":" cfg.tunnel.healthListenAddress);
 
   launchdLabel = "org.nix-community.home.tandem-tunnel";
   tunnelLogFile = "${local.homeDirectory}/Library/Logs/tandem-tunnel.log";
@@ -420,6 +432,16 @@ in
         disappeared because the command it named exited immediately. Scoping a
         PATH to Tandem's own workspaces fixes that without a global shim and
         without touching the user's Herdr session.
+
+        One entry is normally enough. Herdr applies this as the INITIAL
+        environment of the launched process and the login shell then rebuilds
+        PATH around it — probed on 2026-08-29 with a disposable workspace at
+        `--env PATH=/Applications/ChatGPT.app/Contents/Resources`, where
+        `claude` still resolved to the Home Manager profile while `codex`
+        resolved inside the app bundle. The same probe with `--env
+        PATH=/usr/bin` showed zsh reporting `command not found: mv` during its
+        own startup, `mv` being in /bin — which is what proves the injected
+        value is the starting point rather than the final PATH.
       '';
     };
 

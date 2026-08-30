@@ -78,8 +78,8 @@ let
   # found inside a named section of orchestration.md.
   #
   # The reviewer of record belongs in Roles because it is a standing fact about
-  # who ChatGPT is, not a step to follow; the other three are obligations, and
-  # an obligation that is not a binding rule is a suggestion.
+  # who ChatGPT is, not a step to follow. The four under Binding rules are
+  # obligations, and an obligation that is not a binding rule is a suggestion.
   sectionPhrases = {
     "## Roles" = [
       "It is also the **reviewer of record and the merge authority** for"

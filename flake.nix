@@ -31,12 +31,17 @@
     # after re-running its typecheck and tests against the new commit.
     #
     # Base: upstream 0.1.0 at a98bcafd2c40ae5473b85fe41183e4f391933799.
-    # Verified at this commit: typecheck passes, 39 test files / 408 tests pass.
+    # Verified at this commit: typecheck passes, 44 test files / 462 tests pass,
+    # and a live Herdr smoke covered the >25s soft cap, repeat-turn output
+    # de-duplication, durable cursors across a bridge restart, and cold
+    # re-adoption. This revision is DivMode/tandem main after PR #2, which also
+    # moves Tandem onto its own silent named Herdr session (`tandem`) so the
+    # personal `default` session keeps its notifications.
     #
     # `flake = false` because upstream ships no flake.nix; the package is built
     # by modules/home/ai/tandem/package.nix.
     tandem = {
-      url = "github:DivMode/tandem/485e43c16c5edd2d3d9b2db9154e14976d8cf838";
+      url = "github:DivMode/tandem/963c583fcdcf43da7b4fb4e8790d58398f48aedc";
       flake = false;
     };
 

@@ -148,6 +148,7 @@ Keychain contents, caches, or mutable terminal sessions. See
 - [New Mac setup](docs/setup/new-mac.md)
 - [Rebuild and activation](docs/operations/rebuild.md)
 - [Architecture and ownership](docs/architecture.md)
+- [Orchestration architecture](docs/orchestration-architecture.md)
 - [Mutable-state boundary](docs/state-boundary.md)
 - [macOS and Homebrew](modules/darwin/README.md)
 - [Karabiner keyboard](modules/home/karabiner.md)

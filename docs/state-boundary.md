@@ -80,3 +80,5 @@ generated runtime configuration is installed as a real 0600 file rather than a
 store symlink, because Tandem refuses a configuration that a symlink or broad
 permissions would let anyone else substitute or read. `ai/tandem/README.md` is
 the operator runbook.
+[`orchestration-architecture.md`](orchestration-architecture.md) is the design
+record for the orchestration system built on top of it.

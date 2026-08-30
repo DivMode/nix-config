@@ -326,17 +326,17 @@
     "tandem": {
       "flake": false,
       "locked": {
-        "lastModified": 1788060214,
-        "narHash": "sha256-LAw6lEzISB3j3N5MVqxRW/Gx6871vOwUq8WAOqAEUIg=",
+        "lastModified": 1788068034,
+        "narHash": "sha256-GDvRJ0n8OFU6PmIBS+nEU4Xf1pqtP8pA901QchHgQng=",
         "owner": "DivMode",
         "repo": "tandem",
-        "rev": "9c06f5684305c9faba1d9ab27434e5ae4b7ce01c",
+        "rev": "afc3192e9caaa1affb7c9ed97c6c66df0605c2ee",
         "type": "github"
       },
       "original": {
         "owner": "DivMode",
         "repo": "tandem",
-        "rev": "9c06f5684305c9faba1d9ab27434e5ae4b7ce01c",
+        "rev": "afc3192e9caaa1affb7c9ed97c6c66df0605c2ee",
         "type": "github"
       }
     },

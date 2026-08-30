@@ -105,9 +105,11 @@ rejected rather than merely left out:
   and the wrappers. `workspacePath` is handed to Herdr as
   `workspace.create.env.PATH` for Tandem's own disposable workspaces only, so
   an agent Tandem can see does not thereby appear in your shell.
-- **It touches no Herdr configuration, plugin, or session.**
-  `modules/home/herdr/` owns those. Tandem attaches to a session that is
-  already running and never resets or reloads it.
+- **It touches no personal Herdr configuration, plugin, or session.**
+  `modules/home/herdr/` owns those. Tandem's own silent config lives in
+  Tandem's state directory, and the only session it manages is its dedicated
+  one: it starts a headless Herdr server for that session when it is not
+  already running, and never reloads or resets a server that is.
 
 ## Host configuration
 
@@ -207,8 +209,11 @@ herdr session list --json
 herdr agent list
 ```
 
-Herdr must already be running: Tandem attaches to the persistent session named
-by `tandem.herdrSession` and never starts, resets, or reloads it.
+Herdr must be installed and working: Tandem drives the persistent session named
+by `tandem.herdrSession`. That dedicated session is Tandem's to manage — if it
+is not running, Tandem writes its silent config and starts a headless Herdr
+server for it — but Tandem never reloads or resets a running server, and never
+starts or reconfigures the personal `default` session.
 
 ### 2. Tandem
 

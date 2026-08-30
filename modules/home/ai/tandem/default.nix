@@ -42,9 +42,11 @@
 #     `workspacePath` is passed to Herdr as `workspace.create.env.PATH` for
 #     Tandem's own disposable workspaces only, so an agent that Tandem can see
 #     does not thereby appear in the user's shell.
-#   - It does not touch Herdr's configuration, plugins, or session. ../../herdr
-#     owns those. Tandem attaches to a session that is already running and is
-#     never allowed to reset or reload it.
+#   - It does not touch the user's Herdr configuration, plugins, or personal
+#     session. ../../herdr owns those. Tandem's own silent config lives in
+#     Tandem's state directory, and the only session it manages is its
+#     dedicated one: it starts a headless Herdr server for that session when it
+#     is not already running, and never reloads or resets a server that is.
 #
 # The whole module is off unless local.nix names at least one allowlisted
 # working directory, the same "empty list disables it" shape ../../network-shares.nix
@@ -534,8 +536,11 @@ in
       default = tandemLocal.herdrSession or dedicatedSession;
       defaultText = lib.literalExpression ''local.tandem.herdrSession or "${dedicatedSession}"'';
       description = ''
-        The named persistent Herdr session Tandem talks to. Tandem never starts,
-        resets, or reloads it; it must already be running.
+        The named persistent Herdr session Tandem talks to, and the only one it
+        manages. When that session is not already running, Tandem writes its own
+        silent Herdr config and starts a headless Herdr server for it against
+        that config; when it is running, Tandem uses it as it stands and never
+        reloads or resets it.
 
         It defaults to the dedicated `${dedicatedSession}` session and may not
         be the personal `${personalSession}` one. That is a binding rule of the

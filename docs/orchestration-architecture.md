@@ -591,9 +591,12 @@ sessions all day generates a constant stream of agent-state notifications. In a
 shared session those land in the user's own workspace, where they are
 indistinguishable from notifications about work the user is personally doing.
 Separating the sessions separates the two notification streams, and it also gives
-the ownership rules something concrete to hold onto: Tandem attaches to a session
-that is already running, tags the workspaces it creates as its own, and closes
-only those. Personal workspaces, panes, and tabs are never modified, reset, or
+the ownership rules something concrete to hold onto: Tandem manages only this
+dedicated session — starting a headless Herdr server for it against Tandem's own
+silent config when it is not already running, and never reloading or resetting a
+server that is — tags the workspaces it creates as its own, and closes only
+those. The personal `default` session is never started, reconfigured, or
+reloaded, and personal workspaces, panes, and tabs are never modified, reset, or
 closed.
 
 **This is enforced, not merely recommended.** The module's option default is the

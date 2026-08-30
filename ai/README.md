@@ -72,9 +72,11 @@ local worker must not assume the far end has read anything.
 The document is composed as a STRING at evaluation time rather than built as a
 derivation and passed to both consumers. `programs.claude-code.context` is typed
 `either lines path` and branches on `lib.isPath`, which is false for a
-derivation — passing one would write the store path into `CLAUDE.md` as its
-content. `~/.config/nix-config/ai/agent-instructions.md` links the same document
-for review.
+derivation, so passing one takes the `.text` branch and is rejected there by
+`home.file.<name>.text`'s own `nullOr lines` type — a hard evaluation error,
+measured against the pinned home-manager rather than assumed.
+`~/.config/nix-config/ai/agent-instructions.md` links the same document for
+review.
 
 ## Claude Code
 

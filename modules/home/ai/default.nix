@@ -177,6 +177,16 @@ let
   # the live file remains a normal writable file rather than a store symlink.
   codexConfig = import ../../../ai/codex { inherit pkgs; };
 
+  # The single global instruction document, composed from the tracked sources
+  # under ai/instructions and given VERBATIM to both clients below. One string,
+  # two destinations, so the two files cannot drift by construction.
+  #
+  # A string, not a store path, and deliberately: `programs.claude-code.context`
+  # is typed `either lines path` and branches on `lib.isPath`, which is false
+  # for a derivation — handing it one writes the store path into CLAUDE.md as
+  # its content. See ai/instructions/default.nix.
+  instructions = import ai.instructions { inherit pkgs; };
+
   mcpRegistryJson = pkgs.writeText "ai-mcp-registry.json" (
     builtins.toJSON {
       schemaVersion = 1;
@@ -330,7 +340,7 @@ in
         gcxClaudePlugin
       ];
 
-      context = ai.instructions;
+      context = instructions.text;
       agents = mapAttrs claudeAgentText ai.agents;
 
       # Directory paths, which the module links as whole trees under
@@ -383,7 +393,15 @@ in
       // gcxCodexSkills
       // sharedCodexSkills
       // {
-        ".codex/AGENTS.md".source = ai.instructions;
+        # Codex reads this as global user instructions for every project, from
+        # $CODEX_HOME/AGENTS.md — $CODEX_HOME being ~/.codex unless the
+        # environment overrides it, which nothing here does.
+        ".codex/AGENTS.md".text = instructions.text;
+
+        # The same document as a single reviewable artifact, so the identity of
+        # what the two clients were given can be checked without reading either
+        # client's directory.
+        ".config/nix-config/ai/agent-instructions.md".source = instructions.document;
         # MCP endpoints remain a review artifact. Codex's live config paths and
         # plugin state are application-owned and may include private metadata.
         ".config/nix-config/ai/codex-config.toml".source = codexToml;
@@ -426,7 +444,7 @@ in
       if [[ -f "$codexInstructions" && ! -L "$codexInstructions" ]]; then
         if [[ -s "$codexInstructions" ]]; then
           errorEcho "Refusing to replace non-empty unmanaged file: $codexInstructions"
-          errorEcho "Move its contents into ai/instructions/global.md, then remove it."
+          errorEcho "Move its contents into ai/instructions/, then remove it."
           exit 1
         fi
 

@@ -89,6 +89,12 @@ let
 
   tunnelClient = pkgs.callPackage ./tunnel-client.nix { };
 
+  # The shell environment Tandem-owned Herdr panes need, and its tests. Kept in
+  # its own file because the reasoning is long, the rule is subtle, and it is
+  # the kind of thing that gets "tidied" into a global export by someone who
+  # did not read why it is scoped. See ./workspace-env.nix.
+  workspaceEnv = import ./workspace-env.nix { inherit pkgs lib; };
+
   # The PATH a Tandem-owned Herdr workspace actually starts with.
   #
   # Herdr applies TANDEM_HERDR_WORKSPACE_PATH as the workspace's EXACT PATH, not
@@ -632,6 +638,13 @@ in
       tandemDoctor
       tandemRestart
     ];
+
+    # Claude workers opened by Tandem inherit CLAUDE_CODE_CHILD_SESSION from the
+    # Herdr server, which makes Claude Code stop writing their transcripts and
+    # say so. This restores persistence for Tandem's panes and only those; the
+    # personal session is untouched, and nothing global changes. The whole
+    # derivation of that is in ./workspace-env.nix.
+    programs.zsh.envExtra = workspaceEnv.forceSessionPersistence cfg.herdrSession;
 
     # The declared configuration, kept where it can be read and diffed without
     # opening the protected copy — the same review artifact ../default.nix

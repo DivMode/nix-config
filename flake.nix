@@ -31,17 +31,28 @@
     # after re-running its typecheck and tests against the new commit.
     #
     # Base: upstream 0.1.0 at a98bcafd2c40ae5473b85fe41183e4f391933799.
-    # Verified at this commit: typecheck passes, 44 test files / 462 tests pass,
-    # and a live Herdr smoke covered the >25s soft cap, repeat-turn output
-    # de-duplication, durable cursors across a bridge restart, and cold
-    # re-adoption. This revision is DivMode/tandem main after PR #2, which also
-    # moves Tandem onto its own silent named Herdr session (`tandem`) so the
-    # personal `default` session keeps its notifications.
+    # Verified at this commit (2026-08-29): `tsc --noEmit` clean, and 48 test
+    # files / 532 tests pass. Run that suite with CCM_CWD_ALLOWLIST,
+    # TANDEM_CWD_ALLOWLIST, and TANDEM_TERMINAL_BACKEND UNSET — several tests
+    # take those as default parameters, so a run inside a Tandem-created pane
+    # inherits the live machine's allowlist and reports four failures that are
+    # the harness leaking, not the code. Measured: 4 failed with them set, 0
+    # with them unset, same commit.
+    #
+    # This revision is DivMode/tandem main after PR #3, which adds the ChatGPT
+    # Web orchestration bootstrap — the MCP `initialize` result's `instructions`
+    # and a `get_orchestration_policy` tool — plus server-side model routing
+    # that keeps Fable behind explicit user consent. That matters here because
+    # it is the ONLY path by which a browser-based coordinator learns this
+    # machine's orchestration policy: it cannot read the Nix-managed
+    # ~/.claude/CLAUDE.md or ~/.codex/AGENTS.md that local workers get. PR #2
+    # before it moved Tandem onto its own silent named Herdr session
+    # (`tandem`), so the personal `default` session keeps its notifications.
     #
     # `flake = false` because upstream ships no flake.nix; the package is built
     # by modules/home/ai/tandem/package.nix.
     tandem = {
-      url = "github:DivMode/tandem/963c583fcdcf43da7b4fb4e8790d58398f48aedc";
+      url = "github:DivMode/tandem/9c06f5684305c9faba1d9ab27434e5ae4b7ce01c";
       flake = false;
     };
 
@@ -201,7 +212,12 @@
             "x86_64-linux"
           ]
           (system: {
+            agent-instructions = (import ./ai/instructions { pkgs = nixpkgs.legacyPackages.${system}; }).tests;
             codex-config-merge = (import ./ai/codex { pkgs = nixpkgs.legacyPackages.${system}; }).tests;
+            tandem-workspace-env =
+              (import ./modules/home/ai/tandem/workspace-env.nix {
+                pkgs = nixpkgs.legacyPackages.${system};
+              }).tests;
           });
 
       # `nixfmt-tree`, not bare `nixfmt`. `nix fmt` invokes the formatter with

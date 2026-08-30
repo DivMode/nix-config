@@ -26,7 +26,9 @@ both has to be written in both places.
 
 - **ChatGPT** is the preferred human-facing foreman and coordinator when it is
   available. It plans, sequences, and reports; it is not where implementation
-  happens.
+  happens. It is also the **reviewer of record and the merge authority** for
+  orchestrated engineering work: implementation workers supply code, tests and
+  evidence, and it decides what merges.
 - **GitHub** is the durable source of truth. Issues, pull requests, and commits
   outlive every session.
 - **Tandem** is the live execution and session bus: it opens, addresses, and
@@ -83,35 +85,54 @@ both has to be written in both places.
    risky, whenever that is practical. A worker's own account of its work is not
    an independent review, and it must not be the only one. Give the reviewer
    the diff and the original requirement, not the implementer's summary.
+   **Implementation workers do not self-approve**: they hand their evidence to
+   the ChatGPT foreman, which is where approval and merge live.
 
-8. **Checkpoint durably.** Read the relevant issue, pull request, and its
-   latest comments before acting — they usually already contain the decision
-   you were about to re-derive. Record outcomes back there, commit and push
-   completed work, and never leave an important finding only in a terminal
-   transcript that closes with the session. Preserve unrelated worktrees and
-   files. Never commit secrets or private local state.
+8. **A separate Claude reviewer is optional, not mandatory.** Open one when
+   risk, complexity, or local execution earns a genuinely independent read —
+   security, protocol and MCP behaviour, Nix and system state, migrations,
+   concurrency and shared state, large refactors. Its verdict is **evidence for
+   the ChatGPT foreman, not a substitute for its review and merge decision**.
+   Skip it for small, low-risk, plainly correct work, and say that you skipped
+   it.
 
-9. **This machine is declarative.** Environment, settings, and configuration
-   changes belong in the Nix configuration repository — Home Manager or
-   nix-darwin — not in ad-hoc shell edits, hand-written dotfiles, or GUI
-   clicks. The exception is an unavoidable emergency the user has explicitly
-   approved, and it is followed by codifying the change. After a declarative
-   change, rebuild and verify through the repository's own scripts rather than
-   assembling an activation command by hand.
+9. **Never open a Claude session solely to watch another one.** Routine
+   progress comes from Tandem `list_sessions`, semantic cursor polling of the
+   session that owns the work, and the foreman reconciling those events — a
+   monitoring worker costs a model, learns nothing the cursor does not already
+   carry, and invites the duplicate ownership rule 2 exists to prevent. A
+   short-lived read-only health probe is exceptional, justified only when the
+   semantic state itself looks inconsistent or stuck, and is
+   **closed immediately afterwards**.
 
-10. **Work in the intended checkout.** Confirm the repository root from the
+10. **Checkpoint durably.** Read the relevant issue, pull request, and its
+    latest comments before acting — they usually already contain the decision
+    you were about to re-derive. Record outcomes back there, commit and push
+    completed work, and never leave an important finding only in a terminal
+    transcript that closes with the session. Preserve unrelated worktrees and
+    files. Never commit secrets or private local state.
+
+11. **This machine is declarative.** Environment, settings, and configuration
+    changes belong in the Nix configuration repository — Home Manager or
+    nix-darwin — not in ad-hoc shell edits, hand-written dotfiles, or GUI
+    clicks. The exception is an unavoidable emergency the user has explicitly
+    approved, and it is followed by codifying the change. After a declarative
+    change, rebuild and verify through the repository's own scripts rather than
+    assembling an activation command by hand.
+
+12. **Work in the intended checkout.** Confirm the repository root from the
     checkout itself before reading or changing anything, and never let a
     convenient copy of a repository become a second source of truth. If you
     find two checkouts of the same project, say so and ask which is canonical
     rather than picking one.
 
-11. **No hidden fleets.** ChatGPT and Tandem normally own orchestration. A
+13. **No hidden fleets.** ChatGPT and Tandem normally own orchestration. A
     Claude worker may use its own subagents where they clearly help — genuine
     breadth, or an independent adversarial read — but must not spawn a nested
     fleet that duplicates ownership of a task another session already holds.
     State which files each concurrent agent owns before they start.
 
-12. **A more specific instruction file wins on its own ground.** A repository's
+14. **A more specific instruction file wins on its own ground.** A repository's
     `AGENTS.md` or `CLAUDE.md` governs that project's conventions. This policy
     is the machine-level default underneath it, and it still governs anything
     the project file does not speak to. A direct instruction from the user

@@ -89,6 +89,46 @@ let
 
   tunnelClient = pkgs.callPackage ./tunnel-client.nix { };
 
+  # The PATH a Tandem-owned Herdr workspace actually starts with.
+  #
+  # Herdr applies TANDEM_HERDR_WORKSPACE_PATH as the workspace's EXACT PATH, not
+  # as an addition to one, so whatever this string holds is the whole of PATH
+  # while the login shell is still starting. Emitting `workspacePath` verbatim
+  # therefore handed a fresh workspace a single directory, and zsh's own startup
+  # broke on it before any prompt appeared — measured 2026-08-29:
+  # `compdump: command not found: mv` from compinit, then `.zshrc:22: command
+  # not found: dirname` and the same for `mkdir` from the HISTFILE line. Those
+  # are /bin and /usr/bin tools; nothing was wrong with the shell.
+  #
+  # So the standard directories are the module's floor and `workspacePath` is
+  # only ever ADDED to it. They come first deliberately: the entries a host adds
+  # exist to expose something the standard set lacks (on this Mac, the `codex`
+  # that ships inside the ChatGPT app bundle), and that same bundle also ships
+  # an `rg` — leading entries would silently shadow the user's ripgrep with an
+  # app's private copy. Anything genuinely absent from the standard set still
+  # resolves; anything present keeps resolving to the system copy.
+  #
+  # `home.profileDirectory` rather than a literal: it is /etc/profiles/per-user/
+  # $USER for a Home Manager run as a nix-darwin module and ~/.nix-profile for a
+  # standalone one, and it is where `claude` and `herdr` live either way. No
+  # store hash and no home path is written down here.
+  standardWorkspacePath = [
+    "${config.home.profileDirectory}/bin"
+    "/run/current-system/sw/bin"
+    "/nix/var/nix/profiles/default/bin"
+    "/usr/local/bin"
+    "/usr/bin"
+    "/bin"
+    "/usr/sbin"
+    "/sbin"
+  ];
+
+  # Empty stays empty: that is the documented "pass no PATH and inherit the
+  # Herdr server's environment" case on hosts that need nothing, and a server
+  # environment is not the thing this defect was about.
+  effectiveWorkspacePath =
+    if cfg.workspacePath == [ ] then [ ] else lib.unique (standardWorkspacePath ++ cfg.workspacePath);
+
   # Tandem's protected runtime configuration, as Nix declares it.
   #
   # Every value here is non-secret: directory names, engine ids, the backend
@@ -108,7 +148,7 @@ let
     TANDEM_TERMINAL_BACKEND = "herdr";
     TANDEM_HERDR_BIN = getExe herdr;
     TANDEM_HERDR_SESSION = cfg.herdrSession;
-    TANDEM_HERDR_WORKSPACE_PATH = concatStringsSep ":" cfg.workspacePath;
+    TANDEM_HERDR_WORKSPACE_PATH = concatStringsSep ":" effectiveWorkspacePath;
   };
 
   runtimeConfigJson = pkgs.writeText "tandem-config.json" (
@@ -221,9 +261,10 @@ let
   #
   # What it can and cannot know is the whole design here:
   #
-  #   - With `workspacePath` set, Tandem passes exactly that as the workspace
-  #     PATH, so "will Codex resolve" is fully decidable from outside — look in
-  #     those directories. A miss is a real failure and is counted.
+  #   - With `workspacePath` set, the workspace PATH is the composed
+  #     `effectiveWorkspacePath`, so "will Codex resolve" is fully decidable
+  #     from outside — look in those directories. A miss is a real failure and
+  #     is counted.
   #   - With `workspacePath` empty, Tandem passes no PATH and the workspace
   #     inherits the Herdr SERVER's environment, which nothing outside Herdr can
   #     read. That is not provably broken, so it is an advisory that does not
@@ -250,13 +291,13 @@ let
             if [ -z "$tandem_codex_resolved" ] && [ -x ${lib.escapeShellArg "${directory}/codex"} ]; then
               tandem_codex_resolved=${lib.escapeShellArg "${directory}/codex"}
             fi
-          '') cfg.workspacePath
+          '') effectiveWorkspacePath
         }
 
         if [ -n "$tandem_codex_resolved" ]; then
           printf '%s\n' "codex: resolves to $tandem_codex_resolved"
         else
-          tandem_report "codex: enabled, but no executable 'codex' exists in tandem.workspacePath — which is the exact PATH its Herdr workspaces are given: ${concatStringsSep " " cfg.workspacePath}"
+          tandem_report "codex: enabled, but no executable 'codex' exists on the exact PATH its Herdr workspaces are given: ${concatStringsSep " " effectiveWorkspacePath}"
         fi
       ''
   );
@@ -298,7 +339,7 @@ let
         if cfg.workspacePath == [ ] then
           "(none; Tandem's Herdr workspaces inherit the Herdr server's environment)"
         else
-          concatStringsSep " " cfg.workspacePath
+          concatStringsSep " " effectiveWorkspacePath
       }"
       printf '%s\n' "config     ${runtimeConfigFile}"
       printf '%s\n' "tunnel     ${getExe tunnelClient} ${tunnelClient.version}"
@@ -491,8 +532,13 @@ in
       default = tandemLocal.workspacePath or [ ];
       defaultText = lib.literalExpression "local.tandem.workspacePath or [ ]";
       description = ''
-        PATH entries applied to the Herdr workspaces Tandem creates for itself,
-        as absolute directories.
+        EXTRA PATH entries for the Herdr workspaces Tandem creates for itself,
+        as absolute directories. They are appended to the standard macOS and
+        Nix user directories this module always provides, never used in place
+        of them: Herdr treats the value as the workspace's entire PATH, and a
+        PATH without /usr/bin and /bin breaks zsh's own startup before the
+        first prompt. Because they are appended, an entry can expose a command
+        the standard set lacks but cannot shadow one it already provides.
 
         This exists because a Herdr workspace inherits the environment of the
         Herdr SERVER, not of the shell that configured it. On 2026-08-29 that
@@ -502,15 +548,8 @@ in
         PATH to Tandem's own workspaces fixes that without a global shim and
         without touching the user's Herdr session.
 
-        One entry is normally enough. Herdr applies this as the INITIAL
-        environment of the launched process and the login shell then rebuilds
-        PATH around it — probed on 2026-08-29 with a disposable workspace at
-        `--env PATH=/Applications/ChatGPT.app/Contents/Resources`, where
-        `claude` still resolved to the Home Manager profile while `codex`
-        resolved inside the app bundle. The same probe with `--env
-        PATH=/usr/bin` showed zsh reporting `command not found: mv` during its
-        own startup, `mv` being in /bin — which is what proves the injected
-        value is the starting point rather than the final PATH.
+        One entry is normally enough. Leaving the list empty passes no PATH at
+        all, and the workspace then inherits the Herdr server's environment.
       '';
     };
 

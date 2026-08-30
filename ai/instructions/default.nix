@@ -14,11 +14,20 @@
 # The document is composed at EVALUATION time with `readFile` rather than built
 # as a derivation and handed to both consumers. That is not a stylistic choice:
 # `programs.claude-code.context` is typed `either lines path` and branches on
-# `lib.isPath`, which is false for a derivation — so passing one would either
-# fail the type check or silently write the store PATH into CLAUDE.md as its
-# content. A plain string takes the `lines` branch in both clients and cannot
-# do that.
-{ pkgs }:
+# `lib.isPath`, which is FALSE for a derivation. Passing one therefore takes the
+# `.text` branch, where `home.file.<name>.text` is `nullOr lines` and rejects
+# it outright:
+#
+#   error: A definition for option `…CLAUDE.md".text' is not of type
+#   `null or strings concatenated with "\n"'
+#
+# Measured against the pinned home-manager, not assumed — it fails loudly at
+# evaluation rather than writing a store path as the file's content. A plain
+# string takes the `lines` branch in both clients.
+{
+  pkgs,
+  lib ? pkgs.lib,
+}:
 let
   # Behaviour, taste, and machine rules. Owner-edited prose.
   global = builtins.readFile ./global.md;
@@ -74,9 +83,24 @@ let
 
   # One phrase per line. Every phrase is therefore a SINGLE line of the policy,
   # matched as a fixed string against a single line of the document.
-  requiredPhrasesFile = pkgs.writeText "agent-instructions-required-phrases" (
-    builtins.concatStringsSep "\n" requiredPhrases + "\n"
-  );
+  #
+  # Enforced, not merely stated: a phrase containing a newline would split into
+  # two independent greps that each pass on weaker text than the phrase was
+  # written to pin. That degrades silently, so it throws instead.
+  multiLinePhrases = builtins.filter (phrase: lib.hasInfix "\n" phrase) requiredPhrases;
+
+  requiredPhrasesFile =
+    if multiLinePhrases != [ ] then
+      throw ''
+        ai/instructions: a required phrase spans more than one line, which would
+        silently weaken the check into two independent matches. Split it into
+        one entry per line, or shorten it to a single line of the policy:
+        ${builtins.concatStringsSep "\n" multiLinePhrases}
+      ''
+    else
+      pkgs.writeText "agent-instructions-required-phrases" (
+        builtins.concatStringsSep "\n" requiredPhrases + "\n"
+      );
 
   maxOrchestrationLines = 150;
 

@@ -29,10 +29,22 @@
 # ── Why the force flag, and not unsetting the marker ────────────────────────
 # CLAUDE_CODE_CHILD_SESSION is not noise. It is how a nested Claude declares
 # itself a child so `--resume` in the PARENT does not offer the child's
-# transcript. Unsetting it blindly would silence this warning and also strip
-# that meaning from any genuinely nested invocation inside the pane. The force
-# flag is additive: it says "persist this transcript" without claiming the
-# session is not a child. It is also the remedy Anthropic prints.
+# transcript. Unsetting it would strip that meaning from every invocation in
+# the pane and is the more destructive of the two remedies Anthropic prints, so
+# this takes the other one.
+#
+# It is not free, and the cost should be stated rather than discovered. The
+# export lands in the pane's shell, so EVERY `claude` started there inherits it
+# — including a genuinely nested one. For that child the suppression is
+# switched off too: its transcript is written and becomes a `--resume`
+# candidate in its parent, which is exactly what the marker exists to prevent.
+#
+# Accepted deliberately. The session this exists for is the top-level worker
+# Tandem opened, whose transcript must survive; nesting inside a Tandem pane is
+# rare, and a spare resume candidate is a far smaller harm than the top-level
+# worker's transcript vanishing. Revisit if nested sessions become normal here
+# — the fix then is for Tandem to set the flag on the agent it starts rather
+# than on the shell that starts it, which needs a change in Tandem, not here.
 #
 # ── Why a shell snippet, and not the workspace environment ──────────────────
 # Tandem's herdrWorkspaceEnvironment() returns `{ PATH }` and nothing else, so

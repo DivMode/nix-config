@@ -71,11 +71,34 @@ let
   # applied here and only its verdicts cross into the derivation.
   verdict = pair: if consumersMatchCanonical pair then "match" else "drift";
 
+  # Some rules are binding only because of WHERE they sit. A rule moved out of
+  # the numbered list into the surrounding commentary keeps every word and
+  # loses its force, and the whole-document check below cannot see that: it
+  # matches the text wherever it appears. These phrases must additionally be
+  # found inside a named section of orchestration.md.
+  #
+  # The reviewer of record belongs in Roles because it is a standing fact about
+  # who ChatGPT is, not a step to follow; the other three are obligations, and
+  # an obligation that is not a binding rule is a suggestion.
+  sectionPhrases = {
+    "## Roles" = [
+      "It is also the **reviewer of record and the merge authority** for"
+    ];
+    "## Binding rules" = [
+      "**Implementation and review stay separate**"
+      "**Implementation workers do not self-approve**"
+      "**A separate Claude reviewer is optional, not mandatory.**"
+      "**Never open a Claude session solely to watch another one.**"
+    ];
+  };
+
   # Every rule the orchestration policy exists to carry, expressed as a string
   # that must survive editing. A rule can be reworded freely; deleting one
   # fails the build, which is the point — these were asked for explicitly and
-  # must not be lost to a tidy-up.
-  requiredPhrases = [
+  # must not be lost to a tidy-up. The section-placed phrases above are folded
+  # in here so they inherit the whole-document check and the one-line guard
+  # rather than restating either.
+  requiredPhrases = builtins.concatLists (builtins.attrValues sectionPhrases) ++ [
     # Where this document is loaded — and, just as binding, where it is not.
     "Codex reads it as global user instructions from `$CODEX_HOME/AGENTS.md`"
     "Claude Code reads it as user memory from `~/.claude/CLAUDE.md`"
@@ -100,8 +123,20 @@ let
     "**Never use Fable unless"
     "the user explicitly asks for Fable by name.**"
 
+    # The second half of each reviewer/monitor rule; the first half of each is
+    # in `sectionPhrases` above. Both halves are pinned because either one
+    # alone survives an edit that inverts the rule. "Implementation and review
+    # stay separate" without "do not self-approve" still lets a worker approve
+    # itself so long as somebody else also looked. "A separate Claude reviewer
+    # is optional" without "not a substitute" turns an optional second opinion
+    # into the merge decision. And a ban on monitoring sessions without the
+    # mechanism that replaces them leaves a foreman no way to see progress at
+    # all, which is how the banned session gets opened again.
+    "the ChatGPT foreman, not a substitute for its review and merge decision**."
+    "progress comes from Tandem `list_sessions`, semantic cursor polling of the"
+    "**closed immediately afterwards**."
+
     # Everything else that was asked for explicitly.
-    "**Implementation and review stay separate**"
     "**Checkpoint durably.**"
     "**This machine is declarative.**"
     "**Work in the intended checkout.**"
@@ -114,21 +149,42 @@ let
   #
   # Enforced, not merely stated: a phrase containing a newline would split into
   # two independent greps that each pass on weaker text than the phrase was
-  # written to pin. That degrades silently, so it throws instead.
-  multiLinePhrases = builtins.filter (phrase: lib.hasInfix "\n" phrase) requiredPhrases;
+  # written to pin. That degrades silently, so it throws instead. A tab is
+  # rejected for the same reason — it is the field separator of the section
+  # file below, and one inside a phrase would truncate the phrase to whatever
+  # precedes it.
+  unsafePhrases = builtins.filter (
+    phrase: lib.hasInfix "\n" phrase || lib.hasInfix "\t" phrase
+  ) requiredPhrases;
 
-  requiredPhrasesFile =
-    if multiLinePhrases != [ ] then
+  checkedPhrases =
+    if unsafePhrases != [ ] then
       throw ''
-        ai/instructions: a required phrase spans more than one line, which would
-        silently weaken the check into two independent matches. Split it into
-        one entry per line, or shorten it to a single line of the policy:
-        ${builtins.concatStringsSep "\n" multiLinePhrases}
+        ai/instructions: a required phrase spans more than one line or contains a
+        tab, which would silently weaken the check into two independent matches.
+        Split it into one entry per line, or shorten it to a single line of the
+        policy:
+        ${builtins.concatStringsSep "\n" unsafePhrases}
       ''
     else
-      pkgs.writeText "agent-instructions-required-phrases" (
-        builtins.concatStringsSep "\n" requiredPhrases + "\n"
-      );
+      requiredPhrases;
+
+  requiredPhrasesFile = pkgs.writeText "agent-instructions-required-phrases" (
+    builtins.concatStringsSep "\n" checkedPhrases + "\n"
+  );
+
+  # `<section heading>\t<phrase>`, one pair per line. Guarded by the same throw:
+  # `checkedPhrases` is forced here, so a phrase carrying a tab or a newline
+  # cannot reach this file whichever list it was written into.
+  sectionPhrasesFile = builtins.deepSeq checkedPhrases (
+    pkgs.writeText "agent-instructions-section-phrases" (
+      lib.concatStrings (
+        lib.mapAttrsToList (
+          section: phrases: lib.concatMapStrings (phrase: "${section}\t${phrase}\n") phrases
+        ) sectionPhrases
+      )
+    )
+  );
 
   maxOrchestrationLines = 150;
 
@@ -193,6 +249,22 @@ let
           grep -qF -- "$phrase" "$document" \
             || fail "missing binding rule text: $phrase"
         done < ${requiredPhrasesFile}
+
+        # Where a rule sits is part of what it means. The check above passes on
+        # a rule reworded into the commentary above the numbered list, which
+        # reads as background rather than an obligation; this one does not.
+        # Sections run from their `## ` heading to the next one.
+        while IFS="$(printf '\t')" read -r section phrase; do
+          [ -n "$phrase" ] || continue
+          awk -v want="$section" '
+            /^## / { inside = ($0 == want); next }
+            inside { print }
+          ' "$orchestrationSource" > section-body
+          [ -s section-body ] \
+            || fail "orchestration.md has no \"$section\" section to place rules in"
+          grep -qF -- "$phrase" section-body \
+            || fail "rule text is outside the \"$section\" section: $phrase"
+        done < ${sectionPhrasesFile}
 
         # The consumer rule, case by case. This is a regression test for the
         # predicate; the assertion in modules/home/ai is what applies it to the

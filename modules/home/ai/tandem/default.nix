@@ -353,6 +353,75 @@ let
     '';
   };
 
+  # Reconcile launchd's LOADED job with the plist Home Manager just wrote.
+  #
+  # Home Manager installs the agent, but its own reload can fail — measured on
+  # this host while taking the Tandem 963c583 bump: `setupLaunchAgents` printed
+  # "Failed to stop agent 'gui/501/${launchdLabel}': Unrecognized target
+  # specifier", then "Failed to start agent ... I/O error (code 5)", and gave
+  # up. The plist on disk pointed at the new tunnel service while launchd's
+  # in-memory record still executed the PREVIOUS generation's, whose preflight
+  # checks an older key path, so the service reported missing prerequisites and
+  # exited 0 on every start. `tandem-restart` then faithfully restarted the
+  # stale record, which is why a rebuild plus a restart still left the agent
+  # loaded but not running. The next rebuild made it worse: the plist no longer
+  # differed, so Home Manager skipped the reload entirely and the stale record
+  # survived indefinitely.
+  #
+  # bootout/bootstrap is the only way to replace a loaded job, and it belongs
+  # HERE — inside declared activation, where the machine is already being
+  # changed deliberately — rather than in a shell command a human is told to
+  # run, which is precisely the bypass this repository exists to prevent.
+  tunnelAgentReload = pkgs.writeShellApplication {
+    name = "tandem-tunnel-agent-reload";
+    text = ''
+      label=${lib.escapeShellArg launchdLabel}
+      plist=${lib.escapeShellArg "${local.homeDirectory}/Library/LaunchAgents/${launchdLabel}.plist"}
+      wanted=${lib.escapeShellArg (toString tunnelService)}
+      target="gui/$(id -u)/$label"
+
+      # The store path launchd is CURRENTLY running for this label, empty when
+      # the job is not loaded at all (a first install, or a booted-out agent).
+      loaded_service() {
+        /bin/launchctl print "$target" 2>/dev/null \
+          | /usr/bin/grep -o '/nix/store/[a-z0-9]\{32\}-tandem-tunnel-service' \
+          | /usr/bin/head -n 1 \
+          || true
+      }
+
+      if [ ! -f "$plist" ]; then
+        printf '%s\n' "tandem: $plist is missing; Home Manager did not install the agent" >&2
+        exit 1
+      fi
+
+      if [ "$(loaded_service)" = "$wanted" ]; then
+        # Idempotent: the common rebuild changes nothing here and must not
+        # restart a healthy tunnel.
+        exit 0
+      fi
+
+      # Tolerated: the job may not be loaded, and bootout is asynchronous.
+      /bin/launchctl bootout "$target" >/dev/null 2>&1 || true
+      for _ in 1 2 3 4 5 6 7 8 9 10; do
+        /bin/launchctl print "$target" >/dev/null 2>&1 || break
+        /bin/sleep 0.2
+      done
+
+      if ! /bin/launchctl bootstrap "gui/$(id -u)" "$plist"; then
+        printf '%s\n' "tandem: could not bootstrap $label from $plist" >&2
+        exit 1
+      fi
+      /bin/launchctl kickstart -k "$target" >/dev/null 2>&1 || true
+
+      after="$(loaded_service)"
+      if [ "$after" != "$wanted" ]; then
+        printf '%s\n' "tandem: $label still runs \"''${after:-no}\" tunnel service after reload; expected this generation" >&2
+        exit 1
+      fi
+      printf '%s\n' "tandem: reloaded $label onto this generation's tunnel service"
+    '';
+  };
+
   # `tunnel-client health` probes a LIVE daemon and takes --url/--url-file/--port,
   # not --config: the profile describes how to start a runtime, while health asks
   # a running one how it is. Passing --config there fails with "unknown flag",
@@ -569,6 +638,15 @@ in
     # rather than a reconciler like ../../network-shares.nix: while it is
     # healthy there is nothing to reconcile, and once it is not, KeepAlive has
     # already restarted it.
+    # AFTER setupLaunchAgents, which is what writes the plist this reconciles
+    # against. Failing loudly is deliberate: an agent left on a previous
+    # generation's service is the exact silent state this exists to end.
+    home.activation.reloadTandemTunnelAgent =
+      lib.hm.dag.entryAfter [ "writeBoundary" "setupLaunchAgents" ]
+        ''
+          run ${getExe tunnelAgentReload}
+        '';
+
     launchd.agents.tandem-tunnel = {
       enable = true;
       config = {

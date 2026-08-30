@@ -64,7 +64,13 @@ let
     else
       ''
         # Tandem-owned Herdr panes only. See modules/home/ai/tandem/workspace-env.nix.
-        if [[ "$HERDR_SESSION" == ${lib.escapeShellArg herdrSession} ]]; then
+        #
+        # `''${HERDR_SESSION-}`, not `$HERDR_SESSION`: .zshenv is read by EVERY
+        # zsh, including ones started with NO_UNSET, and a bare reference to an
+        # unset parameter there prints "HERDR_SESSION: parameter not set" on
+        # stderr of every shell outside Herdr. Measured 2026-08-29 — noise in
+        # every non-Herdr shell, and stderr some caller may be parsing.
+        if [[ "''${HERDR_SESSION-}" == ${lib.escapeShellArg herdrSession} ]]; then
           export ${variable}=1
         fi
       '';
@@ -98,6 +104,14 @@ let
             zsh -c ". $snippet; printf '%s' \"\''${${variable}-<unset>}\""
         }
 
+        # The same, with HERDR_SESSION genuinely ABSENT rather than empty, under
+        # NO_UNSET, capturing stderr. .zshenv is read by every zsh on the
+        # machine, so a snippet that is merely noisy outside Herdr is a defect.
+        probeUnsetStrict() {
+          env -u ${variable} -u HERDR_SESSION \
+            zsh -c "set -u; . $1; printf '%s' \"\''${${variable}-<unset>}\"" 2>&1
+        }
+
         # 1. Tandem's own pane gets the flag.
         [ "$(probe "$managedPath" tandem)" = "1" ] \
           || fail "a pane in the Tandem session did not get ${variable}=1"
@@ -112,6 +126,11 @@ let
           || fail "an unrelated Herdr session was given ${variable}"
         [ "$(probe "$managedPath" "")" = "<unset>" ] \
           || fail "a pane with no HERDR_SESSION was given ${variable}"
+
+        # And says nothing while doing it. Any diagnostic here reaches the
+        # stderr of every shell on the machine that is not a Tandem pane.
+        [ "$(probeUnsetStrict "$managedPath")" = "<unset>" ] \
+          || fail "with HERDR_SESSION unset under NO_UNSET the snippet was not silent: $(probeUnsetStrict "$managedPath")"
 
         # 4. The session name is not hardcoded: a differently named Tandem
         #    session scopes to itself and still ignores the personal one.

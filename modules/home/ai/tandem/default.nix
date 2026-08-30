@@ -89,6 +89,46 @@ let
 
   tunnelClient = pkgs.callPackage ./tunnel-client.nix { };
 
+  # The PATH a Tandem-owned Herdr workspace actually starts with.
+  #
+  # Herdr applies TANDEM_HERDR_WORKSPACE_PATH as the workspace's EXACT PATH, not
+  # as an addition to one, so whatever this string holds is the whole of PATH
+  # while the login shell is still starting. Emitting `workspacePath` verbatim
+  # therefore handed a fresh workspace a single directory, and zsh's own startup
+  # broke on it before any prompt appeared — measured 2026-08-29:
+  # `compdump: command not found: mv` from compinit, then `.zshrc:22: command
+  # not found: dirname` and the same for `mkdir` from the HISTFILE line. Those
+  # are /bin and /usr/bin tools; nothing was wrong with the shell.
+  #
+  # So the standard directories are the module's floor and `workspacePath` is
+  # only ever ADDED to it. They come first deliberately: the entries a host adds
+  # exist to expose something the standard set lacks (on this Mac, the `codex`
+  # that ships inside the ChatGPT app bundle), and that same bundle also ships
+  # an `rg` — leading entries would silently shadow the user's ripgrep with an
+  # app's private copy. Anything genuinely absent from the standard set still
+  # resolves; anything present keeps resolving to the system copy.
+  #
+  # `home.profileDirectory` rather than a literal: it is /etc/profiles/per-user/
+  # $USER for a Home Manager run as a nix-darwin module and ~/.nix-profile for a
+  # standalone one, and it is where `claude` and `herdr` live either way. No
+  # store hash and no home path is written down here.
+  standardWorkspacePath = [
+    "${config.home.profileDirectory}/bin"
+    "/run/current-system/sw/bin"
+    "/nix/var/nix/profiles/default/bin"
+    "/usr/local/bin"
+    "/usr/bin"
+    "/bin"
+    "/usr/sbin"
+    "/sbin"
+  ];
+
+  # Empty stays empty: that is the documented "pass no PATH and inherit the
+  # Herdr server's environment" case on hosts that need nothing, and a server
+  # environment is not the thing this defect was about.
+  effectiveWorkspacePath =
+    if cfg.workspacePath == [ ] then [ ] else lib.unique (standardWorkspacePath ++ cfg.workspacePath);
+
   # Tandem's protected runtime configuration, as Nix declares it.
   #
   # Every value here is non-secret: directory names, engine ids, the backend
@@ -108,7 +148,7 @@ let
     TANDEM_TERMINAL_BACKEND = "herdr";
     TANDEM_HERDR_BIN = getExe herdr;
     TANDEM_HERDR_SESSION = cfg.herdrSession;
-    TANDEM_HERDR_WORKSPACE_PATH = concatStringsSep ":" cfg.workspacePath;
+    TANDEM_HERDR_WORKSPACE_PATH = concatStringsSep ":" effectiveWorkspacePath;
   };
 
   runtimeConfigJson = pkgs.writeText "tandem-config.json" (
@@ -221,9 +261,10 @@ let
   #
   # What it can and cannot know is the whole design here:
   #
-  #   - With `workspacePath` set, Tandem passes exactly that as the workspace
-  #     PATH, so "will Codex resolve" is fully decidable from outside — look in
-  #     those directories. A miss is a real failure and is counted.
+  #   - With `workspacePath` set, the workspace PATH is the composed
+  #     `effectiveWorkspacePath`, so "will Codex resolve" is fully decidable
+  #     from outside — look in those directories. A miss is a real failure and
+  #     is counted.
   #   - With `workspacePath` empty, Tandem passes no PATH and the workspace
   #     inherits the Herdr SERVER's environment, which nothing outside Herdr can
   #     read. That is not provably broken, so it is an advisory that does not
@@ -250,13 +291,13 @@ let
             if [ -z "$tandem_codex_resolved" ] && [ -x ${lib.escapeShellArg "${directory}/codex"} ]; then
               tandem_codex_resolved=${lib.escapeShellArg "${directory}/codex"}
             fi
-          '') cfg.workspacePath
+          '') effectiveWorkspacePath
         }
 
         if [ -n "$tandem_codex_resolved" ]; then
           printf '%s\n' "codex: resolves to $tandem_codex_resolved"
         else
-          tandem_report "codex: enabled, but no executable 'codex' exists in tandem.workspacePath — which is the exact PATH its Herdr workspaces are given: ${concatStringsSep " " cfg.workspacePath}"
+          tandem_report "codex: enabled, but no executable 'codex' exists on the exact PATH its Herdr workspaces are given: ${concatStringsSep " " effectiveWorkspacePath}"
         fi
       ''
   );
@@ -298,7 +339,7 @@ let
         if cfg.workspacePath == [ ] then
           "(none; Tandem's Herdr workspaces inherit the Herdr server's environment)"
         else
-          concatStringsSep " " cfg.workspacePath
+          concatStringsSep " " effectiveWorkspacePath
       }"
       printf '%s\n' "config     ${runtimeConfigFile}"
       printf '%s\n' "tunnel     ${getExe tunnelClient} ${tunnelClient.version}"
@@ -350,6 +391,75 @@ let
       # but idle, which is exactly the state this command exists to leave.
       launchctl kickstart -k "gui/$(id -u)/${launchdLabel}"
       printf '%s\n' "restarted ${launchdLabel}; follow ${tunnelLogFile}"
+    '';
+  };
+
+  # Reconcile launchd's LOADED job with the plist Home Manager just wrote.
+  #
+  # Home Manager installs the agent, but its own reload can fail — measured on
+  # this host while taking the Tandem 963c583 bump: `setupLaunchAgents` printed
+  # "Failed to stop agent 'gui/501/${launchdLabel}': Unrecognized target
+  # specifier", then "Failed to start agent ... I/O error (code 5)", and gave
+  # up. The plist on disk pointed at the new tunnel service while launchd's
+  # in-memory record still executed the PREVIOUS generation's, whose preflight
+  # checks an older key path, so the service reported missing prerequisites and
+  # exited 0 on every start. `tandem-restart` then faithfully restarted the
+  # stale record, which is why a rebuild plus a restart still left the agent
+  # loaded but not running. The next rebuild made it worse: the plist no longer
+  # differed, so Home Manager skipped the reload entirely and the stale record
+  # survived indefinitely.
+  #
+  # bootout/bootstrap is the only way to replace a loaded job, and it belongs
+  # HERE — inside declared activation, where the machine is already being
+  # changed deliberately — rather than in a shell command a human is told to
+  # run, which is precisely the bypass this repository exists to prevent.
+  tunnelAgentReload = pkgs.writeShellApplication {
+    name = "tandem-tunnel-agent-reload";
+    text = ''
+      label=${lib.escapeShellArg launchdLabel}
+      plist=${lib.escapeShellArg "${local.homeDirectory}/Library/LaunchAgents/${launchdLabel}.plist"}
+      wanted=${lib.escapeShellArg (toString tunnelService)}
+      target="gui/$(id -u)/$label"
+
+      # The store path launchd is CURRENTLY running for this label, empty when
+      # the job is not loaded at all (a first install, or a booted-out agent).
+      loaded_service() {
+        /bin/launchctl print "$target" 2>/dev/null \
+          | /usr/bin/grep -o '/nix/store/[a-z0-9]\{32\}-tandem-tunnel-service' \
+          | /usr/bin/head -n 1 \
+          || true
+      }
+
+      if [ ! -f "$plist" ]; then
+        printf '%s\n' "tandem: $plist is missing; Home Manager did not install the agent" >&2
+        exit 1
+      fi
+
+      if [ "$(loaded_service)" = "$wanted" ]; then
+        # Idempotent: the common rebuild changes nothing here and must not
+        # restart a healthy tunnel.
+        exit 0
+      fi
+
+      # Tolerated: the job may not be loaded, and bootout is asynchronous.
+      /bin/launchctl bootout "$target" >/dev/null 2>&1 || true
+      for _ in 1 2 3 4 5 6 7 8 9 10; do
+        /bin/launchctl print "$target" >/dev/null 2>&1 || break
+        /bin/sleep 0.2
+      done
+
+      if ! /bin/launchctl bootstrap "gui/$(id -u)" "$plist"; then
+        printf '%s\n' "tandem: could not bootstrap $label from $plist" >&2
+        exit 1
+      fi
+      /bin/launchctl kickstart -k "$target" >/dev/null 2>&1 || true
+
+      after="$(loaded_service)"
+      if [ "$after" != "$wanted" ]; then
+        printf '%s\n' "tandem: $label still runs \"''${after:-no}\" tunnel service after reload; expected this generation" >&2
+        exit 1
+      fi
+      printf '%s\n' "tandem: reloaded $label onto this generation's tunnel service"
     '';
   };
 
@@ -422,8 +532,13 @@ in
       default = tandemLocal.workspacePath or [ ];
       defaultText = lib.literalExpression "local.tandem.workspacePath or [ ]";
       description = ''
-        PATH entries applied to the Herdr workspaces Tandem creates for itself,
-        as absolute directories.
+        EXTRA PATH entries for the Herdr workspaces Tandem creates for itself,
+        as absolute directories. They are appended to the standard macOS and
+        Nix user directories this module always provides, never used in place
+        of them: Herdr treats the value as the workspace's entire PATH, and a
+        PATH without /usr/bin and /bin breaks zsh's own startup before the
+        first prompt. Because they are appended, an entry can expose a command
+        the standard set lacks but cannot shadow one it already provides.
 
         This exists because a Herdr workspace inherits the environment of the
         Herdr SERVER, not of the shell that configured it. On 2026-08-29 that
@@ -433,15 +548,8 @@ in
         PATH to Tandem's own workspaces fixes that without a global shim and
         without touching the user's Herdr session.
 
-        One entry is normally enough. Herdr applies this as the INITIAL
-        environment of the launched process and the login shell then rebuilds
-        PATH around it — probed on 2026-08-29 with a disposable workspace at
-        `--env PATH=/Applications/ChatGPT.app/Contents/Resources`, where
-        `claude` still resolved to the Home Manager profile while `codex`
-        resolved inside the app bundle. The same probe with `--env
-        PATH=/usr/bin` showed zsh reporting `command not found: mv` during its
-        own startup, `mv` being in /bin — which is what proves the injected
-        value is the starting point rather than the final PATH.
+        One entry is normally enough. Leaving the list empty passes no PATH at
+        all, and the workspace then inherits the Herdr server's environment.
       '';
     };
 
@@ -569,6 +677,15 @@ in
     # rather than a reconciler like ../../network-shares.nix: while it is
     # healthy there is nothing to reconcile, and once it is not, KeepAlive has
     # already restarted it.
+    # AFTER setupLaunchAgents, which is what writes the plist this reconciles
+    # against. Failing loudly is deliberate: an agent left on a previous
+    # generation's service is the exact silent state this exists to end.
+    home.activation.reloadTandemTunnelAgent =
+      lib.hm.dag.entryAfter [ "writeBoundary" "setupLaunchAgents" ]
+        ''
+          run ${getExe tunnelAgentReload}
+        '';
+
     launchd.agents.tandem-tunnel = {
       enable = true;
       config = {

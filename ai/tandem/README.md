@@ -25,6 +25,26 @@ Two things this path deliberately does **not** use:
 `modules/home/ai/tandem/` implements all of it. This file is the operator
 runbook: what to check, in what order, and what to do when it is broken.
 
+## Who tells ChatGPT how to orchestrate
+
+Two audiences, two channels, and they are not the same document.
+
+**Local workers** — Claude Code and Codex on this Mac — read the Nix-managed
+global instruction files, `~/.claude/CLAUDE.md` and `~/.codex/AGENTS.md`, both
+rendered from `ai/instructions/` (see [`../README.md`](../README.md)).
+
+**ChatGPT on the web** reads neither: they are local files, and a browser
+session cannot see them. It is briefed by **Tandem over MCP** instead. Since
+PR #3 of the pinned fork, the server returns an orchestration brief as the
+`initialize` result's `instructions` and serves the full versioned policy from
+its `get_orchestration_policy` tool, while enforcing the session, polling, and
+model-routing rules server-side regardless of what any client read.
+
+So Tandem is not merely the session bus for a remote foreman; at this revision
+it is also the only thing that tells one how to behave. Keeping the two
+documents saying the same thing is manual: the checks in this repository can
+only hold up the local side.
+
 ## Source policy
 
 The package is built from a **DivMode-managed fork** of `Maxmedawar/tandem`,

@@ -1,5 +1,9 @@
 {
-  instructions = ./instructions/global.md;
+  # The global instruction document, as a directory to be imported with `pkgs`.
+  # It composes the two tracked sources under it — owner prose and the agent
+  # orchestration policy — into the ONE document both clients are given, and
+  # carries the checks that keep them in step. See ./instructions/default.nix.
+  instructions = ./instructions;
 
   agents = {
     implementation = {

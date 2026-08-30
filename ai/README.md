@@ -12,7 +12,7 @@ previous machine's assistant configuration; everything here is restored by
 
 | Source | Rendered to |
 | --- | --- |
-| `instructions/global.md` | `~/.claude/CLAUDE.md`, `~/.codex/AGENTS.md` |
+| `instructions/` | `~/.claude/CLAUDE.md`, `~/.codex/AGENTS.md` |
 | `agents/*/prompt.md` | `~/.claude/agents/<name>.md`, `~/.codex/skills/<name>/SKILL.md` |
 | `hooks/nix-only-guard.py` | referenced by absolute Nix store path from Claude Code's settings |
 | `codex/default.nix` | narrowly merged into mutable `~/.codex/config.toml` |
@@ -21,6 +21,62 @@ previous machine's assistant configuration; everything here is restored by
 Instructions here are global, so they apply to every project. Repository facts
 belong in that repository's own instructions file; duplicating them here makes
 the two disagree.
+
+## The global instruction document
+
+`instructions/` holds two tracked sources and composes them, in order, into the
+one document both clients are given:
+
+- `global.md` — how the owner works, and what "done" means. Owner-edited prose.
+- `orchestration.md` — how agents on this machine coordinate with each other:
+  who is foreman, where durable state lives, how Tandem sessions are listed,
+  reused, and polled, what an interruption does and does not cancel, which
+  model a worker may pick, and that user environment changes belong in this
+  repository rather than in a shell. General by design; it names no project. It
+  carries a line budget, because it is loaded into every session of every
+  project.
+
+`instructions/default.nix` builds that document and `flake.nix` exposes its
+checks as `checks.<system>.agent-instructions`, which assert that the rendered
+document is exactly its two sources concatenated, that the policy is within
+budget, and that each binding rule is still present. Reword a rule freely;
+deleting one fails `nix flake check`.
+
+Both destinations are loaded automatically and machine-wide: Claude Code reads
+`~/.claude/CLAUDE.md` as user memory for every project, and Codex reads
+`$CODEX_HOME/AGENTS.md` — `~/.codex/AGENTS.md` unless the environment overrides
+`CODEX_HOME`, which nothing here does — as global user instructions.
+
+**Those two clients are the whole audience of these files.** This is policy
+for LOCAL workers. ChatGPT on the web reads neither — they are files on this
+Mac and a browser session cannot see them.
+
+A remote foreman is briefed over MCP instead, by Tandem rather than by anything
+in this repository. Since DivMode/tandem PR #3 (pinned in `flake.nix`) the MCP
+server returns an orchestration brief as the `initialize` result's
+`instructions` and serves the full versioned policy from a
+`get_orchestration_policy` tool, and it enforces the session, polling, and
+model-routing rules server-side whatever the client read. So the machine has
+two delivery paths for one intent:
+
+| Audience | Channel | Owner |
+| --- | --- | --- |
+| Claude Code, Codex (local) | `~/.claude/CLAUDE.md`, `~/.codex/AGENTS.md` | this repository |
+| ChatGPT Web (remote foreman) | MCP `initialize` instructions, `get_orchestration_policy` | Tandem, at the pinned revision |
+
+They are separate documents, and nothing keeps them in step automatically. A
+rule that must bind both has to be written in both — the checks here can only
+hold up this side. The `initialize` brief is also a hint a client MAY use, so a
+local worker must not assume the far end has read anything.
+
+The document is composed as a STRING at evaluation time rather than built as a
+derivation and passed to both consumers. `programs.claude-code.context` is typed
+`either lines path` and branches on `lib.isPath`, which is false for a
+derivation, so passing one takes the `.text` branch and is rejected there by
+`home.file.<name>.text`'s own `nullOr lines` type — a hard evaluation error,
+measured against the pinned home-manager rather than assumed.
+`~/.config/nix-config/ai/agent-instructions.md` links the same document for
+review.
 
 ## Claude Code
 

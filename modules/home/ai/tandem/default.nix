@@ -95,6 +95,12 @@ let
   # did not read why it is scoped. See ./workspace-env.nix.
   workspaceEnv = import ./workspace-env.nix { inherit pkgs lib; };
 
+  # Which Herdr session Tandem owns, and why it may not be the personal one.
+  # The value is defined once in ./session.nix so the option default below, the
+  # local.example.nix template, and the binding rule in the canonical policy
+  # cannot drift apart. See that file for what silently breaks when they do.
+  inherit (import ./session.nix { inherit pkgs lib; }) dedicatedSession personalSession;
+
   # The PATH a Tandem-owned Herdr workspace actually starts with.
   #
   # Herdr applies TANDEM_HERDR_WORKSPACE_PATH as the workspace's EXACT PATH, not
@@ -525,11 +531,20 @@ in
 
     herdrSession = mkOption {
       type = types.strMatching "[a-zA-Z0-9][a-zA-Z0-9._-]{0,63}";
-      default = tandemLocal.herdrSession or "default";
-      defaultText = lib.literalExpression ''local.tandem.herdrSession or "default"'';
+      default = tandemLocal.herdrSession or dedicatedSession;
+      defaultText = lib.literalExpression ''local.tandem.herdrSession or "${dedicatedSession}"'';
       description = ''
         The named persistent Herdr session Tandem talks to. Tandem never starts,
         resets, or reloads it; it must already be running.
+
+        It defaults to the dedicated `${dedicatedSession}` session and may not
+        be the personal `${personalSession}` one. That is a binding rule of the
+        canonical orchestration policy, and two mechanisms depend on it: a
+        remote foreman's constant agent-state notifications stay out of the
+        user's own workspace, and the transcript-persistence guard in
+        ./workspace-env.nix has a session to scope itself to. Pointed at the
+        personal session that guard emits nothing by design, and Tandem's
+        workers lose their transcripts with no warning.
       '';
     };
 
@@ -623,6 +638,19 @@ in
       {
         assertion = lib.all (entry: hasPrefix "/" entry) cfg.workspacePath;
         message = "Every nixConfig.ai.tandem.workspacePath entry must be an absolute directory.";
+      }
+      {
+        assertion = cfg.herdrSession != personalSession;
+        message = ''
+          nixConfig.ai.tandem.herdrSession is the personal `${personalSession}` Herdr
+          session. Tandem workers belong in a dedicated session — `${dedicatedSession}`
+          unless the host names another — so a remote foreman's agent-state
+          notifications stay out of your own workspace, and so the
+          transcript-persistence guard has a session to scope itself to. On the
+          personal session that guard emits nothing and Tandem's workers
+          silently stop writing transcripts.
+          See modules/home/ai/tandem/session.nix.
+        '';
       }
       {
         assertion = hasPrefix "127.0.0.1:" cfg.tunnel.healthListenAddress;

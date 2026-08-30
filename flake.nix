@@ -31,28 +31,52 @@
     # after re-running its typecheck and tests against the new commit.
     #
     # Base: upstream 0.1.0 at a98bcafd2c40ae5473b85fe41183e4f391933799.
-    # Verified at this commit (2026-08-29): `tsc --noEmit` clean, and 48 test
-    # files / 532 tests pass. Run that suite with CCM_CWD_ALLOWLIST,
-    # TANDEM_CWD_ALLOWLIST, and TANDEM_TERMINAL_BACKEND UNSET — several tests
-    # take those as default parameters, so a run inside a Tandem-created pane
-    # inherits the live machine's allowlist and reports four failures that are
-    # the harness leaking, not the code. Measured: 4 failed with them set, 0
-    # with them unset, same commit.
+    # Verified at THIS commit: `tsc --noEmit` clean, and 55 test files / 670
+    # tests pass. Run that suite with CCM_CWD_ALLOWLIST, TANDEM_CWD_ALLOWLIST,
+    # and TANDEM_TERMINAL_BACKEND UNSET — several tests take those as default
+    # parameters, so a run inside a Tandem-created pane inherits the live
+    # machine's allowlist and reports failures that are the harness leaking,
+    # not the code. Measured at the previous pin: 4 failed with them set, 0
+    # with them unset, same commit. PR #4 added a hermetic vitest setup that
+    # redirects the state root, so the suite no longer appends to the real
+    # ~/.tandem either.
     #
-    # This revision is DivMode/tandem main after PR #3, which adds the ChatGPT
-    # Web orchestration bootstrap — the MCP `initialize` result's `instructions`
-    # and a `get_orchestration_policy` tool — plus server-side model routing
-    # that keeps Fable behind explicit user consent. That matters here because
-    # it is the ONLY path by which a browser-based coordinator learns this
-    # machine's orchestration policy: it cannot read the Nix-managed
-    # ~/.claude/CLAUDE.md or ~/.codex/AGENTS.md that local workers get. PR #2
-    # before it moved Tandem onto its own silent named Herdr session
-    # (`tandem`), so the personal `default` session keeps its notifications.
+    # This revision is DivMode/tandem main after PR #5, and the four merges
+    # that built it each solved a distinct problem here:
+    #
+    #   #2 963c583  moved Tandem onto its own silent named Herdr session, so a
+    #               remote foreman's agent-state notifications stop landing in
+    #               the personal `default` session.
+    #   #3 9c06f56  gave a browser coordinator a policy AT ALL: the MCP
+    #               `initialize` result's `instructions`, a
+    #               `get_orchestration_policy` tool, and server-side model
+    #               routing that keeps Fable behind explicit user consent.
+    #               This is the ONLY path by which ChatGPT Web learns this
+    #               machine's orchestration policy — it cannot read the
+    #               Nix-managed ~/.claude/CLAUDE.md or ~/.codex/AGENTS.md that
+    #               local workers get.
+    #   #4 c097bdc  made turn completion durable and claimed exactly once, and
+    #               added `get_foreman_events`: the bounded, redacted inbox a
+    #               returning foreman reconciles against. Completion used to be
+    #               emitted from the READ path, so polling twice with the same
+    #               stale cursor — the documented recovery move after an
+    #               interruption — manufactured two completions for one turn.
+    #   #5 afc3192  synchronised the ChatGPT-facing policy with this
+    #               repository's canonical one (nix-config #27): reviewer of
+    #               record and merge authority in the ROLE, no self-approval,
+    #               an optional risk-based independent reviewer whose verdict
+    #               is evidence, and no monitor-only sessions. Policy v1.2.0.
+    #
+    # Moving this pin is when the two policy documents get compared. They are
+    # separate documents with separate owners — ai/instructions/orchestration.md
+    # reaches local workers from disk, this revision's
+    # src/orchestration-policy.ts reaches ChatGPT Web over MCP — and nothing
+    # keeps them in step automatically. See docs/orchestration-architecture.md.
     #
     # `flake = false` because upstream ships no flake.nix; the package is built
     # by modules/home/ai/tandem/package.nix.
     tandem = {
-      url = "github:DivMode/tandem/9c06f5684305c9faba1d9ab27434e5ae4b7ce01c";
+      url = "github:DivMode/tandem/afc3192e9caaa1affb7c9ed97c6c66df0605c2ee";
       flake = false;
     };
 
@@ -213,9 +237,14 @@
           ]
           (system: {
             agent-instructions = (import ./ai/instructions { pkgs = nixpkgs.legacyPackages.${system}; }).tests;
+            orchestration-docs = (import ./docs/links.nix { pkgs = nixpkgs.legacyPackages.${system}; }).tests;
             codex-config-merge = (import ./ai/codex { pkgs = nixpkgs.legacyPackages.${system}; }).tests;
             tandem-workspace-env =
               (import ./modules/home/ai/tandem/workspace-env.nix {
+                pkgs = nixpkgs.legacyPackages.${system};
+              }).tests;
+            tandem-session =
+              (import ./modules/home/ai/tandem/session.nix {
                 pkgs = nixpkgs.legacyPackages.${system};
               }).tests;
           });

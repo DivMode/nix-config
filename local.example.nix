@@ -43,8 +43,7 @@
     # CLI fails as a vanished agent rather than as a missing command.
     extraEngines = [ ];
 
-    # The already-running persistent Herdr session Tandem attaches to. Tandem
-    # never starts, resets, or reloads it.
+    # The persistent Herdr session Tandem talks to.
     #
     # A DEDICATED session, never the personal `default` one. Two things depend
     # on that: a remote foreman's constant agent-state notifications stay out
@@ -52,8 +51,13 @@
     # modules/home/ai/tandem/workspace-env.nix has a session to scope itself
     # to — pointed at `default` it emits nothing by design and Tandem's workers
     # silently stop writing transcripts. The module refuses `default` outright.
-    # Herdr creates a named session on first attach — `herdr session attach
-    # tandem` — and keeps it running; Tandem itself never starts one.
+    #
+    # This dedicated session is the only one Tandem manages. When it is not
+    # already running, Tandem writes its own silent Herdr config and starts a
+    # headless Herdr server for this name against that config; when it is
+    # running, Tandem uses it as it stands and never reloads or resets it. The
+    # personal `default` session it only ever inspects — never starts,
+    # reconfigures, or reloads.
     herdrSession = "tandem";
 
     # PATH for the Herdr workspaces Tandem creates for itself, and nothing

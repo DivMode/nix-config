@@ -179,8 +179,9 @@ let
 
   # The single global instruction document, composed from the tracked sources
   # under ai/instructions and given VERBATIM to both clients below. One string,
-  # two destinations — and the assertion further down holds the two consumers to
-  # that, because "by construction" is only true while nobody edits either line.
+  # two destinations — and the assertions further down hold the two consumers to
+  # that, both to each other and to this exact value, because "by construction"
+  # is only true while nobody edits either line.
   #
   # A string, not a store path, and deliberately: `programs.claude-code.context`
   # is typed `either lines path` and branches on `lib.isPath`, which is false
@@ -401,6 +402,42 @@ in
           content. Both are rendered from ai/instructions; feed each of them
           `instructions.text` and nothing else. A client-specific addition
           belongs in that client's own configuration, not in one of these.
+        '';
+      }
+      # …and the same bytes as the canonical document, not merely as each other.
+      #
+      # The assertion above pins the two consumers TO ONE ANOTHER, which an
+      # identical wrong edit to both satisfies: give each of them a shared
+      # preamble and they still match, `checks.<system>.agent-instructions`
+      # still proves the rendered document is exactly its two tracked sources,
+      # and both clients are handed a policy that is not that document. Nothing
+      # tied either consumer to `instructions.text` itself. This does.
+      #
+      # It is a separate assertion rather than a strengthening of the one above
+      # so that each failure names its own fault: "the two files differ" and
+      # "the files agree on the wrong text" are different mistakes with
+      # different fixes. The predicate lives in ai/instructions beside the value
+      # it is about, where `checks.<system>.agent-instructions` regression-tests
+      # it against exactly this scenario.
+      {
+        assertion =
+          let
+            claude = config.home.file."${config.programs.claude-code.configDir}/CLAUDE.md";
+            codex = config.home.file.".codex/AGENTS.md";
+          in
+          instructions.consumersMatchCanonical {
+            claudeText = claude.text;
+            codexText = codex.text;
+          };
+        message = ''
+          ~/.claude/CLAUDE.md and ~/.codex/AGENTS.md must each carry the
+          canonical document byte for byte — `instructions.text`, composed from
+          ai/instructions/global.md and ai/instructions/orchestration.md.
+
+          One of them is something else. Matching each other is not enough: the
+          same wrong bytes in both files is still the wrong policy in both
+          clients. Edit the tracked sources under ai/instructions/ instead, and
+          put a client-specific addition in that client's own configuration.
         '';
       }
       {

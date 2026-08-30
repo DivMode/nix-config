@@ -43,6 +43,34 @@ let
   # comment above.
   document = pkgs.writeText "agent-instructions.md" text;
 
+  # The rule both consumers are held to, as a function so that the assertion in
+  # modules/home/ai and the regression test below exercise the SAME predicate
+  # rather than two restatements of it that can drift apart.
+  #
+  # Each consumer must equal `text` — the canonical value — and not merely equal
+  # the other one. That distinction is the whole point. Mutual equality is
+  # satisfied by an IDENTICAL wrong edit to both consumers: give each of them
+  # `"preamble" + text` and the two files still match each other, the rendered
+  # document is still exactly its two tracked sources, and every check that
+  # existed before this one passes while both clients are handed a policy that
+  # is not the canonical document.
+  consumersMatchCanonical =
+    {
+      claudeText,
+      codexText,
+    }:
+    claudeText != null && codexText != null && claudeText == text && codexText == text;
+
+  # Drift shapes for the test below: a client-specific preamble, which is the
+  # edit the post-merge review actually described, and an appended line, which
+  # is the same mistake from the other end.
+  preambleDrift = "# Claude-specific preamble.\n\n" + text;
+  appendedDrift = text + "\n# Appended after the canonical document.\n";
+
+  # A Nix function cannot be called from the test's shell, so the predicate is
+  # applied here and only its verdicts cross into the derivation.
+  verdict = pair: if consumersMatchCanonical pair then "match" else "drift";
+
   # Every rule the orchestration policy exists to carry, expressed as a string
   # that must survive editing. A rule can be reworded freely; deleting one
   # fails the build, which is the point — these were asked for explicitly and
@@ -110,6 +138,34 @@ let
         inherit document;
         globalSource = ./global.md;
         orchestrationSource = ./orchestration.md;
+
+        # One verdict per scenario. The pair is what the two Home Manager
+        # consumers would be given; the answer is what the assertion makes
+        # of it.
+        verdictCanonical = verdict {
+          claudeText = text;
+          codexText = text;
+        };
+        verdictBothPreamble = verdict {
+          claudeText = preambleDrift;
+          codexText = preambleDrift;
+        };
+        verdictBothAppended = verdict {
+          claudeText = appendedDrift;
+          codexText = appendedDrift;
+        };
+        verdictClaudeOnly = verdict {
+          claudeText = preambleDrift;
+          codexText = text;
+        };
+        verdictCodexOnly = verdict {
+          claudeText = text;
+          codexText = preambleDrift;
+        };
+        verdictMissing = verdict {
+          claudeText = null;
+          codexText = null;
+        };
       }
       ''
         fail() { echo "agent-instructions: $*" >&2; exit 1; }
@@ -138,9 +194,41 @@ let
             || fail "missing binding rule text: $phrase"
         done < ${requiredPhrasesFile}
 
+        # The consumer rule, case by case. This is a regression test for the
+        # predicate; the assertion in modules/home/ai is what applies it to the
+        # real `home.file` entries, and it fires during `darwin-rebuild` and
+        # `nix eval .#darwinConfigurations.<host>.system`.
+        [ "$verdictCanonical" = match ] \
+          || fail "the canonical document was rejected for both consumers; every rebuild would fail"
+
+        # THE gap this test exists for. Both consumers drift by the SAME bytes,
+        # so they still equal each other: the mutual-equality rule alone passes
+        # this, and the canonical rule must not.
+        [ "$verdictBothPreamble" = drift ] \
+          || fail "an identical client-specific preamble on BOTH consumers was accepted as canonical"
+        [ "$verdictBothAppended" = drift ] \
+          || fail "an identical appended line on BOTH consumers was accepted as canonical"
+
+        # One-sided drift, checked here too so this rule stands on its own
+        # rather than leaning on the mutual-equality assertion beside it.
+        [ "$verdictClaudeOnly" = drift ] \
+          || fail "a preamble on ~/.claude/CLAUDE.md alone was accepted as canonical"
+        [ "$verdictCodexOnly" = drift ] \
+          || fail "a preamble on ~/.codex/AGENTS.md alone was accepted as canonical"
+
+        # `programs.claude-code.context = ""` writes no CLAUDE.md at all, which
+        # leaves `.text` null. Absent is not canonical.
+        [ "$verdictMissing" = drift ] \
+          || fail "a consumer with no content at all was accepted as canonical"
+
         touch "$out"
       '';
 in
 {
-  inherit text document tests;
+  inherit
+    text
+    document
+    consumersMatchCanonical
+    tests
+    ;
 }

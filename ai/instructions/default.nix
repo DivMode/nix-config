@@ -78,13 +78,14 @@ let
   # found inside a named section of orchestration.md.
   #
   # The reviewer of record belongs in Roles because it is a standing fact about
-  # who ChatGPT is, not a step to follow. The four under Binding rules are
+  # who ChatGPT is, not a step to follow. The five under Binding rules are
   # obligations, and an obligation that is not a binding rule is a suggestion.
   sectionPhrases = {
     "## Roles" = [
       "It is also the **reviewer of record and the merge authority** for"
     ];
     "## Binding rules" = [
+      "**Reconcile before you open.**"
       "**Implementation and review stay separate**"
       "**Implementation workers do not self-approve**"
       "**A separate Claude reviewer is optional, not mandatory.**"
@@ -116,6 +117,15 @@ let
     "**Interrupting the foreman does not stop the workers.**"
     "re-list the sessions and resume polling the"
     "same named worker**"
+
+    # Reconciliation, in two halves for the same reason as the reviewer and
+    # monitor rules below. "Call both tools" without "history is not liveness"
+    # lets a foreman decide from the event feed whether a worker is still
+    # running, which is the one question the feed cannot answer. "History is
+    # not liveness" without the instruction to call them leaves the rule true
+    # and unactionable. The first half is in `sectionPhrases` above.
+    "call `list_sessions` **and** `get_foreman_events` with the checkpoint the"
+    "**liveness** authority — a `completed` event is not proof a worker exited,"
 
     # Model routing. The Fable rule is the one most likely to be softened by a
     # well-meaning reword, so both halves of it are pinned.

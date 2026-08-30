@@ -73,6 +73,11 @@ The `ai/` directory is canonical. `ai/default.nix` supplies shared instructions
 and agent prompts, while client-specific declarations stay in their own source
 and renderer modules rather than leaking into the shared layer.
 
+How those instructions reach a remote ChatGPT foreman — which they cannot do
+as files — and how the whole ChatGPT/Tandem/Herdr/worker system is meant to
+behave is documented in
+[`orchestration-architecture.md`](orchestration-architecture.md).
+
 The renderers are enabled, and the reason is recoverability: a coding agent
 deleted a previous machine's assistant configuration, so the instruction file,
 agent definitions, and Claude Code's user settings — including the PreToolUse

@@ -45,7 +45,16 @@
 
     # The already-running persistent Herdr session Tandem attaches to. Tandem
     # never starts, resets, or reloads it.
-    herdrSession = "default";
+    #
+    # A DEDICATED session, never the personal `default` one. Two things depend
+    # on that: a remote foreman's constant agent-state notifications stay out
+    # of your own workspace, and the transcript-persistence guard in
+    # modules/home/ai/tandem/workspace-env.nix has a session to scope itself
+    # to — pointed at `default` it emits nothing by design and Tandem's workers
+    # silently stop writing transcripts. The module refuses `default` outright.
+    # Herdr creates a named session on first attach — `herdr session attach
+    # tandem` — and keeps it running; Tandem itself never starts one.
+    herdrSession = "tandem";
 
     # PATH for the Herdr workspaces Tandem creates for itself, and nothing
     # else — it is passed as `workspace.create.env.PATH`, so it never reaches

@@ -23,7 +23,11 @@ Two things this path deliberately does **not** use:
   ChatGPT path.
 
 `modules/home/ai/tandem/` implements all of it. This file is the operator
-runbook: what to check, in what order, and what to do when it is broken.
+runbook: what to check, in what order, and what to do when it is broken. The
+design record behind it — roles and authority, the two bootstrap channels,
+session and interruption discipline, the reviewer hierarchy, and why no MCP
+server can wake a dormant chat client — is
+[`../../docs/orchestration-architecture.md`](../../docs/orchestration-architecture.md).
 
 ## Who tells ChatGPT how to orchestrate
 
@@ -34,16 +38,21 @@ global instruction files, `~/.claude/CLAUDE.md` and `~/.codex/AGENTS.md`, both
 rendered from `ai/instructions/` (see [`../README.md`](../README.md)).
 
 **ChatGPT on the web** reads neither: they are local files, and a browser
-session cannot see them. It is briefed by **Tandem over MCP** instead. Since
-PR #3 of the pinned fork, the server returns an orchestration brief as the
-`initialize` result's `instructions` and serves the full versioned policy from
-its `get_orchestration_policy` tool, while enforcing the session, polling, and
-model-routing rules server-side regardless of what any client read.
+session cannot see them. It is briefed by **Tandem over MCP** instead. The
+server returns an orchestration brief as the `initialize` result's
+`instructions` and serves the full versioned policy from its
+`get_orchestration_policy` tool, while enforcing the session, polling, and
+model-routing rules server-side regardless of what any client read. The pinned
+revision serves policy **v1.2.0**, which carries the reviewer-of-record,
+no-monitor-only-sessions, and foreman-event reconciliation rules alongside the
+session and model-routing ones.
 
 So Tandem is not merely the session bus for a remote foreman; at this revision
 it is also the only thing that tells one how to behave. Keeping the two
 documents saying the same thing is manual: the checks in this repository can
-only hold up the local side.
+only hold up the local side. The procedure for that, and the reasoning behind
+the split, is in
+[`../../docs/orchestration-architecture.md`](../../docs/orchestration-architecture.md).
 
 ## Source policy
 

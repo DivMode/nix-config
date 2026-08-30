@@ -70,7 +70,16 @@ both has to be written in both places.
    wanted, say what is running and ask — do not silently abandon it and do not
    silently start a second one.
 
-6. **Model routing for Claude workers.** Default to **Opus 5** (`opus`) for
+6. **Reconcile before you open.** Tandem work finishes whether or not a foreman
+   is connected, and no MCP server can wake a dormant chat client. So when
+   starting substantial work, and again after any interruption or context loss,
+   call `list_sessions` **and** `get_foreman_events` with the checkpoint the
+   last call returned. Events are **history**; `list_sessions` is the only
+   **liveness** authority — a `completed` event is not proof a worker exited,
+   and silence is not proof nothing happened. Reconcile onto the session that
+   already owns the task instead of opening a second one.
+
+7. **Model routing for Claude workers.** Default to **Opus 5** (`opus`) for
    implementation, hard debugging, architecture, and substantive review.
    `sonnet` (currently Sonnet 5) is for narrow read-only inspection,
    monitoring, simple mechanical edits, and cheap helpers — pick it because the
@@ -81,14 +90,14 @@ both has to be written in both places.
    an automatic or default choice. Do not downgrade important work to save
    usage; if cost is the reason, say so and let the user decide.
 
-7. **Implementation and review stay separate** for anything significant or
+8. **Implementation and review stay separate** for anything significant or
    risky, whenever that is practical. A worker's own account of its work is not
    an independent review, and it must not be the only one. Give the reviewer
    the diff and the original requirement, not the implementer's summary.
    **Implementation workers do not self-approve**: they hand their evidence to
    the ChatGPT foreman, which is where approval and merge live.
 
-8. **A separate Claude reviewer is optional, not mandatory.** Open one when
+9. **A separate Claude reviewer is optional, not mandatory.** Open one when
    risk, complexity, or local execution earns a genuinely independent read —
    security, protocol and MCP behaviour, Nix and system state, migrations,
    concurrency and shared state, large refactors. Its verdict is **evidence for
@@ -96,23 +105,23 @@ both has to be written in both places.
    Skip it for small, low-risk, plainly correct work, and say that you skipped
    it.
 
-9. **Never open a Claude session solely to watch another one.** Routine
-   progress comes from Tandem `list_sessions`, semantic cursor polling of the
-   session that owns the work, and the foreman reconciling those events — a
-   monitoring worker costs a model, learns nothing the cursor does not already
-   carry, and invites the duplicate ownership rule 2 exists to prevent. A
-   short-lived read-only health probe is exceptional, justified only when the
-   semantic state itself looks inconsistent or stuck, and is
-   **closed immediately afterwards**.
+10. **Never open a Claude session solely to watch another one.** Routine
+    progress comes from Tandem `list_sessions`, semantic cursor polling of the
+    session that owns the work, and the foreman reconciling those events — a
+    monitoring worker costs a model, learns nothing the cursor does not already
+    carry, and invites the duplicate ownership rule 2 exists to prevent. A
+    short-lived read-only health probe is exceptional, justified only when the
+    semantic state itself looks inconsistent or stuck, and is
+    **closed immediately afterwards**.
 
-10. **Checkpoint durably.** Read the relevant issue, pull request, and its
+11. **Checkpoint durably.** Read the relevant issue, pull request, and its
     latest comments before acting — they usually already contain the decision
     you were about to re-derive. Record outcomes back there, commit and push
     completed work, and never leave an important finding only in a terminal
     transcript that closes with the session. Preserve unrelated worktrees and
     files. Never commit secrets or private local state.
 
-11. **This machine is declarative.** Environment, settings, and configuration
+12. **This machine is declarative.** Environment, settings, and configuration
     changes belong in the Nix configuration repository — Home Manager or
     nix-darwin — not in ad-hoc shell edits, hand-written dotfiles, or GUI
     clicks. The exception is an unavoidable emergency the user has explicitly
@@ -120,19 +129,19 @@ both has to be written in both places.
     change, rebuild and verify through the repository's own scripts rather than
     assembling an activation command by hand.
 
-12. **Work in the intended checkout.** Confirm the repository root from the
+13. **Work in the intended checkout.** Confirm the repository root from the
     checkout itself before reading or changing anything, and never let a
     convenient copy of a repository become a second source of truth. If you
     find two checkouts of the same project, say so and ask which is canonical
     rather than picking one.
 
-13. **No hidden fleets.** ChatGPT and Tandem normally own orchestration. A
+14. **No hidden fleets.** ChatGPT and Tandem normally own orchestration. A
     Claude worker may use its own subagents where they clearly help — genuine
     breadth, or an independent adversarial read — but must not spawn a nested
     fleet that duplicates ownership of a task another session already holds.
     State which files each concurrent agent owns before they start.
 
-14. **A more specific instruction file wins on its own ground.** A repository's
+15. **A more specific instruction file wins on its own ground.** A repository's
     `AGENTS.md` or `CLAUDE.md` governs that project's conventions. This policy
     is the machine-level default underneath it, and it still governs anything
     the project file does not speak to. A direct instruction from the user

@@ -21,13 +21,30 @@ let
     #
     # Declaring it fixes the symptom whatever the mechanism turns out to be,
     # because activation now re-asserts the value after the upgrade that
-    # disturbs it. If the desktop application still shows "medium" after a
-    # rebuild while this file reads "xhigh", the effort the UI uses is stored
+    # disturbs it. If the desktop application still shows a lower effort after a
+    # rebuild while this file reads "ultra", the effort the UI uses is stored
     # somewhere other than config.toml and that is the next thing to find.
+    #
+    # "ultra", not the "xhigh" this declared until 2026-08-30. Codex grew two
+    # efforts above xhigh, and the machine is already set to the top one:
+    # ~/.codex/config.toml read `model_reasoning_effort = "ultra"`, written
+    # 2026-08-30 14:58, AFTER the 2026-08-29 19:48 activation that asserted
+    # xhigh. Leaving xhigh here would have silently downgraded a live setting on
+    # the next rebuild, which is the same failure this block exists to prevent,
+    # only pointing the other way.
+    #
+    # The value is checked against the binary rather than assumed. The codex
+    # CLI's own effort enum is minimal/low/medium/high/xhigh/max/ultra/
+    # persistent, and the model catalog cached in ~/.codex/.codex-global-state.json
+    # gives gpt-5.6-sol's supported efforts as "low, medium, high, xhigh, max,
+    # ultra". Cheaper models stop lower — gpt-5.6-luna at max, gpt-5.5 at xhigh
+    # — so this key is NOT independent of the model. If the model in use ever
+    # drops below gpt-5.6-sol, this has to come down with it or codex will
+    # reject a stored effort its model does not support.
     #
     # `model` is deliberately not declared. Only the effort was reported lost,
     # and the model is a per-session choice this repository has no reason to own.
-    model_reasoning_effort = "xhigh";
+    model_reasoning_effort = "ultra";
 
     approval_policy = "never";
     approvals_reviewer = "auto_review";

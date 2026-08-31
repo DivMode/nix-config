@@ -36,16 +36,32 @@ class MergeCodexConfigTests(unittest.TestCase):
         return result
 
     def assert_managed_values(self, parsed: dict[str, object]) -> None:
-        self.assertEqual(parsed["approval_policy"], "never")
-        self.assertEqual(parsed["model_reasoning_effort"], "xhigh")
-        self.assertEqual(parsed["approvals_reviewer"], "auto_review")
-        self.assertEqual(parsed["sandbox_mode"], "danger-full-access")
-        defaults = parsed["apps"]["_default"]  # type: ignore[index]
-        self.assertEqual(defaults["approvals_reviewer"], "auto_review")
-        self.assertEqual(defaults["default_tools_approval_mode"], "approve")
-        self.assertEqual(defaults["destructive_enabled"], True)
-        self.assertEqual(defaults["enabled"], True)
-        self.assertEqual(defaults["open_world_enabled"], True)
+        # Expectations come from the declared file the merger was handed, not
+        # from a copy of it written out here. A restated table is a second place
+        # the values live, and the two disagree the moment either moves: on
+        # 2026-08-30 the declared effort went xhigh -> ultra and a hard-coded
+        # "xhigh" in this method failed two tests with no defect behind them.
+        # Reading DECLARED also widens the assertion — every declared key is
+        # now checked, including ones added after this method was written.
+        declared = tomllib.loads(DECLARED.read_text(encoding="utf-8"))
+        self.assert_declared_subset(declared, parsed, path="")
+
+    def assert_declared_subset(
+        self,
+        declared: dict[str, object],
+        parsed: dict[str, object],
+        *,
+        path: str,
+    ) -> None:
+        for key, expected in declared.items():
+            where = f"{path}{key}"
+            self.assertIn(key, parsed, f"managed key {where} is missing")
+            actual = parsed[key]
+            if isinstance(expected, dict):
+                self.assertIsInstance(actual, dict, f"managed key {where} is not a table")
+                self.assert_declared_subset(expected, actual, path=f"{where}.")
+            else:
+                self.assertEqual(actual, expected, f"managed key {where} was not asserted")
 
     def test_preserves_comments_unknown_tables_and_order(self) -> None:
         original = '''# user-level comment

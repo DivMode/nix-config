@@ -44,6 +44,11 @@ not yours.
 
 ## Repository targeting
 
+All ongoing source checkouts on this Mac live under
+`/Volumes/Data/Developer`. Never create or use an ongoing source checkout under
+`~/Developer` or another path on the internal system volume. If the external
+volume is unavailable, stop; do not substitute an internal checkout.
+
 Before any Codex agent reads, edits, or runs repository code, establish the
 intended Git root from the checkout itself. Run `pwd` and
 `git rev-parse --show-toplevel`, and require both to resolve to the same

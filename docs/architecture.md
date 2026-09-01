@@ -46,6 +46,12 @@ reusable user choices belong in `profiles/`. Future NixOS servers should add
   application. Ghostty owns mutable window and UI state.
 - **IINA** is the media player and **Calibre** manages the e-book library. Both
   are Homebrew casks, like every other native GUI application here.
+- **Keka** is the extractor for every archive format macOS cannot open natively,
+  and for most of the ones it can. Installing it does not make it the default:
+  LaunchServices keeps whatever handler was already bound, so
+  `modules/home/archives.nix` declares the bindings by UTI. That module is where
+  the boundary with Calibre is drawn — Calibre keeps e-books, Keka takes `.rar`,
+  which Calibre had claimed for comic books.
 - **mise** owns Node runtime installation and selection; the global fallback is
   Node 24, while exact production pins belong to project repositories.
 - **uv** owns Python interpreters, environments, dependencies, and tools. Python

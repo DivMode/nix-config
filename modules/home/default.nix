@@ -8,6 +8,7 @@
 {
   imports = [
     ./ai
+    ./archives.nix
     ./development.nix
     ./downloads.nix
     ./fluidvoice.nix

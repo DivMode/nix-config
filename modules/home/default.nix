@@ -9,6 +9,7 @@
   imports = [
     ./ai
     ./archives.nix
+    ./chatgpt.nix
     ./development.nix
     ./downloads.nix
     ./fluidvoice.nix
@@ -16,6 +17,7 @@
     ./karabiner.nix
     ./launchers.nix
     ./media.nix
+    ./menu-bar.nix
     ./mouse.nix
     ./network-shares.nix
     ./privacy.nix

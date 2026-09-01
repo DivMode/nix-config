@@ -8,6 +8,15 @@ let
     global = {
       show_in_menu_bar = false;
       show_profile_name_in_menu_bar = false;
+
+      # Karabiner must not offer its own updates. Versions here arrive as a
+      # homebrew-cask lock bump reviewed in git, so an in-app "a new version is
+      # available" notice can only advertise a version this repository has not
+      # adopted, and accepting it would install software no commit describes.
+      # The key is Karabiner's own (`check_for_updates_on_startup`, present in
+      # the 16.x Karabiner-Elements binary); it suppresses the check, not just
+      # the notification.
+      check_for_updates_on_startup = false;
     };
 
     profiles = [

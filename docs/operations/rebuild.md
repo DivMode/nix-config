@@ -89,12 +89,17 @@ Three separate update channels feed this Mac, and only two are driven from here:
   flake inputs and `mutableTaps` is false, so `brew update` cannot move them;
   only a lock update can.
 - **The applications' own updaters** — most declared casks carry Homebrew's
-  `auto_updates` flag and update themselves entirely outside Nix.
+  `auto_updates` flag and update themselves entirely outside Nix. Two are
+  deliberately not left to that: `karabiner-elements` is `greedy`, so a lock
+  update does move it despite the flag, and `adobe-acrobat-pro` has its own
+  updater disabled by `modules/darwin/adobe-updates.nix` while staying
+  non-greedy, so nothing changes its version until someone asks for it.
 
 Because `homebrew.onActivation.upgrade` is true, activation moves an installed
-cask to whatever version the pinned tap defines. The casks that actually depend
-on this are the ones with no self-updater — currently `claude-code` and
-`1password-cli`.
+cask to whatever version the pinned tap defines. The cask that actually depends
+on this is the one with no self-updater — currently `1password-cli` alone.
+`claude-code` was in that list until it stopped being a cask; the CLI now comes
+from the `llm-agents` flake input, so `nixpkgs`-style lock updates move it.
 
 ## Safety boundaries
 

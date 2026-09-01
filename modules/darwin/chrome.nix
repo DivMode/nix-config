@@ -6,29 +6,31 @@
 }:
 let
   plist = pkgs.formats.plist { };
-  # Where downloads land: a LOCAL path, and the reason is that this policy has
-  # no fallback to give.
+
+  # THIS FILE CARRIES ONE KEY, and that is the whole point of its size.
   #
-  # `DownloadDirectory` takes one static string, read at launch, and it is
-  # mandatory. There is no second choice for Chrome to try. So for as long as
-  # this named an SMB mount — it did until 2026-08-27 — every download started
-  # off the home network was aimed at a path that did not exist and that Chrome
-  # could not create, /Volumes being root:wheel drwxr-xr-x.
+  # Everything below — generating a plist, hashing it, the receipt guard, the
+  # activation script, the boot reconciler — exists for `WebAppInstallForceList`
+  # and nothing else. That policy is declared `RECOMMENDED_PROHIBITED` in
+  # Chromium's handler list (chrome/browser/policy/
+  # configuration_policy_handler_list_factory.cc), so Chrome REFUSES it at
+  # recommended level with "Policy level is not supported." Mandatory policy on
+  # a Mac without MDM can only come from a forced value, and the only non-MDM
+  # source of forced values is /Library/Managed Preferences — the directory
+  # macOS rebuilds at boot. The machinery follows from that single constraint.
   #
-  # That is not an edge case on this machine. The home connection drops often
-  # enough to run on a phone hotspot instead, and on 2026-08-27 it did exactly
-  # that: 172.20.10.0/28, all three shares unmounted, for the whole morning.
+  # The download settings USED to ride along in here, and paid for it. They are
+  # now ordinary user preferences in the `system.defaults` block below, because
+  # `DownloadDirectory` is `can_be_recommended: true` upstream and its handler
+  # (chrome/browser/download/download_dir_policy_handler.cc) sets the pref
+  # regardless of level. Nothing wipes a user preference, so downloads no longer
+  # depend on this file being present at all.
   #
-  # Serving the share when it is mounted and a disk when it is not was
-  # considered and rejected. It can only be built by flipping what one fixed
-  # path points at, which scatters downloads across two locations according to
-  # which network happened to be up, and puts a flip between Chrome writing
-  # <name>.crdownload and renaming it. One always-present destination cannot
-  # half-work.
-  #
-  # Read from local.nix because it names a volume on this machine.
-  # modules/home/downloads.nix owns creating it; dock.nix pins the same value.
-  downloadDirectory = local.downloadsDirectory;
+  # Do not move them back. On 2026-08-31 a boot at 15:29 left this machine with
+  # no download policy loaded, Chrome fell back to a stale profile preference,
+  # and an 829 MB download went somewhere nobody had chosen. A key that does not
+  # need to be mandatory should not be, because being mandatory here means being
+  # briefly absent after every restart.
 
   chromePolicy = plist.generate "com.google.Chrome.plist" {
     WebAppInstallForceList = [
@@ -42,38 +44,6 @@ let
       }
     ];
 
-    # Every download goes to that one directory, and the setting is not the
-    # user's to move.
-    #
-    # Chrome's own policy definition is unambiguous about the guarantee: it
-    # "uses the provided directory, whether or not users specify one or turned
-    # on the flag to be prompted for download location every time", and it
-    # "overrides the DefaultDownloadDirectory policy". Supported on
-    # `chrome.*:11-`, which includes macOS.
-    #
-    # `DefaultDownloadDirectory` is deliberately NOT the key used here. It
-    # carries `can_be_mandatory: false` upstream — it exists only as a
-    # recommendation a profile may overrule — so it cannot express "downloads
-    # go here, and that is not yours to change".
-    #
-    # The policy is also what survives a new profile, a reset, or a new Mac.
-    # Setting it through `download.default_directory` in the profile's own
-    # Preferences JSON does not: docs/state-boundary.md correctly lists that as
-    # mutable state Nix does not own, and all three of those events send it
-    # quietly back to ~/Downloads with no error.
-    DownloadDirectory = downloadDirectory;
-
-    # Strictly redundant for the path guarantee — DownloadDirectory already
-    # wins over the prompt, per the sentence quoted above — but declared so the
-    # Settings UI AGREES with the behaviour. Without it the "Ask where to save
-    # each file" toggle can still read as on while having no effect, which is
-    # exactly the kind of application-disagrees-with-stored-state confusion
-    # this repository has already paid for once in mouse.nix.
-    #
-    # The key is `PromptForDownloadLocation`. There is no `PromptForDownload`;
-    # a plausible-looking wrong name here would have been silently ignored,
-    # because Chrome discards unrecognised policy keys without complaint.
-    PromptForDownloadLocation = false;
   };
   policyHash = builtins.hashFile "sha256" chromePolicy;
   policyPath = "/Library/Managed Preferences/com.google.Chrome.plist";
@@ -154,6 +124,38 @@ let
   };
 in
 {
+  # Where downloads land, as an ordinary user preference rather than a policy.
+  #
+  # nix-darwin runs this as `defaults write com.google.Chrome …` for the primary
+  # user, so it lands in ~/Library/Preferences/com.google.Chrome.plist. Chrome
+  # reads policy from that domain too — PolicyLoaderMac::Load() uses
+  # CFPreferencesCopyAppValue, which searches the whole domain chain — and
+  # applies it at RECOMMENDED level, because CFPreferencesAppValueIsForced is
+  # false there. chrome://policy shows it as source Platform, level Recommended.
+  #
+  # Recommended is enough for these two keys and is NOT enough for the PWA; that
+  # asymmetry is the entire reason this module is split in two. See the note at
+  # the top.
+  #
+  # `DefaultDownloadDirectory` is deliberately not the key used. It carries
+  # `can_be_mandatory: false` upstream, and `DownloadDirectory` overrides it
+  # anyway. The prompt key is `PromptForDownloadLocation` — there is no
+  # `PromptForDownload`, and a plausible wrong name would be discarded in
+  # silence, because Chrome drops unrecognised policy keys without complaint.
+  #
+  # The one thing recommended level costs: a value the user has already set in
+  # Chrome's own settings shadows this one, because a user store outranks the
+  # recommended store. Changing local.downloadsDirectory therefore does not move
+  # a profile that has its own `download.default_directory` — change it once in
+  # Chrome's UI as well, or delete that key from the profile's Preferences JSON.
+  #
+  # Read from local.nix because it names a volume on this machine.
+  # modules/home/downloads.nix owns creating it; dock.nix pins the same value.
+  system.defaults.CustomUserPreferences."com.google.Chrome" = {
+    DownloadDirectory = local.downloadsDirectory;
+    PromptForDownloadLocation = false;
+  };
+
   # Chrome's real PWA installer is profile-owned, but its machine policy is
   # system state. The receipt keeps activation from overwriting a policy file
   # created or later changed by another administrator or management tool.
@@ -161,13 +163,35 @@ in
     ${lib.getExe installPolicy}
   '';
 
-  # Re-assert at boot, because macOS has just thrown the policy away. Chrome
-  # only reads policy when it launches, and it launches after login, so a
-  # daemon that runs during boot wins that race comfortably.
+  # Re-assert at boot, because macOS has just thrown the policy away.
+  #
+  # RunAtLoad ALONE DOES NOT DO THIS, and the original claim here — that a
+  # daemon running during boot "wins that race comfortably" — was measured false
+  # on 2026-08-31. The Mac booted at 15:29:41 and launchd registered this daemon
+  # at 15:31:45, yet by 16:52 the policy file was gone while Chrome had fallen
+  # back to a profile preference pointing at a directory this repository stopped
+  # naming days earlier. The proof of the ordering is the receipt's mtime: it
+  # still read 2026-08-27, so the installer had taken its "policy present and
+  # hash matches, nothing to do" early exit rather than rewriting anything. That
+  # is only possible if the policy was STILL THERE when the daemon ran. macOS
+  # rebuilt the directory afterwards.
+  #
+  # So the daemon does not lose the race by starting late; it loses by running
+  # ONCE, before the wipe it exists to repair. A one-shot cannot fix damage that
+  # happens after it exits, whichever order the two land in.
+  #
+  # StartInterval turns it into a reconciler, which is the same shape
+  # modules/home/network-shares.nix already uses for exactly the same class of
+  # problem — state owned by macOS that disappears without notice. The cost of a
+  # poll is nil: the installer hashes one small file and exits when it matches,
+  # so the steady state is a stat and a shasum every five minutes. Sixty seconds
+  # would narrow the window further, but Chrome reads policy only at launch, and
+  # login plus a browser start is minutes of real time after boot.
   launchd.daemons.chrome-managed-policy = {
     serviceConfig = {
       ProgramArguments = [ (lib.getExe installPolicy) ];
       RunAtLoad = true;
+      StartInterval = 300;
       StandardErrorPath = "/var/log/nix-config-chrome-policy.log";
     };
   };

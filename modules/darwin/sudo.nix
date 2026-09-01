@@ -39,9 +39,14 @@
   # into a dialog somebody can answer. A rebuild that installs or upgrades a
   # pkg cask will block on that dialog.
   #
-  # The rejected alternative has not changed: a NOPASSWD rule over
-  # /opt/homebrew/Caskroom, a USER-WRITABLE path, would let anything able to
-  # write there execute as root. Still not a trade worth making.
+  # That dialog is then removed by the NOPASSWD rule below, and this paragraph
+  # used to say the opposite -- that a NOPASSWD rule reaching a USER-WRITABLE
+  # payload path was "not a trade worth making". Read the two together or the
+  # file contradicts itself: what was rejected was NOPASSWD over
+  # /opt/homebrew/Caskroom, granting root to whatever is written there; what is
+  # accepted is NOPASSWD on two fixed root-owned binaries that happen to take
+  # their payload from that path. The exposure is real and smaller, and it is
+  # argued out where the rule is declared rather than here.
   environment.etc."sudo.conf".text = ''
     # Path to askpass helper program
     Path askpass ${sudoAskpass}

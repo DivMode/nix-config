@@ -33,6 +33,29 @@ OS's own binaries rather than trusting blog recipes. Supports
   (`/System/Library/LaunchAgents/com.apple.Spotlight.plist`) is KeepAlive, so
   launchd respawns it immediately and ⌘Space keeps working. No logout needed.
 
+### Post-mortem: why the launchctl-disable approach never worked
+
+From 2026-08-13 until 2026-09-01, `launchers.nix` tried to remove the icon by
+disabling the `com.apple.Spotlight` LaunchAgent
+(`launchctl disable gui/<uid>/com.apple.Spotlight`), and its activation
+message predicted the icon would disappear at the next logout. Measured on
+2026-09-01, after the machine had been rebooted several times in between:
+
+- `launchctl print-disabled gui/501` listed `"com.apple.Spotlight" => disabled`
+  — the flag persisted exactly as designed;
+- `launchctl print gui/501/com.apple.Spotlight` showed `state = running` with
+  a live pid.
+
+Both at once means macOS records but does not honour the gui-domain disable
+for this SIP-protected system agent: the agent was bootstrapped and running at
+every login regardless, the icon returned every time, and the "until you next
+log out" message was a prediction that observation refuted. The mechanism was
+removed the same day; the stale flag is cleared by
+`clearLegacySpotlightAgentDisable` in menu-bar.nix because a recorded-but-
+ignored flag could start meaning something on a future macOS. The
+`MenuItemHidden` preference above is the mechanism that actually works — it is
+what Spotlight's own hide path writes.
+
 ## Siri icon
 
 - Drawn by **SystemUIServer**, which loads

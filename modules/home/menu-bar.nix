@@ -95,4 +95,20 @@
         run /usr/bin/killall Spotlight 2>/dev/null || true
         run /usr/bin/killall SystemUIServer 2>/dev/null || true
       '';
+
+  # Clean up after the retired launchctl approach (launchers.nix, removed
+  # 2026-09-01): activations from 2026-08-13 onward wrote a persistent
+  # gui-domain disable for the com.apple.Spotlight agent. Measured before
+  # removal: the flag was recorded (`launchctl print-disabled` listed the
+  # agent as disabled) AND the agent was running with a live pid across
+  # multiple reboots — macOS does not honour the disable for this
+  # SIP-protected system agent, so the flag did nothing except misstate
+  # intent. It is cleared rather than kept because an ignored flag is a
+  # landmine: a future macOS that starts honouring it would silently disable
+  # the Spotlight UI, while this module's whole design keeps that UI enabled
+  # and merely hides its status item. `enable` on an already-enabled agent is
+  # a no-op, so this is idempotent and cheap on every later activation.
+  home.activation.clearLegacySpotlightAgentDisable = lib.hm.dag.entryAfter [ "writeBoundary" ] ''
+    run /bin/launchctl enable "gui/$(/usr/bin/id -u)/com.apple.Spotlight" 2>/dev/null || true
+  '';
 }

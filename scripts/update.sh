@@ -103,6 +103,25 @@ else
 fi
 echo
 
+# One line per moved input, old -> new, comparing the given old lock against
+# the current flake.lock. Rolling branch inputs (nixpkgs, homebrew-cask, …)
+# have no version string, so the commit DATE is printed beside each rev — for
+# those inputs the date is the version a human can reason about. A new input
+# shows "-" on the old side. Requires jq; callers fall back to a diff stat.
+describeLockMoves() {
+  jq -r --slurpfile old "$1" '
+    def short($r): $r // "" | if length >= 7 then .[0:7] else "-" end;
+    def day($t): $t // 0 | todate | .[0:10];
+    $old[0].nodes as $o
+    | .nodes as $n
+    | [ $n | keys[] | select(. != "root") ]
+    | map(select(($n[.].locked.rev // $n[.].locked.narHash // "")
+                 != (($o[.] // { }).locked.rev // ($o[.] // { }).locked.narHash // "")))
+    | .[]
+    | "    \(.): \(short(($o[.] // { }).locked.rev)) (\(day(($o[.] // { }).locked.lastModified))) -> \(short($n[.].locked.rev)) (\(day($n[.].locked.lastModified)))"
+  ' flake.lock
+}
+
 # Keep the pre-update state so the summary below reports what actually changed
 # rather than what was requested.
 claudePin="modules/home/claude-code-pin.json"
@@ -176,10 +195,14 @@ if /usr/bin/cmp -s "$lockBefore" flake.lock && /usr/bin/cmp -s "$pinBefore" "$cl
 fi
 
 echo
-echo "==> Inputs that moved"
-git --no-pager diff --stat -- flake.lock || true
-if ! /usr/bin/cmp -s "$pinBefore" "$claudePin"; then
-  echo "    claude-code: $(jq -r .version "$pinBefore") -> $(jq -r .version "$claudePin")"
+echo "==> What moved"
+if command -v jq >/dev/null 2>&1; then
+  describeLockMoves "$lockBefore"
+  if ! /usr/bin/cmp -s "$pinBefore" "$claudePin"; then
+    echo "    claude-code: $(jq -r .version "$pinBefore") -> $(jq -r .version "$claudePin")"
+  fi
+else
+  git --no-pager diff --stat -- flake.lock "$claudePin" || true
 fi
 
 # Everything from here to the final activation is a pure build: a failure leaves
@@ -241,32 +264,37 @@ if [[ -z "$startBranch" ]]; then
   exit 1
 fi
 
-# What moved, for the PR body. Best-effort: jq's absence already only
-# costs the staleness report above, and it only costs the nice listing here.
-moved="flake inputs"
+# What moved, old -> new per line, for the commit message and PR body — the
+# same listing the terminal summary printed, but computed against HEAD rather
+# than the in-run snapshot so the recorded diff is exactly what this commit
+# lands. Best-effort: jq's absence already only costs the staleness report
+# above, and it only costs the detailed listing here.
+moved="flake inputs and the claude-code pin (jq unavailable for the detailed listing)"
 if command -v jq >/dev/null 2>&1; then
-  moved="$(git show HEAD:flake.lock | jq -r --slurpfile new flake.lock '
-    $new[0].nodes as $n | .nodes as $o
-    | [ $n | keys[] | select(. != "root")
-        | select(($n[.].locked.rev // $n[.].locked.narHash // "")
-                 != ($o[.].locked.rev // $o[.].locked.narHash // "")) ]
-    | join(", ")' || echo "flake inputs")"
+  headLock="$(mktemp)"
+  git show HEAD:flake.lock > "$headLock"
+  moved="$(describeLockMoves "$headLock" || echo "    (listing failed)")"
+  rm -f "$headLock"
   if ! git diff --quiet HEAD -- "$claudePin"; then
-    moved="claude-code $(git show "HEAD:$claudePin" | jq -r .version) -> $(jq -r .version "$claudePin")${moved:+; }${moved}"
+    moved="    claude-code: $(git show "HEAD:$claudePin" | jq -r .version) -> $(jq -r .version "$claudePin")
+${moved}"
   fi
 fi
 
 branch="chore/flake-lock-$(date +%Y%m%d-%H%M%S)"
 git switch -c "$branch"
 git add flake.lock "$claudePin"
-git commit -m "chore(flake): update inputs" -m "Moved: ${moved}
+git commit -m "chore(flake): update inputs" -m "Moved:
+${moved}
 
 Landed by scripts/update.sh after nix flake check, a full system build,
 and activation on the machine that ran the update."
 git push -u origin "$branch"
 gh pr create \
   --title "chore(flake): update inputs" \
-  --body "Moved: ${moved}
+  --body "Moved:
+
+${moved}
 
 Automated by \`scripts/update.sh\`: the lock was updated, \`nix flake check\` passed, the system built, and the result was activated before this commit was created."
 # --delete-branch also checks the default branch out afterwards and pulls it,

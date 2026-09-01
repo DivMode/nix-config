@@ -1,5 +1,6 @@
 {
   imports = [
+    ./askpass.nix
     ./chrome.nix
     ./dock.nix
     ./firewall.nix

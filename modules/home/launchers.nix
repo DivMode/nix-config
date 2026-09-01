@@ -68,36 +68,16 @@ in
     ''
   );
 
-  # Spotlight's menu-bar icon belongs to the com.apple.Spotlight LaunchAgent,
-  # which is the Spotlight *user interface* only. The search index is built by
-  # the separate `mds` and `mds_stores` system daemons, so unloading this agent
-  # removes the icon and the search window while leaving indexing — and
-  # therefore Raycast's file and content search — completely intact.
-  #
-  # The obvious alternative does not work: `NSStatusItem Visible Item-0` in
-  # com.apple.Spotlight is app-owned state. Spotlight rewrites it from memory
-  # when it terminates, so a `defaults write` is silently reverted on the next
-  # restart. Verified on 2026-08-13: written as integer 0, read back boolean 1.
-  #
-  # `disable` persists across reboots; `bootout` takes effect immediately.
-  # Both are scoped to this user's GUI domain and never touch the system domain.
-  home.activation.disableSpotlightUserInterface = lib.hm.dag.entryAfter [ "writeBoundary" ] ''
-        spotlightAgent="gui/$(/usr/bin/id -u)/com.apple.Spotlight"
-
-        if ! /bin/launchctl disable "$spotlightAgent" 2>/dev/null; then
-          warnEcho "Could not disable $spotlightAgent; the Spotlight menu bar icon will persist."
-        fi
-
-        # `disable` is persistent but only blocks future launches. Terminating the
-        # running instance additionally requires `bootout`, which macOS refuses for
-        # this SIP-protected system agent. Report that plainly rather than leaving
-        # the user to wonder why the icon is still on screen after activation.
-        /bin/launchctl bootout "$spotlightAgent" 2>/dev/null || true
-
-        if /bin/launchctl print "$spotlightAgent" >/dev/null 2>&1; then
-          echo "Spotlight's user interface is disabled and will not start again. \
-    The current instance cannot be terminated, so its menu bar icon remains until \
-    you next log out. Indexing (mds) is untouched, so Raycast search keeps working."
-        fi
-  '';
+  # The Spotlight menu-bar icon is NOT handled here. An earlier entry in this
+  # file tried to remove it by disabling the com.apple.Spotlight LaunchAgent;
+  # that mechanism was a verified no-op and was removed on 2026-09-01. The
+  # disable flag persisted exactly as designed — `launchctl print-disabled`
+  # listed the agent as disabled — while the agent showed `state = running`
+  # with a live pid after multiple reboots: macOS records but does not honour
+  # the gui-domain disable for this SIP-protected system agent, so the icon
+  # returned at every login while the activation message promised otherwise.
+  # The icon is owned by modules/home/menu-bar.nix now, via the ByHost
+  # MenuItemHidden preference that Spotlight itself honours; the stale disable
+  # flag is cleaned up there. Full evidence:
+  # docs/research/2026-09-01-menu-bar-status-items-sequoia.md.
 }

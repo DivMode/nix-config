@@ -103,11 +103,14 @@ else
 fi
 echo
 
-# Keep the pre-update lock so the summary below reports what actually changed
+# Keep the pre-update state so the summary below reports what actually changed
 # rather than what was requested.
+claudePin="modules/home/claude-code-pin.json"
 lockBefore="$(mktemp)"
-trap 'rm -f "$lockBefore"' EXIT
+pinBefore="$(mktemp)"
+trap 'rm -f "$lockBefore" "$pinBefore"' EXIT
 cp flake.lock "$lockBefore"
+cp "$claudePin" "$pinBefore"
 
 if (( ${#inputs[@]} == 0 )); then
   echo "==> Updating every input"
@@ -117,7 +120,57 @@ else
   nix flake update "${inputs[@]}"
 fi
 
-if /usr/bin/cmp -s "$lockBefore" flake.lock; then
+# ── Claude Code: pin straight to Anthropic's latest release ─────────────────
+# The version is not taken from the llm-agents input, whose packaging
+# automation trails Anthropic by hours-to-a-day (measured 2026-09-01: it
+# packaged 2.1.252 while upstream had published 2.1.257 that morning).
+# modules/home/development.nix builds llm-agents' recipe against the version
+# and hash pinned in $claudePin; this refreshes that pin from the SAME
+# endpoints llm-agents' own updater reads — Anthropic's `latest` pointer and
+# the per-version manifest whose checksums are official. Following the pointer
+# also follows it DOWN: Anthropic yanks bad releases by repointing it.
+#
+# Only on a full update or an explicit llm-agents update — asking for just the
+# Homebrew casks must not move a coding agent. A refresh that cannot reach the
+# bucket warns and keeps the current pin: a stale-but-working version beats an
+# aborted update, and the staleness is printed rather than silent.
+refreshClaudePin=false
+if (( ${#inputs[@]} == 0 )); then
+  refreshClaudePin=true
+else
+  for input in "${inputs[@]}"; do
+    [[ "$input" == "llm-agents" ]] && refreshClaudePin=true
+  done
+fi
+
+if [[ "$refreshClaudePin" == true ]]; then
+  claudeBucket="https://storage.googleapis.com/claude-code-dist-86c565f3-f756-42ad-8dfa-d59b1c096819/claude-code-releases"
+  if claudeLatest="$(curl -fsSL --max-time 15 "$claudeBucket/latest")" \
+    && [[ "$claudeLatest" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] \
+    && claudeManifest="$(curl -fsSL --max-time 15 "$claudeBucket/$claudeLatest/manifest.json")"; then
+    toSri() {
+      nix hash convert --hash-algo sha256 --to sri \
+        "$(jq -er --arg p "$1" '.platforms[$p].checksum' <<<"$claudeManifest")"
+    }
+    jq -n \
+      --arg version "$claudeLatest" \
+      --arg darwinArm "$(toSri darwin-arm64)" \
+      --arg linuxArm "$(toSri linux-arm64)" \
+      --arg linuxX64 "$(toSri linux-x64)" \
+      '{
+        version: $version,
+        hashes: {
+          "aarch64-darwin": $darwinArm,
+          "aarch64-linux": $linuxArm,
+          "x86_64-linux": $linuxX64
+        }
+      }' > "$claudePin"
+  else
+    echo "    warning: could not read Anthropic's release bucket; claude-code stays at $(jq -r .version "$claudePin")" >&2
+  fi
+fi
+
+if /usr/bin/cmp -s "$lockBefore" flake.lock && /usr/bin/cmp -s "$pinBefore" "$claudePin"; then
   echo "==> Already current; nothing moved"
   exit 0
 fi
@@ -125,6 +178,9 @@ fi
 echo
 echo "==> Inputs that moved"
 git --no-pager diff --stat -- flake.lock || true
+if ! /usr/bin/cmp -s "$pinBefore" "$claudePin"; then
+  echo "    claude-code: $(jq -r .version "$pinBefore") -> $(jq -r .version "$claudePin")"
+fi
 
 # Everything from here to the final activation is a pure build: a failure leaves
 # the Mac untouched and the lock change still sitting in the working tree for
@@ -160,21 +216,21 @@ echo "==> Activating"
 # Deliberately absent on --dry-run, whose whole point is leaving the diff in
 # the tree for inspection.
 echo
-echo "==> Landing the flake.lock bump on main"
+echo "==> Landing the version bump on main"
 
-if git diff --quiet HEAD -- flake.lock; then
-  echo "    flake.lock already matches HEAD; nothing to land"
+if git diff --quiet HEAD -- flake.lock "$claudePin"; then
+  echo "    flake.lock and $claudePin already match HEAD; nothing to land"
   exit 0
 fi
 
 # Refuse to automate a commit while unrelated tracked changes sit in the tree:
 # branch-switching would drag them along, and an automated commit must never
 # sweep in work it does not own. Untracked files are fine — committing only
-# flake.lock cannot pick them up.
-if ! git diff --quiet HEAD -- . ':(exclude)flake.lock'; then
-  echo "error: tracked changes besides flake.lock are in the tree." >&2
-  echo "The system IS activated, but the lock bump is NOT landed." >&2
-  echo "Commit or stash the other changes, then land flake.lock via a PR." >&2
+# the two version files cannot pick them up.
+if ! git diff --quiet HEAD -- . ":(exclude)flake.lock" ":(exclude)$claudePin"; then
+  echo "error: tracked changes besides flake.lock and $claudePin are in the tree." >&2
+  echo "The system IS activated, but the version bump is NOT landed." >&2
+  echo "Commit or stash the other changes, then land the bump via a PR." >&2
   exit 1
 fi
 
@@ -185,7 +241,7 @@ if [[ -z "$startBranch" ]]; then
   exit 1
 fi
 
-# Which inputs moved, for the PR body. Best-effort: jq's absence already only
+# What moved, for the PR body. Best-effort: jq's absence already only
 # costs the staleness report above, and it only costs the nice listing here.
 moved="flake inputs"
 if command -v jq >/dev/null 2>&1; then
@@ -195,11 +251,14 @@ if command -v jq >/dev/null 2>&1; then
         | select(($n[.].locked.rev // $n[.].locked.narHash // "")
                  != ($o[.].locked.rev // $o[.].locked.narHash // "")) ]
     | join(", ")' || echo "flake inputs")"
+  if ! git diff --quiet HEAD -- "$claudePin"; then
+    moved="claude-code $(git show "HEAD:$claudePin" | jq -r .version) -> $(jq -r .version "$claudePin")${moved:+; }${moved}"
+  fi
 fi
 
 branch="chore/flake-lock-$(date +%Y%m%d-%H%M%S)"
 git switch -c "$branch"
-git add flake.lock
+git add flake.lock "$claudePin"
 git commit -m "chore(flake): update inputs" -m "Moved: ${moved}
 
 Landed by scripts/update.sh after nix flake check, a full system build,

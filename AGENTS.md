@@ -37,10 +37,14 @@ today and is intentionally structured to add NixOS servers later.
 - Nix/Home Manager own Zsh, its plugins, Git, portable CLIs, and Herdr.
   Homebrew owns only declared native/vendor casks; formulae require a documented
   nixpkgs incompatibility. Never declare the same executable through both.
-- Anthropic's Claude Code terminal CLI is a **Nix package**, from the
-  `llm-agents` flake input, declared in `modules/home/development.nix`. It is
-  deliberately not the `claude-code` Homebrew cask, which lags the release
-  stream by days; do not move it back. Never add the separate `claude` desktop
+- Anthropic's Claude Code terminal CLI is a **Nix package**: the `llm-agents`
+  flake input provides the build recipe, and the VERSION is pinned by this
+  repository in `modules/home/claude-code-pin.json`, which `scripts/update.sh`
+  refreshes from Anthropic's own release bucket — so an update always delivers
+  Anthropic's latest, not a packager's. It is deliberately not the
+  `claude-code` Homebrew cask, which lags the release stream by days; do not
+  move it back, and do not hand the version back to llm-agents' automation,
+  which trails by hours-to-a-day. Never add the separate `claude` desktop
   cask. Ghostty is the terminal, installed by Home Manager from
   `pkgs.ghostty-bin` because `pkgs.ghostty` is Linux-only; Herdr runs inside it.
   cmux was the superseded terminal and was removed entirely on 2026-08-14.

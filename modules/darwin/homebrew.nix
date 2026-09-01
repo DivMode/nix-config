@@ -123,6 +123,79 @@
       "iina"
       "calibre"
 
+      # Archive utility. macOS unpacks zip natively but nothing else, and the
+      # formats that actually arrive here — rar, 7z, multi-part archives — need
+      # a real extractor. A cask rather than a nixpkgs package because this is a
+      # GUI app that registers Finder file-type handlers, which a Nix-store
+      # bundle outside /Applications does not do reliably on darwin.
+      "keka"
+
+      # PDF editing. Reader cannot edit, which is the whole reason this is the
+      # Pro cask and not `adobe-acrobat-reader`.
+      #
+      # Three things about this cask are unlike every other line in this file,
+      # and all three are deliberate.
+      #
+      # 1. It is a `pkg` cask ("Acrobat/Acrobat DC Installer.pkg"), not an app
+      #    bundle. Homebrew hands that to macOS's installer, which needs root.
+      #    scripts/rebuild.sh already activates under sudo with SUDO_ASKPASS, so
+      #    the first install may surface a dialog rather than completing
+      #    silently. That is the installer asking, not a fault in this config.
+      # 2. It declares `sha256 :no_check` and downloads from trials.adobe.com,
+      #    so the artefact behind the pinned version string can change without
+      #    the tap moving. This is the one cask here whose bytes the lock does
+      #    not really pin, and Adobe — not this repository — decides that.
+      # 3. NOT `greedy`, unlike karabiner-elements above. Because the cask is
+      #    unversioned, greedy would re-download roughly a gigabyte from Adobe
+      #    on every single activation. Its own updater (`auto_updates true`) is
+      #    the right owner for a product that ships its own update service.
+      #
+      # Installing it does not license it. Acrobat Pro is a paid subscription:
+      # the cask puts the application on disk, and editing requires signing in
+      # to an Adobe account that carries an Acrobat Pro entitlement.
+      #
+      # NEVER UPGRADE THIS FROM A REBUILD. Requested explicitly on 2026-08-31:
+      # this application is to change version only when its owner says so, not
+      # as a side effect of `./scripts/update.sh` or any lock bump.
+      #
+      # `greedy = false` is stated rather than left to the default so the
+      # intent survives someone later setting `homebrew.greedyCasks = true`,
+      # which is the one change that would silently start upgrading it — a
+      # per-cask value overrides that global. With greedy off, `brew upgrade`
+      # skips it outright because the cask declares `auto_updates true`.
+      #
+      # That covers Homebrew, and Homebrew is only HALF of it. Adobe ships its
+      # own updater — the ARMDC launchd services and privileged helpers under
+      # /Library/PrivilegedHelperTools — which updates Acrobat on Adobe's
+      # schedule with no reference to this repository at all. Turning that off
+      # is a separate control; see ./adobe-updates.nix.
+      {
+        name = "adobe-acrobat-pro";
+        greedy = false;
+      }
+
+      # tailscale-app is deliberately NOT here, and this note exists so it is
+      # not "helpfully" added on the next pass.
+      #
+      # It kept reappearing and being removed — about five times — which looked
+      # like a broken uninstall. It was not. Traced on 2026-08-31: a Codex
+      # session on 2026-08-28 at 22:46 ran `brew install --cask tailscale-app`
+      # and `brew install tmux` while following UPSTREAM Tandem's setup guide,
+      # which lists "Tailscale, connected with `tailscale up`" and tmux as
+      # requirements. `cleanup = "uninstall"` then reconciled both away on the
+      # next activation, correctly, because neither is declared. Homebrew's own
+      # logs still show the openssl@3 and ca-certificates pulled in as tmux
+      # dependencies that night.
+      #
+      # Neither requirement applies to this machine. ../home/ai/tandem/default.nix
+      # runs a fork specifically to avoid both: "tmux is NOT a dependency of
+      # this path and must not become one", and tunnel-client.nix uses a plain
+      # port with "no Tailscale Funnel involved". So the loop was an agent
+      # installing software for a code path this repository does not use, and
+      # Nix undoing it. The removal was the system working.
+      #
+      # Add it only if something here genuinely needs it, and say what.
+
       # The desktop app provides authentication and the CLI is a separate
       # vendor bundle; installing it does not enable secret injection.
       "1password"

@@ -1,5 +1,6 @@
 {
   imports = [
+    ./adobe-updates.nix
     ./askpass.nix
     ./chrome.nix
     ./dock.nix

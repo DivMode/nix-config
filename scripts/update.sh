@@ -8,7 +8,9 @@
 # explicit act. This is that act, as one command.
 #
 # You never edit a version by hand. `nix flake update` rewrites the lock; this
-# script prints exactly what moved, builds it, and only then activates.
+# script prints exactly what moved, builds it, activates, and then lands the
+# lock bump on main (branch, PR, squash-merge) so the machine and the
+# repository do not drift apart.
 #
 #   ./scripts/update.sh                       # every input
 #   ./scripts/update.sh homebrew-cask         # just the Homebrew casks
@@ -143,4 +145,79 @@ fi
 
 echo
 echo "==> Activating"
-exec "$repository/scripts/rebuild.sh" "$host"
+"$repository/scripts/rebuild.sh" "$host"
+
+# ── Land the lock bump ──────────────────────────────────────────────────────
+# A lock bump that only lives in this working tree is a machine that no longer
+# matches its own repository: every later nix invocation warns about a dirty
+# tree, and a wiped machine would rebuild yesterday's versions. By this point
+# the change has earned its commit — checked, built, and activated above, which
+# is the same activate-before-commit bar AGENTS.md sets for any change — so
+# land it the only way changes land here: a branch, a PR, and a squash-merge.
+# Direct pushes to main are not allowed, and that rule is not this script's to
+# bend.
+#
+# Deliberately absent on --dry-run, whose whole point is leaving the diff in
+# the tree for inspection.
+echo
+echo "==> Landing the flake.lock bump on main"
+
+if git diff --quiet HEAD -- flake.lock; then
+  echo "    flake.lock already matches HEAD; nothing to land"
+  exit 0
+fi
+
+# Refuse to automate a commit while unrelated tracked changes sit in the tree:
+# branch-switching would drag them along, and an automated commit must never
+# sweep in work it does not own. Untracked files are fine — committing only
+# flake.lock cannot pick them up.
+if ! git diff --quiet HEAD -- . ':(exclude)flake.lock'; then
+  echo "error: tracked changes besides flake.lock are in the tree." >&2
+  echo "The system IS activated, but the lock bump is NOT landed." >&2
+  echo "Commit or stash the other changes, then land flake.lock via a PR." >&2
+  exit 1
+fi
+
+startBranch="$(git branch --show-current)"
+if [[ -z "$startBranch" ]]; then
+  echo "error: detached HEAD; not landing automatically." >&2
+  echo "The system IS activated. Land flake.lock via a PR from a branch." >&2
+  exit 1
+fi
+
+# Which inputs moved, for the PR body. Best-effort: jq's absence already only
+# costs the staleness report above, and it only costs the nice listing here.
+moved="flake inputs"
+if command -v jq >/dev/null 2>&1; then
+  moved="$(git show HEAD:flake.lock | jq -r --slurpfile new flake.lock '
+    $new[0].nodes as $n | .nodes as $o
+    | [ $n | keys[] | select(. != "root")
+        | select(($n[.].locked.rev // $n[.].locked.narHash // "")
+                 != ($o[.].locked.rev // $o[.].locked.narHash // "")) ]
+    | join(", ")' || echo "flake inputs")"
+fi
+
+branch="chore/flake-lock-$(date +%Y%m%d-%H%M%S)"
+git switch -c "$branch"
+git add flake.lock
+git commit -m "chore(flake): update inputs" -m "Moved: ${moved}
+
+Landed by scripts/update.sh after nix flake check, a full system build,
+and activation on the machine that ran the update."
+git push -u origin "$branch"
+gh pr create \
+  --title "chore(flake): update inputs" \
+  --body "Moved: ${moved}
+
+Automated by \`scripts/update.sh\`: the lock was updated, \`nix flake check\` passed, the system built, and the result was activated before this commit was created."
+# --delete-branch also checks the default branch out afterwards and pulls it,
+# so a run started from main ends on an up-to-date main with a clean tree.
+gh pr merge --squash --delete-branch
+
+if [[ "$startBranch" != "$(git branch --show-current)" ]] \
+  && git show-ref --quiet "refs/heads/$startBranch"; then
+  git switch "$startBranch"
+fi
+
+echo
+echo "==> Landed: $(git log --oneline -1 origin/main 2>/dev/null || true)"

@@ -101,6 +101,22 @@
       "INTERACTIVE_COMMENTS"
       "NO_BEEP"
     ];
+    # The whole update as one typed word: scripts/update.sh moves every pinned
+    # input forward, checks, builds, and activates. Arguments forward through
+    # the alias, so `nixup --dry-run` and `nixup <input>` work as documented in
+    # that script. The path comes from local.nix's project list because the
+    # checkout location is machine identity, not configuration; on a machine
+    # whose local.nix does not declare this repository the alias is simply
+    # absent.
+    #
+    # Named `nixup` rather than `nixconfig` deliberately: that project entry
+    # already generates a launcher function (projects.nix), and zsh expands
+    # aliases before it looks up functions, so an alias of the same name would
+    # silently shadow it. projects.nix reserves `nixup` for the same reason in
+    # the other direction.
+    shellAliases = lib.optionalAttrs (local.projects or { } ? nixconfig) {
+      nixup = "${local.projects.nixconfig}/scripts/update.sh";
+    };
     history = {
       path = "${config.xdg.stateHome}/zsh/history";
       size = 50000;

@@ -8,12 +8,40 @@
 let
   inherit (pkgs.stdenv.hostPlatform) system;
 
-  # Claude Code comes from the llm-agents flake rather than the Homebrew cask.
-  # Both deliver the same signed vendor binary, but the cask lags the release
-  # stream badly: on 2026-08-13 the newest homebrew-cask commit still described
-  # 2.1.223 while upstream was on 2.1.231. Since the tap is a pinned flake
-  # input, no lock update could close that gap. See ../../docs/operations/rebuild.md.
-  claudeCode = inputs.llm-agents.packages.${system}.claude-code;
+  # Claude Code: llm-agents provides the BUILD RECIPE, this repository pins the
+  # VERSION. Two lags led here. The Homebrew cask lagged the release stream by
+  # days (2026-08-13: cask 2.1.223 against upstream 2.1.231), which moved the
+  # package to the llm-agents flake. Then llm-agents' own automation proved to
+  # trail by hours-to-a-day (2026-09-01: its HEAD packaged 2.1.252 while
+  # Anthropic had published 2.1.257 that morning) — and a full
+  # `./scripts/update.sh` faithfully delivering a stale version reads as the
+  # updater being broken.
+  #
+  # So the version and per-platform hash live in ./claude-code-pin.json, and
+  # scripts/update.sh refreshes that file from Anthropic's OWN release bucket —
+  # the same `latest` pointer and manifest checksums llm-agents' updater reads
+  # (its package.nix passthru.updater documents the endpoints). The override
+  # only replaces `version` and `src`; the wrapper flags, install phase, and
+  # version check hook are still llm-agents' recipe, so a recipe change arrives
+  # through the normal lock bump while the version never waits on anyone's
+  # automation. The URL template and platform tokens mirror that recipe; if
+  # they drift, the build fails loudly on a 404 or hash mismatch rather than
+  # shipping the wrong bytes.
+  claudeCodePin = builtins.fromJSON (builtins.readFile ./claude-code-pin.json);
+  claudeCodePlatform =
+    {
+      aarch64-darwin = "darwin-arm64";
+      aarch64-linux = "linux-arm64";
+      x86_64-linux = "linux-x64";
+    }
+    .${system};
+  claudeCode = (inputs.llm-agents.packages.${system}.claude-code).overrideAttrs {
+    inherit (claudeCodePin) version;
+    src = pkgs.fetchurl {
+      url = "https://storage.googleapis.com/claude-code-dist-86c565f3-f756-42ad-8dfa-d59b1c096819/claude-code-releases/${claudeCodePin.version}/${claudeCodePlatform}/claude";
+      hash = claudeCodePin.hashes.${system};
+    };
+  };
 
   # Grafana's kubectl-style CLI for dashboards, alerts, metrics, logs and
   # traces, agent-optimized. Rebuilt from the flake-pinned release tag rather

@@ -448,9 +448,7 @@ in
         lib.hm.dag.entryAfter [ "onePasswordServiceAccountToken" ]
           ''
             envPath=${escapeShellArg cfg.connect.envPath}
-            if [ -s "$envPath" ]; then
-              :
-            elif [ ! -x ${escapeShellArg opExecutable} ]; then
+            if [ ! -x ${escapeShellArg opExecutable} ]; then
               printf '%s\n' '1Password CLI unavailable; the Connect environment file was not written.' >&2
             else
               # Authenticate with the cached service-account token. Activation runs
@@ -472,9 +470,21 @@ in
                 # All-or-nothing. A half-written file exports some variables and
                 # silently omits others, which surfaces much further downstream —
                 # as a provider "not initialized" error mid-deploy rather than here.
+                # Rewrite only when the resolved content actually differs, per
+                # the cmp -s rule for activation entries that run every rebuild.
+                # This entry used to skip entirely when the file merely existed,
+                # which meant a rotated Connect token could never reach the file:
+                # granting the server a new vault requires issuing a NEW token
+                # (vault scope is fixed per token), and activation kept serving
+                # the old one until the file was deleted by hand. Observed
+                # 2026-08-21, two rebuilds with no effect.
                 if [ "$resolved" = 1 ]; then
-                  mv "$tmp" "$envPath"
-                  chmod 600 "$envPath"
+                  if cmp -s "$tmp" "$envPath"; then
+                    rm -f "$tmp"
+                  else
+                    mv "$tmp" "$envPath"
+                    chmod 600 "$envPath"
+                  fi
                 else
                   rm -f "$tmp"
                 fi

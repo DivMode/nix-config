@@ -2,6 +2,7 @@
   config,
   inputs,
   local,
+  sudoAskpass,
   ...
 }:
 {
@@ -36,7 +37,25 @@
 
       # Native keyboard remapper. Home Manager owns its complete declarative
       # configuration directory; Raycast's native Hyper Key stays disabled.
-      "karabiner-elements"
+      #
+      # `greedy` because `upgrade = true` alone did NOT keep this current, and
+      # the reason is worth writing down. `brew upgrade` SKIPS any cask marked
+      # `auto_updates true` — the assumption being that the app updates itself —
+      # and karabiner-elements carries that flag. Measured here on 2026-08-31:
+      # `brew outdated --cask` listed nothing, while `brew outdated --cask
+      # --greedy` listed karabiner-elements, with 16.1.0 installed against the
+      # 16.2.0 the pinned tap defines. Its own Sparkle updater had not closed
+      # that gap either, plausibly because installing its pkg needs an admin
+      # prompt nobody answered. So the cask sat a version behind, silently.
+      #
+      # This does not make activation pull arbitrary versions. homebrew-cask is
+      # a pinned flake input, so greedy can only ever move this to the version
+      # flake.lock already names — the upgrade still arrives as a reviewable
+      # lock bump, exactly like the note on `upgrade` below describes.
+      {
+        name = "karabiner-elements";
+        greedy = true;
+      }
 
       # Anthropic's terminal CLI is NOT here. It is a Nix package, declared in
       # modules/home/development.nix from the llm-agents flake input, because
@@ -116,6 +135,38 @@
       # flake inputs and `mutableTaps` is false, so there is nothing to fetch;
       # this only suppresses an implicit `brew update`.
       autoUpdate = false;
+
+      # Let a pkg cask's privileged installer ask for the password.
+      #
+      # A `pkg` cask — karabiner-elements, adobe-acrobat-pro, logi-options+ —
+      # is installed by handing the payload to /usr/sbin/installer under sudo,
+      # unconditionally (Homebrew's cask/artifact/pkg.rb). Activation reaches
+      # Homebrew through nix-darwin's `#!/usr/bin/env -i` script and then
+      # `sudo --preserve-env=PATH`, so it arrives with no controlling terminal
+      # AND no SUDO_ASKPASS. Homebrew adds sudo's -A flag only when it can see
+      # that variable, so without this every pkg cask fails identically:
+      #
+      #   sudo: a terminal is required to read the password
+      #
+      # Measured here on 2026-08-31, when karabiner-elements and
+      # adobe-acrobat-pro both failed that way and `brew bundle` returned
+      # non-zero, which under the activation script's `set -e` aborted the
+      # switch with the generation half-applied. That also corrects the note in
+      # scripts/rebuild.sh recording a silent exit 0 from the 2026-08-21
+      # logi-options+ failure: on these versions it is not silent, it stops the
+      # rebuild.
+      #
+      # extraEnv is what makes this reachable. Its values are written literally
+      # into the activation command line rather than inherited, so unlike an
+      # exported variable they survive `env -i` and the --preserve-env
+      # whitelist. ./sudo.nix's sudo.conf entry is NOT sufficient on its own:
+      # that path is consulted only when -A is passed.
+      #
+      # Be clear about what this buys. It does not make activation unattended —
+      # it converts a hard failure into a password dialog. Any rebuild that
+      # installs or upgrades a pkg cask will WAIT for someone to answer it.
+      # Rebuilds that touch no pkg cask are unaffected.
+      extraEnv.SUDO_ASKPASS = "${sudoAskpass}";
 
       # Bring installed casks up to the version the pinned tap defines.
       #

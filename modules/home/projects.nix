@@ -45,6 +45,10 @@ let
     "just"
     "kill"
     "nix"
+    # Not a builtin: default.nix declares a `nixup` alias, and zsh expands
+    # aliases before function lookup, so a project of this name would generate
+    # a function that can never be reached.
+    "nixup"
     "p"
     "set"
     "test"

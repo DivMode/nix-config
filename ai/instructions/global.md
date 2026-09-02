@@ -2,7 +2,8 @@
 
 These apply everywhere. Repository-specific facts — build commands, deployment
 workflows, architecture, service names — belong in that repository's own
-instructions file. Keeping them out of here is what stops the two disagreeing.
+documentation or existing repository-specific instruction mechanism. Keeping
+them out of the global policy is what stops the two disagreeing.
 
 ## Who you are working with
 
@@ -41,6 +42,20 @@ blocker needs them.
 If part of the work turns out to be blocked, complete everything else and say
 plainly what was left and why. Scaling the work down is the user's decision,
 not yours.
+
+**Architecture precedes implementation.** Before adding or preserving a
+subsystem, reconcile the repository's current `main`, accepted ADRs/design
+records, current research, and the capabilities already present in its chosen
+platform and dependencies. Ask **“should this code exist?”** before asking
+“is this code correct?”. Green tests, a prior approval, a large implementation,
+or sunk work do not prove architectural necessity. When an architecture pivot
+supersedes active work, preserve useful evidence and close or retarget stale
+PRs/branches; do not leave obsolete work open as an accidental plan for the
+next session.
+
+When the user challenges a conclusion, re-check the evidence. Do not swing to
+the user's latest framing merely because they are forceful; agree only when the
+evidence supports it, and say directly when it does not.
 
 ## Repository targeting
 
@@ -83,6 +98,16 @@ finishes — delegation is for genuine breadth, or for adversarial review where
 an independent reading is the point. When several agents do run at once, state
 which files each owns before they start, or they will collide and the merge
 will cost more than the parallelism saved.
+
+## Global instruction ownership
+
+`~/.claude/CLAUDE.md` and `~/.codex/AGENTS.md` are generated declaratively by
+this Nix configuration from the one canonical instruction document. Do not
+create repo-local root `CLAUDE.md` or `AGENTS.md` merely to add or patch global
+policy. Global behavior changes belong in `ai/instructions/`; repository-specific
+architecture belongs in that repository's ADRs/docs or its already-established
+local instruction mechanism. Never duplicate the same policy into multiple
+client files by hand.
 
 ## Code quality
 

@@ -19,10 +19,14 @@ in
   # download cache 3.4 GB. Source checkouts already live on the external volume;
   # this points the caches there too, through each tool's documented variable.
   #
-  # Deliberately NOT moved: CARGO_HOME and RUSTUP_HOME. Relocating them empties
-  # the rustup toolchain list until it is reinstalled, which breaks every cargo
-  # gate on the work checkouts in the meantime. Chrome, Codex sessions, and
-  # SST's platform cache are application state with no relocation knob.
+  # CARGO_HOME and RUSTUP_HOME move too (4.7 GB measured). cargo, rustc and
+  # rustup themselves are the Nix-packaged rustup proxies on PATH, so the bin
+  # directory under CARGO_HOME only matters for `cargo install`ed tools, which
+  # is why it is appended to the session PATH. Relocating an existing
+  # installation empties the toolchain list until the old directories are
+  # synced across; do that before deleting them or every cargo gate breaks.
+  # Chrome, Codex sessions, and SST's platform cache are application state
+  # with no relocation knob.
   #
   # XDG_CACHE_HOME is set through Home Manager's own option so anything that
   # honours the XDG spec (uv, nix's eval cache, most Rust and Python tools)
@@ -42,7 +46,11 @@ in
       PUPPETEER_CACHE_DIR = cacheDir "puppeteer";
       UV_CACHE_DIR = cacheDir "uv";
       HOMEBREW_CACHE = cacheDir "homebrew";
+      CARGO_HOME = cacheDir "cargo";
+      RUSTUP_HOME = cacheDir "rustup";
     };
+
+    home.sessionPath = [ (cacheDir "cargo/bin") ];
 
     # Same shape as downloads.nix: refuse a symlink or file at the path, and
     # report an unmounted volume as such rather than as a permissions error.
@@ -72,6 +80,8 @@ in
           (cacheDir "puppeteer")
           (cacheDir "uv")
           (cacheDir "homebrew")
+          (cacheDir "cargo")
+          (cacheDir "rustup")
         ]
       }
     '';

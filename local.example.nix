@@ -155,6 +155,12 @@
   # that Chrome cannot create.
   downloadsDirectory = "/Volumes/ExampleDisk/Downloads";
 
+  # Where package and tool caches go (Bun, NuGet, Playwright, Puppeteer, uv,
+  # Homebrew downloads, and XDG_CACHE_HOME). modules/home/caches.nix creates
+  # the subdirectories and exports the variables. Same rule as downloads: a
+  # path that is always present. Omit or set to null to keep every default.
+  cacheDirectory = "/Volumes/ExampleDisk/Caches";
+
   # SMB shares mounted at login by modules/home/network-shares.nix. Leave
   # `mounts` empty to disable the module entirely.
   #

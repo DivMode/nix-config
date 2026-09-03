@@ -101,6 +101,17 @@
       flake = false;
     };
 
+    # Anthropic's own example skills. Upstream ships a marketplace but no
+    # plugin manifest at the root, so it cannot be loaded as one plugin the way
+    # mattpocock-skills is; modules/home/ai selects individual skill
+    # directories from it for Claude Code instead — what `npx skills add`
+    # does, minus the mutable copy under ~/.claude. Apache-2.0, referenced not
+    # vendored, and updated with `./scripts/update.sh anthropic-skills`.
+    anthropic-skills = {
+      url = "github:anthropics/skills";
+      flake = false;
+    };
+
     # Grafana's gcx CLI, pinned to a release tag. One input feeds two
     # consumers: modules/home/development.nix builds the CLI binary from it
     # (nixpkgs packages gcx, but its pinned release trails upstream), and

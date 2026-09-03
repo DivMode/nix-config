@@ -36,6 +36,24 @@ let
   # vendored twice.
   mattPocockSkills = inputs.mattpocock-skills;
 
+  # Individual skills selected from Anthropic's example-skills repository, for
+  # Claude Code only. There is no plugin manifest at its root to hand to
+  # `plugins` — only a marketplace of two bundles — and most of what it ships
+  # (docx, pptx, xlsx, slack-gif-creator, …) is not wanted here, where every
+  # skill's description is paid for in every session's context. So the wanted
+  # directories are named, and each is linked as a plain skill under
+  # ~/.claude/skills, exactly as this repository's own skills under ai/skills
+  # are. Unprefixed, because nothing namespaces them; a name here must not
+  # collide with a skill in ai/skills or a Claude Code built-in.
+  #
+  # Deliberately not given to Codex: these are written for Claude Code, and
+  # the skills that ARE shared between the two clients live in ai/skills.
+  anthropicClaudeSkills = listToAttrs (
+    map (name: nameValuePair name "${inputs.anthropic-skills}/skills/${name}") [
+      "frontend-design"
+    ]
+  );
+
   # Grafana's official Claude Code plugin for the gcx CLI — skills for
   # querying dashboards, metrics, logs and alerts, plus a `grafana-debugger`
   # agent. Upstream documents installation through its plugin marketplace
@@ -349,7 +367,7 @@ in
       # Directory paths, which the module links as whole trees under
       # ~/.claude/skills/<name>/ — so a skill that grows references/ or
       # rules/ beside its SKILL.md needs no change here.
-      skills = ai.skills;
+      skills = ai.skills // anthropicClaudeSkills;
     };
 
     # Session launchers, declared beside the client they launch.

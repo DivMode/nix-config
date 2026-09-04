@@ -277,7 +277,7 @@ in
   # verbatim as an attribute set, which then fails ccstatusline's Zod schema
   # validation at runtime rather than at build time.
   settings = {
-    version = 3;
+    version = 4;
     flexMode = "full";
     compactThreshold = 60;
     colorLevel = 2;

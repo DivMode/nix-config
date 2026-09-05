@@ -48,6 +48,11 @@ today and is intentionally structured to add NixOS servers later.
   cask. Ghostty is the terminal, installed by Home Manager from
   `pkgs.ghostty-bin` because `pkgs.ghostty` is Linux-only; Herdr runs inside it.
   cmux was the superseded terminal and was removed entirely on 2026-08-14.
+- ChatGPT.app, which bundles the `codex` CLI, is a Homebrew cask served from the
+  in-repo pinned tap (`taps/homebrew-pinned/Casks/chatgpt.rb`), not from the
+  `homebrew-cask` input, with its Sparkle self-updater switched off. It moves
+  only by `./scripts/update.sh chatgpt` (or a full run), which re-vendors
+  upstream's current cask verbatim. Never edit its version or sha256 by hand.
 - Exactly one thing may provide `bin/claude`. `development.nix` withholds the
   unwrapped package whenever the 1Password launcher in `secrets.nix` is enabled,
   because that launcher installs its own executable of the same name.

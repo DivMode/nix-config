@@ -1,16 +1,16 @@
 # Vendored VERBATIM (below this header) from homebrew-cask revision
-# 341a8ba09fc0861f405f34ebe8a9ffb8e79aab69 — the flake.lock pin this machine
-# ran before the 2026-09-01 lock bump. The bump's 26.831.20005 was broken in
-# use and the owner asked for this version back. Why and how to unpin is
-# documented at the cask declaration in modules/darwin/homebrew.nix; the
-# matching Sparkle self-update kill switch is modules/home/chatgpt.nix.
+# 78bb119301381981d98785cb9d889c1a13f143f4 by scripts/update.sh chatgpt on 2026-09-05.
+# Why ChatGPT is pinned here instead of taken from the homebrew-cask input,
+# and how to move or unpin it, is documented at the cask declaration in
+# modules/darwin/homebrew.nix; the matching Sparkle self-update kill switch
+# is modules/home/chatgpt.nix.
 cask "chatgpt" do
   arch arm: "arm64", intel: "x64"
   livecheck_arch = on_arch_conditional intel: "-x64"
 
-  version "26.825.51511"
-  sha256 arm:   "db727ef23e561fbd2b47f05fb0fece7dfe839fdb1a081e5a17d34a16a5a0d6c0",
-         intel: "4a5fd8d5f5c26fe3f28971bdd776887fe3d0fb62f225ed3a9758e960a11861fd"
+  version "26.901.41600"
+  sha256 arm:   "789062d54b39770d770035758373963a562997b277fc5a957ddf2cd1aaf76913",
+         intel: "8d84c089938984bec275681f793f8f82ee1945b3fe9a1d6762fdbd6328498cdb"
 
   url "https://persistent.oaistatic.com/codex-app-prod/ChatGPT-darwin-#{arch}-#{version}.zip"
   name "ChatGPT"

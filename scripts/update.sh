@@ -12,13 +12,20 @@
 # lock bump on main (branch, PR, squash-merge) so the machine and the
 # repository do not drift apart.
 #
-#   ./scripts/update.sh                       # every input
+#   ./scripts/update.sh                       # every input and every pin
 #   ./scripts/update.sh homebrew-cask         # just the Homebrew casks
+#   ./scripts/update.sh chatgpt               # just the ChatGPT/Codex pin
 #   ./scripts/update.sh --dry-run             # update the lock, do not activate
+#
+# Two versions are pinned by files of this repository's own rather than by the
+# lock, and this script refreshes those too: the claude-code pin (from
+# Anthropic's release bucket) and the vendored chatgpt cask (re-vendored from
+# upstream homebrew-cask). Each is a positional argument like a flake input.
 #
 # Most declared casks carry Homebrew's `auto_updates` flag and update themselves,
 # so they are unaffected either way. The ones that depend on this are the casks
-# with no self-updater — currently claude-code and 1password-cli.
+# with no self-updater — currently claude-code and 1password-cli — and chatgpt,
+# whose self-updater modules/home/chatgpt.nix deliberately switches off.
 
 set -euo pipefail
 
@@ -34,6 +41,7 @@ export NIX_CONFIG_LOCAL="$repository/local.nix"
 
 dryRun=false
 inputs=()
+refreshChatgpt=false
 for argument in "$@"; do
   case "$argument" in
     --dry-run) dryRun=true ;;
@@ -41,9 +49,20 @@ for argument in "$@"; do
       echo "error: unknown option $argument" >&2
       exit 1
       ;;
+    # Not a flake input: the ChatGPT pin is a vendored cask file, refreshed
+    # below. Kept out of `inputs` so `nix flake update` never sees it.
+    chatgpt) refreshChatgpt=true ;;
     *) inputs+=("$argument") ;;
   esac
 done
+
+# No arguments at all means everything: every lock input AND every pin. An
+# explicit list moves exactly what it names.
+fullUpdate=false
+if (( ${#inputs[@]} == 0 )) && [[ "$refreshChatgpt" == false ]]; then
+  fullUpdate=true
+  refreshChatgpt=true
+fi
 
 host="${HOST:-example-mac}"
 
@@ -122,19 +141,29 @@ describeLockMoves() {
   ' flake.lock
 }
 
-# Keep the pre-update state so the summary below reports what actually changed
-# rather than what was requested.
-claudePin="modules/home/claude-code-pin.json"
-lockBefore="$(mktemp)"
-pinBefore="$(mktemp)"
-trap 'rm -f "$lockBefore" "$pinBefore"' EXIT
-cp flake.lock "$lockBefore"
-cp "$claudePin" "$pinBefore"
+# The version a vendored cask pins: the first `version "…"` line of the cask
+# file, the same rule modules/darwin/homebrew.nix applies at evaluation time.
+caskVersion() {
+  sed -n 's/^ *version "\([^"]*\)".*/\1/p' "$1" | head -n 1
+}
 
-if (( ${#inputs[@]} == 0 )); then
+# Keep the pre-update state so the summary below reports what actually changed
+# rather than what was requested. Every file this script may move is listed in
+# versionFiles: the lock, and the two pins this repository keeps itself.
+claudePin="modules/home/claude-code-pin.json"
+chatgptCask="taps/homebrew-pinned/Casks/chatgpt.rb"
+versionFiles=(flake.lock "$claudePin" "$chatgptCask")
+before="$(mktemp -d)"
+trap 'rm -rf "$before"' EXIT
+for file in "${versionFiles[@]}"; do
+  mkdir -p "$before/$(dirname "$file")"
+  cp "$file" "$before/$file"
+done
+
+if [[ "$fullUpdate" == true ]]; then
   echo "==> Updating every input"
   nix flake update
-else
+elif (( ${#inputs[@]} > 0 )); then
   echo "==> Updating: ${inputs[*]}"
   nix flake update "${inputs[@]}"
 fi
@@ -153,14 +182,10 @@ fi
 # Homebrew casks must not move a coding agent. A refresh that cannot reach the
 # bucket warns and keeps the current pin: a stale-but-working version beats an
 # aborted update, and the staleness is printed rather than silent.
-refreshClaudePin=false
-if (( ${#inputs[@]} == 0 )); then
-  refreshClaudePin=true
-else
-  for input in "${inputs[@]}"; do
-    [[ "$input" == "llm-agents" ]] && refreshClaudePin=true
-  done
-fi
+refreshClaudePin="$fullUpdate"
+for input in "${inputs[@]}"; do
+  [[ "$input" == "llm-agents" ]] && refreshClaudePin=true
+done
 
 if [[ "$refreshClaudePin" == true ]]; then
   claudeBucket="https://storage.googleapis.com/claude-code-dist-86c565f3-f756-42ad-8dfa-d59b1c096819/claude-code-releases"
@@ -189,20 +214,107 @@ if [[ "$refreshClaudePin" == true ]]; then
   fi
 fi
 
-if /usr/bin/cmp -s "$lockBefore" flake.lock && /usr/bin/cmp -s "$pinBefore" "$claudePin"; then
+# ── ChatGPT / Codex: re-vendor the pinned cask from upstream ────────────────
+# ChatGPT.app (which bundles the codex CLI) is served from the in-repo pinned
+# tap, not from the homebrew-cask input — see the declaration in
+# modules/darwin/homebrew.nix for why. A pin only the lock cannot move needs
+# its own mover, or it goes stale silently: it sat at 26.825 for a week after
+# 2026-09-01 with nothing reporting the gap. This is that mover.
+#
+# The bytes come from upstream homebrew-cask's CURRENT chatgpt.rb, vendored
+# verbatim under a provenance header. Upstream is not a repackager here: its
+# `url` is OpenAI's own versioned zip on persistent.oaistatic.com, and its
+# bump bot follows the same Sparkle appcast the app's updater reads, within
+# hours (measured 2026-09-05: appcast published 26.901.41600 at 02:13Z,
+# homebrew-cask committed it at 03:40Z). Vendoring rather than downloading
+# the zips ourselves keeps both architectures' sha256 real without pulling
+# two multi-hundred-MB archives per run. The appcast is still consulted, so
+# a run always says whether upstream has caught up with OpenAI or not.
+#
+# Following upstream also follows it DOWN, exactly like the claude-code pin:
+# if a release is pulled, the next refresh pulls it here. A version that is
+# broken IN USE is not something upstream knows about — hold it by reverting
+# the vendored file, as 2026-09-01 did, and this refresh will re-adopt the
+# next upstream move, so re-run it deliberately.
+if [[ "$refreshChatgpt" == true ]]; then
+  upstreamCaskPath="Casks/c/chatgpt.rb"
+  chatgptBefore="$(caskVersion "$chatgptCask")"
+  # The commit that last touched the cask, so the vendored header can name
+  # the exact revision it came from; the raw fetch is then pinned to that sha.
+  upstreamCommit=""
+  if command -v gh >/dev/null 2>&1; then
+    upstreamCommit="$(gh api "repos/Homebrew/homebrew-cask/commits?path=${upstreamCaskPath}&per_page=1" \
+      --jq '.[0].sha' 2>/dev/null || true)"
+  fi
+  if [[ -z "$upstreamCommit" ]]; then
+    upstreamCommit="$(curl -fsSL --max-time 15 \
+      "https://api.github.com/repos/Homebrew/homebrew-cask/commits?path=${upstreamCaskPath}&per_page=1" 2>/dev/null \
+      | jq -r '.[0].sha // empty' 2>/dev/null || true)"
+  fi
+  if [[ "$upstreamCommit" =~ ^[0-9a-f]{40}$ ]] \
+    && upstreamCaskBody="$(curl -fsSL --max-time 15 \
+      "https://raw.githubusercontent.com/Homebrew/homebrew-cask/${upstreamCommit}/${upstreamCaskPath}")" \
+    && upstreamVersion="$(caskVersion <(printf '%s\n' "$upstreamCaskBody"))" \
+    && [[ "$upstreamVersion" =~ ^[0-9]+(\.[0-9]+)+$ ]] \
+    && grep -q 'sha256 arm: *"[0-9a-f]\{64\}"' <<<"$upstreamCaskBody"; then
+    if [[ "$upstreamVersion" != "$chatgptBefore" ]]; then
+      {
+        printf '%s\n' \
+          "# Vendored VERBATIM (below this header) from homebrew-cask revision" \
+          "# ${upstreamCommit} by scripts/update.sh chatgpt on $(date -u +%Y-%m-%d)." \
+          "# Why ChatGPT is pinned here instead of taken from the homebrew-cask input," \
+          "# and how to move or unpin it, is documented at the cask declaration in" \
+          "# modules/darwin/homebrew.nix; the matching Sparkle self-update kill switch" \
+          "# is modules/home/chatgpt.nix."
+        printf '%s\n' "$upstreamCaskBody"
+      } > "$chatgptCask"
+    fi
+    # OpenAI's own feed, the newest entry. Not adopted from here — the appcast
+    # carries no sha256 — but reported, so "current" always means current
+    # against OpenAI rather than merely against upstream homebrew-cask.
+    appcastVersion="$(curl -fsSL --max-time 15 \
+      "https://persistent.oaistatic.com/codex-app-prod/appcast.xml" 2>/dev/null \
+      | sed -n 's/.*<sparkle:shortVersionString>\([^<]*\)<.*/\1/p' | head -n 1 || true)"
+    if [[ -z "$appcastVersion" ]]; then
+      echo "    chatgpt: vendored ${upstreamVersion} — could not read OpenAI's appcast to compare" >&2
+    elif [[ "$appcastVersion" != "$upstreamVersion" ]]; then
+      echo "    chatgpt: vendored ${upstreamVersion}; OpenAI's appcast has ${appcastVersion} and upstream homebrew-cask has not bumped yet — re-run later to adopt it"
+    fi
+  else
+    echo "    warning: could not read upstream homebrew-cask's chatgpt cask; chatgpt stays at ${chatgptBefore}" >&2
+  fi
+fi
+
+unchanged=true
+for file in "${versionFiles[@]}"; do
+  /usr/bin/cmp -s "$before/$file" "$file" || unchanged=false
+done
+if [[ "$unchanged" == true ]]; then
   echo "==> Already current; nothing moved"
   exit 0
 fi
 
+# One line per moved pin, old -> new, given the old CONTENTS of the two pin
+# files (a snapshot here, HEAD's copy for the landing step) and comparing the
+# version each declares against the working tree's.
+describePinMoves() {
+  local oldClaude="$1" oldChatgpt="$2" was now
+  was="$(jq -r .version <<<"$oldClaude")"
+  now="$(jq -r .version "$claudePin")"
+  [[ "$was" != "$now" ]] && echo "    claude-code: ${was} -> ${now}"
+  was="$(caskVersion <(printf '%s\n' "$oldChatgpt"))"
+  now="$(caskVersion "$chatgptCask")"
+  [[ "$was" != "$now" ]] && echo "    chatgpt: ${was} -> ${now}"
+  return 0
+}
+
 echo
 echo "==> What moved"
 if command -v jq >/dev/null 2>&1; then
-  describeLockMoves "$lockBefore"
-  if ! /usr/bin/cmp -s "$pinBefore" "$claudePin"; then
-    echo "    claude-code: $(jq -r .version "$pinBefore") -> $(jq -r .version "$claudePin")"
-  fi
+  describeLockMoves "$before/flake.lock"
+  describePinMoves "$(cat "$before/$claudePin")" "$(cat "$before/$chatgptCask")"
 else
-  git --no-pager diff --stat -- flake.lock "$claudePin" || true
+  git --no-pager diff --stat -- "${versionFiles[@]}" || true
 fi
 
 # Everything from here to the final activation is a pure build: a failure leaves
@@ -218,7 +330,7 @@ nix build --no-link --impure ".#darwinConfigurations.${host}.system"
 if [[ "$dryRun" == true ]]; then
   echo
   echo "==> Built successfully; not activating (--dry-run)"
-  echo "    Review the flake.lock diff, then run ./scripts/rebuild.sh"
+  echo "    Review the diff of ${versionFiles[*]}, then run ./scripts/rebuild.sh"
   exit 0
 fi
 
@@ -241,17 +353,21 @@ echo "==> Activating"
 echo
 echo "==> Landing the version bump on main"
 
-if git diff --quiet HEAD -- flake.lock "$claudePin"; then
-  echo "    flake.lock and $claudePin already match HEAD; nothing to land"
+if git diff --quiet HEAD -- "${versionFiles[@]}"; then
+  echo "    ${versionFiles[*]} already match HEAD; nothing to land"
   exit 0
 fi
 
 # Refuse to automate a commit while unrelated tracked changes sit in the tree:
 # branch-switching would drag them along, and an automated commit must never
 # sweep in work it does not own. Untracked files are fine — committing only
-# the two version files cannot pick them up.
-if ! git diff --quiet HEAD -- . ":(exclude)flake.lock" ":(exclude)$claudePin"; then
-  echo "error: tracked changes besides flake.lock and $claudePin are in the tree." >&2
+# the version files cannot pick them up.
+excludes=()
+for file in "${versionFiles[@]}"; do
+  excludes+=(":(exclude)$file")
+done
+if ! git diff --quiet HEAD -- . "${excludes[@]}"; then
+  echo "error: tracked changes besides ${versionFiles[*]} are in the tree." >&2
   echo "The system IS activated, but the version bump is NOT landed." >&2
   echo "Commit or stash the other changes, then land the bump via a PR." >&2
   exit 1
@@ -269,34 +385,40 @@ fi
 # than the in-run snapshot so the recorded diff is exactly what this commit
 # lands. Best-effort: jq's absence already only costs the staleness report
 # above, and it only costs the detailed listing here.
-moved="flake inputs and the claude-code pin (jq unavailable for the detailed listing)"
+moved="flake inputs and pins (jq unavailable for the detailed listing)"
 if command -v jq >/dev/null 2>&1; then
   headLock="$(mktemp)"
   git show HEAD:flake.lock > "$headLock"
-  moved="$(describeLockMoves "$headLock" || echo "    (listing failed)")"
+  moved="$(
+    describePinMoves "$(git show "HEAD:$claudePin")" "$(git show "HEAD:$chatgptCask")"
+    describeLockMoves "$headLock" || echo "    (listing failed)"
+  )"
   rm -f "$headLock"
-  if ! git diff --quiet HEAD -- "$claudePin"; then
-    moved="    claude-code: $(git show "HEAD:$claudePin" | jq -r .version) -> $(jq -r .version "$claudePin")
-${moved}"
-  fi
+fi
+
+# The commit title names the lock only when the lock moved; a pin-only run
+# (`update.sh chatgpt`) must not be recorded as a flake input update.
+title="chore(flake): update inputs"
+if git diff --quiet HEAD -- flake.lock; then
+  title="chore(pins): update pinned versions"
 fi
 
 branch="chore/flake-lock-$(date +%Y%m%d-%H%M%S)"
 git switch -c "$branch"
-git add flake.lock "$claudePin"
-git commit -m "chore(flake): update inputs" -m "Moved:
+git add "${versionFiles[@]}"
+git commit -m "$title" -m "Moved:
 ${moved}
 
 Landed by scripts/update.sh after nix flake check, a full system build,
 and activation on the machine that ran the update."
 git push -u origin "$branch"
 gh pr create \
-  --title "chore(flake): update inputs" \
+  --title "$title" \
   --body "Moved:
 
 ${moved}
 
-Automated by \`scripts/update.sh\`: the lock was updated, \`nix flake check\` passed, the system built, and the result was activated before this commit was created."
+Automated by \`scripts/update.sh\`: the versions were moved, \`nix flake check\` passed, the system built, and the result was activated before this commit was created."
 # --delete-branch also checks the default branch out afterwards and pulls it,
 # so a run started from main ends on an up-to-date main with a clean tree.
 gh pr merge --squash --delete-branch

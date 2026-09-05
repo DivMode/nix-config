@@ -66,26 +66,33 @@ in
     casks = [
       "google-chrome"
 
-      # ChatGPT — PINNED at 26.825.51511 from the in-repo tap, not upstream.
+      # ChatGPT (which bundles the codex CLI) — served from the in-repo pinned
+      # tap, not from the homebrew-cask input. The version is whatever
+      # taps/homebrew-pinned/Casks/chatgpt.rb declares, and that file moves
+      # only by `./scripts/update.sh chatgpt` (or a full update.sh run), which
+      # re-vendors upstream homebrew-cask's current chatgpt.rb verbatim.
       #
-      # The 26.831.20005 that arrived with the 2026-09-01 lock bump was broken
-      # in use, and the owner asked for the previous version back the same
-      # morning. Upstream homebrew-cask only ever carries latest, so the pin is
-      # a whole vendored cask — taps/homebrew-pinned/Casks/chatgpt.rb, verbatim
-      # from the pre-bump homebrew-cask revision 341a8ba — whose versioned URL
-      # and sha256 make the artefact reproducible.
+      # Why a separate pin rather than the homebrew-cask input like every other
+      # cask: on 2026-09-01 the 26.831.20005 that arrived with a lock bump was
+      # broken in use, and the owner asked for the previous version back the
+      # same morning. Upstream only ever carries latest, and a lock input moves
+      # every cask at once, so holding or moving ChatGPT ALONE needs its own
+      # file — a whole vendored cask whose versioned URL and sha256 make the
+      # artefact reproducible. Holding a broken version back is now a git
+      # revert of that one file; moving to latest is the script.
       #
       # The pin has a second half in modules/home/chatgpt.nix: the app updates
-      # ITSELF via Sparkle, so without that module's kill switch the downgrade
-      # would quietly undo itself within a day. To unpin, revert both together:
-      # restore the plain "chatgpt" token here, delete the vendored cask, and
-      # remove that module.
+      # ITSELF via Sparkle, so without that module's kill switch the declared
+      # version would quietly drift within a day. To unpin entirely, revert
+      # both together: restore the plain "chatgpt" token here, delete the
+      # vendored cask, remove that module, and drop the chatgpt refresh from
+      # scripts/update.sh.
       #
       # `greedy` for the same reason as karabiner-elements below: the cask
-      # declares `auto_updates`, so plain upgrade skips it and the installed
-      # 26.831 would sit untouched forever. Greedy makes activation reconcile
+      # declares `auto_updates`, so plain upgrade skips it and an installed
+      # version would sit untouched forever. Greedy makes activation reconcile
       # the installed version to what THIS tap pins — which, with the fully
-      # qualified token, can only ever be the vendored 26.825.51511.
+      # qualified token, can only ever be the vendored file's version.
       {
         name = "nix-config/pinned/chatgpt";
         greedy = true;

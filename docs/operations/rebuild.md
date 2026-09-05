@@ -60,10 +60,21 @@ edit a version by hand**; `nix flake update` rewrites the lock for you, and the
 pin is the receipt of what was pulled, not something you maintain.
 
 ```sh
-./scripts/update.sh                  # every input, then build and activate
+./scripts/update.sh                  # every input and every pin, then build and activate
 ./scripts/update.sh homebrew-cask    # only the Homebrew casks
-./scripts/update.sh --dry-run        # move the lock and build, do not activate
+./scripts/update.sh chatgpt          # only the ChatGPT app and its bundled Codex CLI
+./scripts/update.sh --dry-run        # move the versions and build, do not activate
 ```
+
+Two versions live outside the lock, in files this repository owns, and the
+script refreshes those on a full run or when named: the Claude Code CLI
+(`modules/home/claude-code-pin.json`, from Anthropic's release bucket) and
+ChatGPT.app, which bundles the `codex` CLI (`taps/homebrew-pinned/Casks/chatgpt.rb`,
+re-vendored from upstream homebrew-cask's current definition). `homebrew-cask`
+alone does not move ChatGPT: it is served from the in-repo pinned tap, and its
+Sparkle self-updater is switched off, so `update.sh chatgpt` is the only way it
+advances. Each run also reports whether upstream has caught up with OpenAI's
+own appcast.
 
 The script prints which inputs actually moved, checks and builds, and activates
 only if the build succeeds. A failure leaves the Mac untouched with the lock

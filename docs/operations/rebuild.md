@@ -60,21 +60,23 @@ edit a version by hand**; `nix flake update` rewrites the lock for you, and the
 pin is the receipt of what was pulled, not something you maintain.
 
 ```sh
-./scripts/update.sh                  # every input and every pin, then build and activate
+./scripts/update.sh                  # every input and the Claude Code pin, then build and activate
 ./scripts/update.sh homebrew-cask    # only the Homebrew casks
-./scripts/update.sh chatgpt          # only the ChatGPT app and its bundled Codex CLI
 ./scripts/update.sh --dry-run        # move the versions and build, do not activate
 ```
 
-Two versions live outside the lock, in files this repository owns, and the
-script refreshes those on a full run or when named: the Claude Code CLI
-(`modules/home/claude-code-pin.json`, from Anthropic's release bucket) and
-ChatGPT.app, which bundles the `codex` CLI (`taps/homebrew-pinned/Casks/chatgpt.rb`,
-re-vendored from upstream homebrew-cask's current definition). `homebrew-cask`
-alone does not move ChatGPT: it is served from the in-repo pinned tap, and its
-Sparkle self-updater is switched off, so `update.sh chatgpt` is the only way it
-advances. Each run also reports whether upstream has caught up with OpenAI's
-own appcast.
+One version lives outside the lock, in a file this repository owns, and the
+script refreshes it on a full run or on `update.sh llm-agents`: the Claude Code
+CLI (`modules/home/claude-code-pin.json`, from Anthropic's release bucket).
+
+ChatGPT.app, which carries the `codex` CLI, is not moved by this script at
+all. It is a self-updating cask: Sparkle inside the app follows OpenAI's own
+appcast, and the lock's cask definition only matters for a fresh install.
+Every run prints the installed app and codex versions beside the lock's
+definition and OpenAI's newest release; if the app is behind, launching it is
+the update. Holding it at a version is not possible from this repository —
+the app rewrites its Sparkle flags on every launch — which is why the earlier
+pin was removed (see the `chatgpt` comment in `modules/darwin/homebrew.nix`).
 
 The script prints which inputs actually moved, checks and builds, and activates
 only if the build succeeds. A failure leaves the Mac untouched with the lock

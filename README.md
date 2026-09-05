@@ -115,14 +115,14 @@ exist). Do not hand-assemble the `darwin-rebuild switch` command.
 To move the pinned inputs forward and apply the result in one step:
 
 ```sh
-./scripts/update.sh                  # every input and every pin
+./scripts/update.sh                  # every input and the Claude Code pin
 ./scripts/update.sh homebrew-cask    # only the Homebrew casks
-./scripts/update.sh chatgpt          # only the ChatGPT app (and its bundled Codex CLI)
 ```
 
-Versions live in `flake.lock` and two pin files the script also refreshes
-(`modules/home/claude-code-pin.json`, `taps/homebrew-pinned/Casks/chatgpt.rb`);
-none of them is edited by hand.
+Versions live in `flake.lock` and in the Claude Code pin the script also
+refreshes (`modules/home/claude-code-pin.json`); neither is edited by hand.
+ChatGPT.app, which carries the `codex` CLI, is a self-updating cask: launching
+it is the update, and the script reports where it stands.
 
 Format and inspect changes before switching. Lock updates and detailed operating
 procedures are in [`docs/operations/rebuild.md`](docs/operations/rebuild.md).

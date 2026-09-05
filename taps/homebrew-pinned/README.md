@@ -15,8 +15,9 @@ Rules for a cask in here:
 - Every entry is temporary in spirit. When the reason for the pin passes,
   restore the plain upstream token in `modules/darwin/homebrew.nix` and delete
   the file here.
-- A cask vendored from upstream is moved by `./scripts/update.sh <token>`,
-  which re-vendors upstream's current file under a fresh provenance header —
-  never by editing the version or sha256 by hand. `chatgpt` is the one such
-  cask today. A cask written here (`thaw`) has no upstream to follow and is
-  edited deliberately.
+- A pin only holds what the application cannot undo. An app that updates
+  itself (Sparkle, an in-app updater) will walk away from the pin, and user
+  defaults do not stop that: ChatGPT rewrote its Sparkle flags within ten
+  seconds of every launch (measured 2026-09-05, see the `chatgpt` comment in
+  `modules/darwin/homebrew.nix`). Do not pin a self-updating app here unless
+  the hold is enforced by something the app cannot overwrite.

@@ -10,7 +10,6 @@
     ./ai
     ./archives.nix
     ./caches.nix
-    ./chatgpt.nix
     ./development.nix
     ./downloads.nix
     ./fluidvoice.nix

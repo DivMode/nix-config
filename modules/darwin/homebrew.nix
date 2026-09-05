@@ -23,7 +23,6 @@ let
   # reconcile step below, and nothing else — the cask DECLARATIONS stay in
   # homebrew.casks like every other cask.
   pinnedCasks = {
-    chatgpt = ../../taps/homebrew-pinned/Casks/chatgpt.rb;
     thaw = ../../taps/homebrew-pinned/Casks/thaw.rb;
   };
 
@@ -66,37 +65,31 @@ in
     casks = [
       "google-chrome"
 
-      # ChatGPT (which bundles the codex CLI) — served from the in-repo pinned
-      # tap, not from the homebrew-cask input. The version is whatever
-      # taps/homebrew-pinned/Casks/chatgpt.rb declares, and that file moves
-      # only by `./scripts/update.sh chatgpt` (or a full update.sh run), which
-      # re-vendors upstream homebrew-cask's current chatgpt.rb verbatim.
+      # ChatGPT.app, which carries the codex CLI. A plain auto_updates cask
+      # like google-chrome: Homebrew installs it once and the app's bundled
+      # Sparkle keeps it current from OpenAI's own appcast (the cask's url is
+      # OpenAI's versioned zip, so Homebrew is not a repackager here). No
+      # `greedy`, deliberately: bundle's greedy path is
+      # `Cask#outdated?(greedy: true)`, which treats ANY installed/declared
+      # mismatch as outdated (Library/Homebrew/cask/cask.rb, outdated_version),
+      # and the lock's definition is normally days behind what Sparkle has
+      # already installed.
       #
-      # Why a separate pin rather than the homebrew-cask input like every other
-      # cask: on 2026-09-01 the 26.831.20005 that arrived with a lock bump was
-      # broken in use, and the owner asked for the previous version back the
-      # same morning. Upstream only ever carries latest, and a lock input moves
-      # every cask at once, so holding or moving ChatGPT ALONE needs its own
-      # file — a whole vendored cask whose versioned URL and sha256 make the
-      # artefact reproducible. Holding a broken version back is now a git
-      # revert of that one file; moving to latest is the script.
-      #
-      # The pin has a second half in modules/home/chatgpt.nix: the app updates
-      # ITSELF via Sparkle, so without that module's kill switch the declared
-      # version would quietly drift within a day. To unpin entirely, revert
-      # both together: restore the plain "chatgpt" token here, delete the
-      # vendored cask, remove that module, and drop the chatgpt refresh from
-      # scripts/update.sh.
-      #
-      # `greedy` for the same reason as karabiner-elements below: the cask
-      # declares `auto_updates`, so plain upgrade skips it and an installed
-      # version would sit untouched forever. Greedy makes activation reconcile
-      # the installed version to what THIS tap pins — which, with the fully
-      # qualified token, can only ever be the vendored file's version.
-      {
-        name = "nix-config/pinned/chatgpt";
-        greedy = true;
-      }
+      # History, so nobody re-adds the pin: from 2026-09-01 (PR #38) to
+      # 2026-09-05 this was served from the in-repo pinned tap with a Sparkle
+      # kill switch in user defaults (SUEnableAutomaticChecks and
+      # SUAutomaticallyUpdate = false in com.openai.codex), to hold 26.825
+      # back after 26.831 broke in use. Measured 2026-09-05 on 26.901.41600:
+      # activation wrote both keys false at 21:42:06 local; the app was
+      # relaunched at 21:42:40; by 21:42:50 both read true again. The app is
+      # Electron with Sparkle behind its autoUpdater API and re-asserts the
+      # flags on every launch, and the bundle carries no app-level preference
+      # that drives them. A pin that cannot survive a launch holds nothing, so
+      # the tap entry, the vendored cask, the kill-switch module and the
+      # update.sh refresh for it were all removed together. If a release ever
+      # has to be held back again, the mechanism has to be one the app cannot
+      # overwrite — a managed-preferences profile — not user defaults.
+      "chatgpt"
 
       "raycast"
 
@@ -270,8 +263,7 @@ in
       # its release notes state "Systems on macOS 14 or 15 stay on the 1.x
       # line" — and upstream homebrew-cask carries only 2.x, so the upstream
       # `thaw` token cannot install on macOS 15 at all (`depends_on macos:
-      # :tahoe`). Hence the in-repo pinned cask, like chatgpt above:
-      # taps/homebrew-pinned/Casks/thaw.rb.
+      # :tahoe`). Hence the in-repo pinned cask, taps/homebrew-pinned/Casks/thaw.rb.
       #
       # modules/home/menu-bar.nix seeds its behavioural defaults. Two things
       # stay manual, documented there: the one-time permission grants Thaw asks
@@ -349,9 +341,9 @@ in
   # Reconcile pinned-tap casks DOWNWARD, which `brew bundle` cannot do: it
   # installs what is missing and upgrades what is outdated, but an installed
   # cask NEWER than its declared definition is left in place. Measured on
-  # 2026-09-01, the day the chatgpt pin landed: with 26.831.20005 installed
-  # and the vendored cask pinning 26.825.51511, activation logged
-  # "Using chatgpt" and moved nothing. For a normal tap that gap cannot arise;
+  # 2026-09-01, the day the (since removed) chatgpt pin landed: with
+  # 26.831.20005 installed and the vendored cask pinning 26.825.51511,
+  # activation logged "Using chatgpt" and moved nothing. For a normal tap that gap cannot arise;
   # for a pinned tap it is the entire point of the tap, so activation closes
   # it explicitly here. Runs after the homebrew activation script (this is
   # postActivation), compares the installed version against the version the

@@ -189,6 +189,10 @@
             agent-instructions = (import ./ai/instructions { pkgs = nixpkgs.legacyPackages.${system}; }).tests;
             orchestration-docs = (import ./docs/links.nix { pkgs = nixpkgs.legacyPackages.${system}; }).tests;
             codex-config-merge = (import ./ai/codex { pkgs = nixpkgs.legacyPackages.${system}; }).tests;
+            command-governor-settings =
+              (import ./modules/home/command-governor-settings.nix {
+                pkgs = nixpkgs.legacyPackages.${system};
+              }).tests;
           });
 
       # `nixfmt-tree`, not bare `nixfmt`. `nix fmt` invokes the formatter with

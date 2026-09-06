@@ -19,67 +19,6 @@
       inputs.nixpkgs.follows = "nixpkgs";
     };
 
-    # The DivMode fork of Maxmedawar/tandem, carrying the native Herdr terminal
-    # backend that lets ChatGPT drive Herdr's agents without tmux. Upstream is
-    # preserved as the fork's `upstream` remote; see DivMode/tandem#1.
-    #
-    # Pinned to an EXACT COMMIT, not to `feat/herdr-backend`. A branch moves,
-    # and an activation that resolved one would install whatever it pointed at
-    # that morning — which for the component that lets a remote model open
-    # sessions on this Mac is not a pin at all. `nix flake update` cannot move
-    # it either: updating Tandem means changing the revision here deliberately,
-    # after re-running its typecheck and tests against the new commit.
-    #
-    # Base: upstream 0.1.0 at a98bcafd2c40ae5473b85fe41183e4f391933799.
-    # Verified at THIS commit: `tsc --noEmit` clean, and 55 test files / 670
-    # tests pass. Run that suite with CCM_CWD_ALLOWLIST, TANDEM_CWD_ALLOWLIST,
-    # and TANDEM_TERMINAL_BACKEND UNSET — several tests take those as default
-    # parameters, so a run inside a Tandem-created pane inherits the live
-    # machine's allowlist and reports failures that are the harness leaking,
-    # not the code. Measured at the previous pin: 4 failed with them set, 0
-    # with them unset, same commit. PR #4 added a hermetic vitest setup that
-    # redirects the state root, so the suite no longer appends to the real
-    # ~/.tandem either.
-    #
-    # This revision is DivMode/tandem main after PR #5, and the four merges
-    # that built it each solved a distinct problem here:
-    #
-    #   #2 963c583  moved Tandem onto its own silent named Herdr session, so a
-    #               remote foreman's agent-state notifications stop landing in
-    #               the personal `default` session.
-    #   #3 9c06f56  gave a browser coordinator a policy AT ALL: the MCP
-    #               `initialize` result's `instructions`, a
-    #               `get_orchestration_policy` tool, and server-side model
-    #               routing that keeps Fable behind explicit user consent.
-    #               This is the ONLY path by which ChatGPT Web learns this
-    #               machine's orchestration policy — it cannot read the
-    #               Nix-managed ~/.claude/CLAUDE.md or ~/.codex/AGENTS.md that
-    #               local workers get.
-    #   #4 c097bdc  made turn completion durable and claimed exactly once, and
-    #               added `get_foreman_events`: the bounded, redacted inbox a
-    #               returning foreman reconciles against. Completion used to be
-    #               emitted from the READ path, so polling twice with the same
-    #               stale cursor — the documented recovery move after an
-    #               interruption — manufactured two completions for one turn.
-    #   #5 afc3192  synchronised the ChatGPT-facing policy with this
-    #               repository's canonical one (nix-config #27): reviewer of
-    #               record and merge authority in the ROLE, no self-approval,
-    #               an optional risk-based independent reviewer whose verdict
-    #               is evidence, and no monitor-only sessions. Policy v1.2.0.
-    #
-    # Moving this pin is when the two policy documents get compared. They are
-    # separate documents with separate owners — ai/instructions/orchestration.md
-    # reaches local workers from disk, this revision's
-    # src/orchestration-policy.ts reaches ChatGPT Web over MCP — and nothing
-    # keeps them in step automatically. See docs/orchestration-architecture.md.
-    #
-    # `flake = false` because upstream ships no flake.nix; the package is built
-    # by modules/home/ai/tandem/package.nix.
-    tandem = {
-      url = "github:DivMode/tandem/afc3192e9caaa1affb7c9ed97c6c66df0605c2ee";
-      flake = false;
-    };
-
     # Packages for AI coding agents, updated daily by upstream automation.
     # Claude Code publishes several releases a day, far faster than its Homebrew
     # cask tracks: on 2026-08-13 the newest homebrew-cask commit still described
@@ -250,14 +189,6 @@
             agent-instructions = (import ./ai/instructions { pkgs = nixpkgs.legacyPackages.${system}; }).tests;
             orchestration-docs = (import ./docs/links.nix { pkgs = nixpkgs.legacyPackages.${system}; }).tests;
             codex-config-merge = (import ./ai/codex { pkgs = nixpkgs.legacyPackages.${system}; }).tests;
-            tandem-workspace-env =
-              (import ./modules/home/ai/tandem/workspace-env.nix {
-                pkgs = nixpkgs.legacyPackages.${system};
-              }).tests;
-            tandem-session =
-              (import ./modules/home/ai/tandem/session.nix {
-                pkgs = nixpkgs.legacyPackages.${system};
-              }).tests;
           });
 
       # `nixfmt-tree`, not bare `nixfmt`. `nix fmt` invokes the formatter with

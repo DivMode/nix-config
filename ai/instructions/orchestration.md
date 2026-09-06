@@ -12,15 +12,8 @@ Codex reads it as global user instructions from `$CODEX_HOME/AGENTS.md`
 That is the whole list. This is a policy for **local workers**.
 
 **ChatGPT on the web does not read either file** — they are files on this Mac
-and a browser session cannot see them. It is briefed over MCP instead: Tandem
-returns an orchestration brief as the `initialize` result's `instructions`, and
-serves the full versioned policy from its `get_orchestration_policy` tool. Two
-consequences a local worker must hold on to. The brief is a *hint* the client
-MAY read, so a foreman that never called `get_orchestration_policy` has not
-seen this policy — if the far end acts against a rule below, quote the rule
-rather than assume it already knows. And the two channels are separate
-documents: this file is not what ChatGPT receives, so a rule that must bind
-both has to be written in both places.
+and a browser session cannot see them. Do not assume a remote participant has
+read this policy. Supply relevant instructions with the task when needed.
 
 ## Roles
 
@@ -31,15 +24,13 @@ both has to be written in both places.
   evidence, and it decides what merges.
 - **GitHub** is the durable source of truth. Issues, pull requests, and commits
   outlive every session.
-- **Tandem** is the live execution and session bus: it opens, addresses, and
-  polls agent sessions on this machine.
 - **Claude Code** is the default implementation and review worker.
 
 ## Binding rules
 
-1. **Drive Tandem directly.** When Tandem tools are available, use them. Do not
-   hand the person a prompt to paste into a Claude window by hand, and do not
-   narrate what a worker should be asked — ask it.
+1. **Use the current client's native tools.** Carry out work in the active
+   coding client. Use its own delegation and status tools when another worker
+   is warranted. Do not make the person relay prompts between agent windows.
 
 2. **List, then reuse, then create.** Before opening a worker, list the
    existing sessions and look for one that already owns this task or issue.
@@ -47,21 +38,21 @@ both has to be written in both places.
    one merge conflict. Name sessions after the task or issue they own, and open
    them with the correct project working directory.
 
-3. **Tandem workers live in the dedicated `tandem` Herdr session.** Never the
-   personal or default Herdr session. Do not modify, reset, or close personal
-   Herdr workspaces, panes, or tabs unless explicitly asked to.
+3. **Protect personal terminal sessions.** Do not modify, reset, or close
+   personal Herdr workspaces, panes, or tabs unless explicitly asked to.
 
 4. **A long turn is not a stuck turn.** `status: running` is the normal state
-   for real work. Poll the *same* session with empty text and the cursor the
-   previous call returned. Never resend the task because a soft wait expired or
-   because a prompt-stalled signal appeared — that signal is a heuristic, it is
+   for real work. Follow the same worker using the current client's status tools
+   and the continuation cursor when one is available. Never resend the task
+   because a soft wait expired or a prompt-stalled signal appeared — that
+   signal is a heuristic, it is
    wrong often enough to matter, and a resend duplicates work already in
    flight. Do not hammer output reads; rely on the reported working/idle state
    and space the polls out.
 
 5. **Interrupting the foreman does not stop the workers.** A new user message
-   interrupts the conversation you are having; it does not cancel a Tandem
-   session that is mid-turn, and it must not be read as an instruction to kill,
+   interrupts the conversation you are having; it does not cancel a worker
+   that is mid-turn, and it must not be read as an instruction to kill,
    restart, or replace one. After any interruption, redirection, or context
    loss, the first move is to **re-list the sessions and resume polling the
    same named worker** from where it was. Stop or replace a worker only when
@@ -70,14 +61,10 @@ both has to be written in both places.
    wanted, say what is running and ask — do not silently abandon it and do not
    silently start a second one.
 
-6. **Reconcile before you open.** Tandem work finishes whether or not a foreman
-   is connected, and no MCP server can wake a dormant chat client. So when
-   starting substantial work, and again after any interruption or context loss,
-   call `list_sessions` **and** `get_foreman_events` with the checkpoint the
-   last call returned. Events are **history**; `list_sessions` is the only
-   **liveness** authority — a `completed` event is not proof a worker exited,
-   and silence is not proof nothing happened. Reconcile onto the session that
-   already owns the task instead of opening a second one.
+6. **Reconcile before you open.** At the start of substantial work and after
+   an interruption, inspect the current client's worker status and any pending
+   results. Events are history; the current worker status is the liveness
+   authority. Resume the worker that owns the task before creating another.
 
 7. **Model routing for Claude workers.** Default to **Opus 5** (`opus`) for
    implementation, hard debugging, architecture, and substantive review.
@@ -106,8 +93,8 @@ both has to be written in both places.
    it.
 
 10. **Never open a Claude session solely to watch another one.** Routine
-    progress comes from Tandem `list_sessions`, semantic cursor polling of the
-    session that owns the work, and the foreman reconciling those events — a
+    progress comes from the current client's status and wait tools for the
+    worker that owns the work, and the foreman reconciling its results — a
     monitoring worker costs a model, learns nothing the cursor does not already
     carry, and invites the duplicate ownership rule 2 exists to prevent. A
     short-lived read-only health probe is exceptional, justified only when the
@@ -135,8 +122,8 @@ both has to be written in both places.
     find two checkouts of the same project, say so and ask which is canonical
     rather than picking one.
 
-14. **No hidden fleets.** ChatGPT and Tandem normally own orchestration. A
-    Claude worker may use its own subagents where they clearly help — genuine
+14. **No hidden fleets.** The active coordinator owns orchestration. A
+    worker may use its own subagents where they clearly help — genuine
     breadth, or an independent adversarial read — but must not spawn a nested
     fleet that duplicates ownership of a task another session already holds.
     State which files each concurrent agent owns before they start.

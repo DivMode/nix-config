@@ -7,11 +7,12 @@ Two boundaries are protected here, and nothing else:
     truncates, widens, or replaces state the application wrote is a data-loss
     bug that only shows up as a lost login or a lost model choice, long after
     the activation that caused it.
-  * The package list is Command Governor's, read from its checkout at
-    activation time. Its two vendored entries are relative to a PROJECT's
-    .prime/agent/, so installing the same file globally without rewriting them
-    points Prime at ~/pins/... and silently loads nothing -- no error, just a
-    harness that is quietly absent.
+  * The configuration is Command Governor's, read from its checkout at
+    activation time and carried over whole. Enumerating keys here would drop
+    whatever the product adds next, silently. And the two vendored package
+    entries are relative to a PROJECT's .prime/agent/, so installing the same
+    file globally without rewriting them points Prime at ~/pins/... and loads
+    nothing -- no error, just a harness that is quietly absent.
 """
 
 import json
@@ -51,8 +52,10 @@ class SettingsTests(unittest.TestCase):
 
         self.assertIsNotNone(JQ)
 
-    def write_harness(self, packages):
-        self.harness.write_text(json.dumps({"$comment": ["ignored"], "packages": packages}))
+    def write_harness(self, packages, **extra):
+        document = {"$comment": ["documentation, not configuration"], "packages": packages}
+        document.update(extra)
+        self.harness.write_text(json.dumps(document))
 
     @property
     def expected(self):
@@ -74,6 +77,28 @@ class SettingsTests(unittest.TestCase):
     def test_relative_entries_become_absolute_and_npm_entries_are_untouched(self):
         self.assertEqual(self.write().returncode, 0)
         self.assertEqual(json.loads(self.settings.read_text())["packages"], self.expected)
+
+    def test_every_other_harness_key_is_carried_over(self):
+        # The harness owns what Prime is configured with. A key enumerated in
+        # nix-config would silently drop anything the product adds later, so
+        # nothing is enumerated -- and this is what says so.
+        self.write_harness(
+            HARNESS_PACKAGES,
+            defaultThinkingLevel="high",
+            enabledModels=["claude-bridge/*"],
+            somethingAddedLater={"nested": True},
+        )
+        self.assertEqual(self.write().returncode, 0)
+        written = json.loads(self.settings.read_text())
+        self.assertEqual(written["defaultThinkingLevel"], "high")
+        self.assertEqual(written["enabledModels"], ["claude-bridge/*"])
+        self.assertEqual(written["somethingAddedLater"], {"nested": True})
+        self.assertEqual(written["packages"], self.expected)
+
+    def test_comment_key_is_not_carried_over(self):
+        # Documentation for the reader of that file; Prime has no use for it.
+        self.assertEqual(self.write().returncode, 0)
+        self.assertNotIn("$comment", json.loads(self.settings.read_text()))
 
     def test_unresolvable_package_spelling_fails_loudly(self):
         for entry in ("./local", "/absolute/path", "github:owner/repo", "../sibling"):

@@ -301,8 +301,7 @@
         "mattpocock-skills": "mattpocock-skills",
         "nix-darwin": "nix-darwin",
         "nix-homebrew": "nix-homebrew",
-        "nixpkgs": "nixpkgs_2",
-        "tandem": "tandem"
+        "nixpkgs": "nixpkgs_2"
       }
     },
     "rust-overlay": {
@@ -338,23 +337,6 @@
       "original": {
         "owner": "nix-systems",
         "repo": "default",
-        "type": "github"
-      }
-    },
-    "tandem": {
-      "flake": false,
-      "locked": {
-        "lastModified": 1788068034,
-        "narHash": "sha256-GDvRJ0n8OFU6PmIBS+nEU4Xf1pqtP8pA901QchHgQng=",
-        "owner": "DivMode",
-        "repo": "tandem",
-        "rev": "afc3192e9caaa1affb7c9ed97c6c66df0605c2ee",
-        "type": "github"
-      },
-      "original": {
-        "owner": "DivMode",
-        "repo": "tandem",
-        "rev": "afc3192e9caaa1affb7c9ed97c6c66df0605c2ee",
         "type": "github"
       }
     },

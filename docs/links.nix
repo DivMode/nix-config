@@ -1,8 +1,8 @@
 # The cross-links that hold the orchestration documentation together, checked.
 #
 # WHY THIS EXISTS. The design record in ./orchestration-architecture.md is
-# reachable only through links from five other files, and it links back out to
-# three. None of that is exercised by anything: a rename, a move, or a tidied
+# reachable only through links from four other files, and it links back out to
+# two. None of that is exercised by anything: a rename, a move, or a tidied
 # heading breaks a link in a PUBLIC repository and nothing says so until a
 # reader hits a 404. Prose drifts silently; that is the whole reason the
 # instruction document next door is checked rather than trusted.
@@ -35,10 +35,6 @@ let
       source = ../ai/README.md;
       link = "../docs/orchestration-architecture.md";
     };
-    "ai/tandem/README.md" = {
-      source = ../ai/tandem/README.md;
-      link = "../../docs/orchestration-architecture.md";
-    };
     "docs/architecture.md" = {
       source = ./architecture.md;
       link = "orchestration-architecture.md";
@@ -54,7 +50,6 @@ let
   # cannot assert anything about a remote host, and a check that needs the
   # network is a check that fails for the wrong reason.
   outbound = {
-    "../ai/tandem/README.md" = ../ai/tandem/README.md;
     "../ai/instructions/orchestration.md" = ../ai/instructions/orchestration.md;
     "state-boundary.md" = ./state-boundary.md;
   };
@@ -118,8 +113,11 @@ in
           | sed 's/^](//; s/)$//' \
           | sort -u > all-links
 
-        grep -v '^http' all-links | grep -v '^#' | sort -u > used
-        grep '^#' all-links | sed 's/^#//' | sort -u > anchors-used
+        # Empty subsets are valid (a short document may have no anchors).
+        # grep returns 1 for an empty match and aborts under pipefail before
+        # the actual link assertions run; awk still writes the empty set.
+        awk '!/^http/ && !/^#/' all-links | sort -u > used
+        awk '/^#/ { sub(/^#/, ""); print }' all-links | sort -u > anchors-used
 
         cut -f1 ${outboundFile} | sort -u > declared
 

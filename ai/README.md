@@ -29,7 +29,7 @@ one document both clients are given:
 
 - `global.md` — how the owner works, and what "done" means. Owner-edited prose.
 - `orchestration.md` — how agents on this machine coordinate with each other:
-  who is foreman, where durable state lives, how Tandem sessions are listed,
+  who is foreman, where durable state lives, how native workers are listed,
   reused, and polled, what an interruption does and does not cancel, which
   model a worker may pick, and that user environment changes belong in this
   repository rather than in a shell. General by design; it names no project. It
@@ -66,7 +66,7 @@ closes a way this rots silently:
   assertion in `modules/home/ai`, so the two cannot restate it differently.
 
 Both halves of the reviewer and monitor rules from PR #27, and of the
-reconciliation rule that keeps this policy aligned with Tandem's, are pinned
+reconciliation rule for existing workers, are pinned
 separately — either half alone survives an edit that inverts the rule.
 
 Both destinations are loaded automatically and machine-wide: Claude Code reads
@@ -78,32 +78,11 @@ Both destinations are loaded automatically and machine-wide: Claude Code reads
 for LOCAL workers. ChatGPT on the web reads neither — they are files on this
 Mac and a browser session cannot see them.
 
-A remote foreman is briefed over MCP instead, by Tandem rather than by anything
-in this repository. The MCP server returns an orchestration brief as the
-`initialize` result's `instructions` and serves the full versioned policy from
-a `get_orchestration_policy` tool, and it enforces the session, polling, and
-model-routing rules server-side whatever the client read. At the revision
-pinned in `flake.nix` that policy is **v1.2.0**: DivMode/tandem PR #3
-introduced the bootstrap, PR #4 added the durable foreman-event inbox the
-reconciliation rule here refers to, and PR #5 brought the reviewer-of-record
-and no-monitor-only-sessions rules across from this repository's PR #27. So the
-machine has two delivery paths for one intent:
-
-| Audience | Channel | Owner |
-| --- | --- | --- |
-| Claude Code, Codex (local) | `~/.claude/CLAUDE.md`, `~/.codex/AGENTS.md` | this repository |
-| ChatGPT Web (remote foreman) | MCP `initialize` instructions, `get_orchestration_policy` | Tandem, at the pinned revision |
-
-They are separate documents, and nothing keeps them in step automatically. A
-rule that must bind both has to be written in both — the checks here can only
-hold up this side. The `initialize` brief is also a hint a client MAY use, so a
-local worker must not assume the far end has read anything.
-
-Why both channels exist, what each one guarantees, and how they are kept
-semantically aligned is the design record in
+Coordination uses the active client's native tools. This repository does not
+install a remote agent-control service. Give remote participants the relevant
+instructions with their task; local files do not reach them automatically.
+The ownership boundaries are recorded in
 [`../docs/orchestration-architecture.md`](../docs/orchestration-architecture.md).
-That document is the long form of everything the line-budgeted
-`instructions/orchestration.md` can only state.
 
 The document is composed as a STRING at evaluation time rather than built as a
 derivation and passed to both consumers. `programs.claude-code.context` is typed

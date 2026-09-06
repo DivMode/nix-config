@@ -236,27 +236,8 @@ in
         greedy = false;
       }
 
-      # tailscale-app is deliberately NOT here, and this note exists so it is
-      # not "helpfully" added on the next pass.
-      #
-      # It kept reappearing and being removed — about five times — which looked
-      # like a broken uninstall. It was not. Traced on 2026-08-31: a Codex
-      # session on 2026-08-28 at 22:46 ran `brew install --cask tailscale-app`
-      # and `brew install tmux` while following UPSTREAM Tandem's setup guide,
-      # which lists "Tailscale, connected with `tailscale up`" and tmux as
-      # requirements. `cleanup = "uninstall"` then reconciled both away on the
-      # next activation, correctly, because neither is declared. Homebrew's own
-      # logs still show the openssl@3 and ca-certificates pulled in as tmux
-      # dependencies that night.
-      #
-      # Neither requirement applies to this machine. ../home/ai/tandem/default.nix
-      # runs a fork specifically to avoid both: "tmux is NOT a dependency of
-      # this path and must not become one", and tunnel-client.nix uses a plain
-      # port with "no Tailscale Funnel involved". So the loop was an agent
-      # installing software for a code path this repository does not use, and
-      # Nix undoing it. The removal was the system working.
-      #
-      # Add it only if something here genuinely needs it, and say what.
+      # No declared workload requires tailscale-app or tmux. Add either only
+      # when a workload in this repository needs it, with that reason recorded.
 
       # Menu bar manager (an actively maintained fork of Ice), at the newest
       # release that runs on this macOS: Thaw's 2.x line is macOS 26-only —

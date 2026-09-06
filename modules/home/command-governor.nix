@@ -115,8 +115,10 @@ let
   # the same version number. So this repository declares the command; the
   # checkout keeps owning what the command runs.
   #
-  # The binary's path comes from pins.json at RUN time, not evaluation time, so
-  # moving the pin forward in that repository needs no rebuild here.
+  # The binary is reached through pins/current, the version-stable symlink that
+  # repository's bootstrap maintains, and it is resolved at RUN time rather than
+  # evaluation time — so moving the pin forward there needs no rebuild here and
+  # puts no version number in this repository to go stale.
   #
   # `pi` is Command Governor's pinned Prime Agent (a Pi fork), not upstream
   # pi.dev's `pi`; Prime's own package installs only `prime-agent`, and nothing
@@ -124,28 +126,29 @@ let
   # collide here, on purpose and visibly.
   primeAgentWrapper = pkgs.writeShellApplication {
     name = "prime-agent";
-    runtimeInputs = [
-      pkgs.jq
-      pkgs.nodejs
-    ];
+    runtimeInputs = [ pkgs.nodejs ];
     text = ''
       checkout=${lib.escapeShellArg (toString checkout)}
-      pins="$checkout/pins/pins.json"
 
-      if [ ! -f "$pins" ]; then
+      # pins/current is Command Governor's version-stable entry point: a symlink
+      # its scripts/bootstrap.sh maintains, pointing at whichever install root
+      # pins.json currently names. Going through it means re-pinning Prime is
+      # entirely that repository's business — no rebuild here, and no version
+      # number written down in nix-config to go stale. The previous install root
+      # is left in place by that bootstrap, so a daemon already running on the
+      # old tree keeps working across a re-pin.
+      binary="$checkout/pins/current/node_modules/.bin/prime-agent"
+
+      if [ ! -d "$checkout" ]; then
         printf 'prime-agent: no Command Governor checkout at %s\n' "$checkout" >&2
         printf '  local.nix declares it as projects.commandgovernor. Clone the\n' >&2
         printf '  repository to that path, then run its scripts/bootstrap.sh.\n' >&2
         exit 1
       fi
 
-      if ! relative=$(jq -er '.substrate.binary' "$pins"); then
-        printf 'prime-agent: %s has no substrate.binary\n' "$pins" >&2
-        exit 1
-      fi
-
-      binary="$checkout/$relative"
-
+      # One test covers both a missing pins/current and an install root that has
+      # no binary in it, because the answer is the same either way: bootstrap.sh
+      # is what creates the symlink AND what fills the tree it points at.
       if [ ! -x "$binary" ]; then
         printf 'prime-agent: the pinned Prime Agent is not installed.\n' >&2
         printf '  Expected an executable at %s\n' "$binary" >&2

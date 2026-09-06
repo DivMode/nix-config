@@ -32,14 +32,21 @@ EOF
   exit 1
 fi
 
-# settings.project.json is written for <project>/.prime/agent/settings.json, so
-# its vendored entries are relative to THAT directory -- `../../pins/...`
-# resolves back to the checkout root. Installed globally the file sits at
-# ~/.prime/agent/, where Prime resolves a user-scope relative package against
-# getBaseDirForScope("user") == the agent dir (dist/core/package-manager.js),
-# so the identical string would point at ~/pins/... and silently load nothing.
-# Every relative entry is therefore rewritten to an absolute path into the
-# checkout. `npm:` specifiers are left alone; Prime installs those itself.
+# EVERY key in that file is carried over, not a list of keys named here. The
+# harness decides what Prime is configured with -- packages, defaultThinkingLevel,
+# enabledModels, whatever it grows next -- and a key enumerated in nix-config
+# would be a second authority that silently drops anything added upstream. Only
+# `$comment` is dropped, because it is documentation for the reader of that file
+# and Prime has no use for it.
+#
+# `packages` is the one key that cannot be copied verbatim. Its vendored entries
+# are relative to <project>/.prime/agent/ -- `../../pins/...` resolves back to
+# the checkout root. Installed globally the file sits at ~/.prime/agent/, where
+# Prime resolves a user-scope relative package against getBaseDirForScope("user")
+# == the agent dir (dist/core/package-manager.js), so the identical string would
+# point at ~/pins/... and silently load nothing. Every relative entry is
+# therefore rewritten to an absolute path into the checkout. `npm:` specifiers
+# are left alone; Prime installs those itself.
 #
 # Any other spelling -- a bare `./x`, an absolute path, a git URL -- is a form
 # this rewrite has never seen. Guessing would point the global settings
@@ -50,11 +57,11 @@ if ! declared="$(
     if type != "object" then
       error("settings.project.json is not a JSON object")
     else . end
-    | .packages
-    | if type != "array" then
+    | if (.packages | type) != "array" then
         error("settings.project.json has no packages array")
       else . end
-    | map(
+    | del(.["$comment"])
+    | .packages |= map(
         if type != "string" then
           error("package entry is not a string: " + tostring)
         elif startswith("npm:") then .
@@ -63,7 +70,6 @@ if ! declared="$(
           error("package entry is neither an npm: specifier nor a ../../ path relative to <project>/.prime/agent/: " + .)
         end
       )
-    | { packages: . }
   ' "$harness_settings"
 )"; then
   echo "Refusing to install a global Prime Agent configuration from $harness_settings." >&2

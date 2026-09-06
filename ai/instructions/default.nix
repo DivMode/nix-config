@@ -104,28 +104,18 @@ let
     "Codex reads it as global user instructions from `$CODEX_HOME/AGENTS.md`"
     "Claude Code reads it as user memory from `~/.claude/CLAUDE.md`"
     "**ChatGPT on the web does not read either file**"
-    "`get_orchestration_policy`"
 
     # Roles.
     "**GitHub** is the durable source of truth."
 
-    # Session handling.
+    # Client-native worker ownership and continuity.
+    "**Use the current client's native tools.**"
     "**List, then reuse, then create.**"
-    "**Tandem workers live in the dedicated `tandem` Herdr session.** Never the"
-    "personal or default Herdr session."
-    "Poll the *same* session with empty text and the cursor the"
+    "**Protect personal terminal sessions.**"
     "**Interrupting the foreman does not stop the workers.**"
     "re-list the sessions and resume polling the"
     "same named worker**"
-
-    # Reconciliation, in two halves for the same reason as the reviewer and
-    # monitor rules below. "Call both tools" without "history is not liveness"
-    # lets a foreman decide from the event feed whether a worker is still
-    # running, which is the one question the feed cannot answer. "History is
-    # not liveness" without the instruction to call them leaves the rule true
-    # and unactionable. The first half is in `sectionPhrases` above.
-    "call `list_sessions` **and** `get_foreman_events` with the checkpoint the"
-    "**liveness** authority — a `completed` event is not proof a worker exited,"
+    "authority. Resume the worker that owns the task before creating another."
 
     # Model routing. The Fable rule is the one most likely to be softened by a
     # well-meaning reword, so both halves of it are pinned.
@@ -143,7 +133,7 @@ let
     # mechanism that replaces them leaves a foreman no way to see progress at
     # all, which is how the banned session gets opened again.
     "the ChatGPT foreman, not a substitute for its review and merge decision**."
-    "progress comes from Tandem `list_sessions`, semantic cursor polling of the"
+    "progress comes from the current client's status and wait tools for the"
     "**closed immediately afterwards**."
 
     # Everything else that was asked for explicitly.

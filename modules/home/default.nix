@@ -10,6 +10,7 @@
     ./ai
     ./archives.nix
     ./caches.nix
+    ./command-governor.nix
     ./development.nix
     ./downloads.nix
     ./fluidvoice.nix

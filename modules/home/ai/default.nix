@@ -259,6 +259,24 @@ let
     theme = "dark";
     tui = "fullscreen";
 
+    # Reasoning effort per model. The key shape is Claude Code's own, read from
+    # what the client wrote into the live settings.json rather than guessed:
+    # `modelSettings.<modelId>.effortLevel`, with "claude-opus-5" already
+    # carrying "high" there before this was declared.
+    #
+    # Declared so the setting survives, which it otherwise does not: the value
+    # was client-written and unowned, so anything that reset it would go
+    # unnoticed — the same failure ../../ai/codex/default.nix documents for
+    # Codex's model_reasoning_effort.
+    #
+    # The top-level `model` key is deliberately NOT declared. That is a
+    # per-session choice the user makes through /model, and owning it here would
+    # revert their pick at every rebuild.
+    modelSettings = {
+      "claude-fable-5-1".effortLevel = "high";
+      "claude-opus-5".effortLevel = "high";
+    };
+
     # ccstatusline formats the status bar. Claude Code reads this key on
     # startup and invokes the command once per render. See ./ccstatusline.nix.
     statusLine = ccstatusline.statusLine;

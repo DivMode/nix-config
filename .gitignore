@@ -10,3 +10,7 @@ result-*
 # and explicitly re-include public documentation.
 secrets/**
 !secrets/README.md
+
+# Python bytecode from the AI hook scripts
+__pycache__/
+*.pyc

@@ -39,71 +39,69 @@
   # into a dialog somebody can answer. A rebuild that installs or upgrades a
   # pkg cask will block on that dialog.
   #
-  # That dialog is then removed by the NOPASSWD rule below, and this paragraph
-  # used to say the opposite -- that a NOPASSWD rule reaching a USER-WRITABLE
-  # payload path was "not a trade worth making". Read the two together or the
-  # file contradicts itself: what was rejected was NOPASSWD over
-  # /opt/homebrew/Caskroom, granting root to whatever is written there; what is
-  # accepted is NOPASSWD on two fixed root-owned binaries that happen to take
-  # their payload from that path. The exposure is real and smaller, and it is
-  # argued out where the rule is declared rather than here.
+  # That dialog is then removed by the NOPASSWD entry below. This paragraph
+  # used to weigh a scoped entry against a blanket one; the entry is blanket
+  # now, and the argument for that lives where it is declared.
   environment.etc."sudo.conf".text = ''
     # Path to askpass helper program
     Path askpass ${sudoAskpass}
   '';
 
-  # Passwordless sudo for EXACTLY ONE command: activating this configuration.
+  # Passwordless sudo, to root, for any command this account runs.
   #
-  # Why: every rebuild raised a password dialog, which made agent-driven
-  # activation stall on a human at the machine (requested removed 2026-08-14).
+  # Two callers depend on it. scripts/rebuild.sh runs darwin-rebuild under
+  # `sudo -A --preserve-env=...` (the original 2026-08-14 request: agent-driven
+  # activation must not stall on a human at the machine). Homebrew, nested
+  # inside that activation, runs every privileged cask step of its own --
+  # /usr/sbin/installer for a pkg, and on uninstall or upgrade the vendor's
+  # scripts, /bin/launchctl, /usr/sbin/pkgutil, /usr/bin/xargs over /bin/rm and
+  # its cask/utils/rmdir.sh, and /bin/rm for a `delete:` stanza. Both callers
+  # need SETENV: rebuild.sh passes --preserve-env, and Homebrew's
+  # Library/Homebrew/system_command.rb#sudo_prefix always appends -E:
   #
-  # The tradeoff, stated plainly: this account's darwin-rebuild applies a
-  # configuration the same account can edit, so NOPASSWD here is
-  # root-equivalent for the account. The password prompt was never a real
-  # boundary against that — the account already owns the flake — it was only
-  # a consent tap. The consent trail is the git history instead: the
-  # nix-only-guard hook forces every machine change through this repository,
-  # and activation without a declared change is a no-op.
+  #   ["/usr/bin/sudo", "-u", "root", "-A", "-E", "--"]
   #
-  # Scope: the stable /run/current-system symlink path only, so ad-hoc sudo
-  # for anything else still prompts. SETENV because scripts/rebuild.sh passes
-  # NIX_CONFIG_LOCAL via --preserve-env — it must NOT wrap the command in
-  # `env`, or sudoers matches `env` (not darwin-rebuild) and prompts anyway,
-  # which is exactly what the first version of this rule got wrong. The FIRST switch on a wiped machine
-  # (before any generation exists) still asks for the password once — the
-  # rule cannot predate the system it is part of.
-  # Homebrew's privileged cask installers, so a rebuild never stops on a dialog.
+  # Why ALL, when 2026-08-31 deliberately named two binaries instead: that
+  # scoped rule never worked, and no scoped rule can. Measured 2026-09-06 while
+  # `nixup` upgraded karabiner-elements 16.2.0 -> 16.3.0:
   #
-  # A `pkg` cask — karabiner-elements, adobe-acrobat-pro, logi-options+ — is
-  # installed by handing its payload to /usr/sbin/installer as root, and removed
-  # with /usr/sbin/pkgutil --forget. Those are nested inside `brew bundle`, so
-  # the darwin-rebuild rule below never matched them; before 2026-08-31 they did
-  # not prompt only because they FAILED, which is why karabiner-elements sat at
-  # 16.1.0 for weeks and tailscale-app's uninstall kept leaving a Caskroom stub.
-  # ./homebrew.nix now supplies SUDO_ASKPASS so Homebrew passes sudo's -A, and
-  # this rule is what stops that dialog from ever being drawn.
+  #   /usr/bin/sudo -u root -A -E -- /usr/sbin/pkgutil --forget org.pqrs.Karabiner-DriverKit-VirtualHIDDevice
+  #   sudo: sorry, you are not allowed to preserve the environment
   #
-  # Scoped to two commands rather than ALL, chosen deliberately on 2026-08-31.
-  # The honest argument for going further is that this account can already reach
-  # root without a password — it may edit the flake and run the NOPASSWD
-  # darwin-rebuild below — so a blanket rule grants little that is not already
-  # reachable. The argument against, which won: darwin-rebuild is a rebuild away
-  # and leaves a git trail, whereas NOPASSWD:ALL hands every process running as
-  # this user an immediate root primitive with no such trail.
+  # sudoers(5) refuses -E unless the matching entry carries the SETENV tag (ALL
+  # implies it). The old `NOPASSWD: /usr/sbin/installer, /usr/sbin/pkgutil`
+  # entry had no tag, so it matched, won as the last match over the admin
+  # group's `(ALL) ALL`, and then rejected the call that the admin entry would
+  # have allowed. It was worse than no rule: Homebrew had already run the
+  # vendor's uninstall scripts, so the upgrade aborted with
+  # Karabiner-Elements.app gone from /Applications and both pkg receipts still
+  # registered, and the earlier steps had drawn the password dialog anyway
+  # because the vendor scripts were never in the list. The 2026-08-31 commit's
+  # "verified" was the sudoers file existing and 16.2.0 being installed -- an
+  # install that had gone through the dialog, which is how the admin entry has
+  # always behaved.
   #
-  # The residual cost is stated plainly: a Karabiner UPGRADE also runs the
-  # vendor's own uninstall scripts under sudo — remove_files.sh and
-  # uninstall_core.sh under /Library/Application Support/org.pqrs — which these
-  # two entries do not cover, so a Karabiner version bump still raises one
-  # dialog. Both scripts are root:wheel 0755 inside a root-owned directory, so
-  # naming them here would be safe if that last prompt becomes annoying.
+  # Adding SETENV to that list would not have finished the job either. The
+  # scripts under /Library/Application Support/org.pqrs are one cask's; every
+  # cask with a sudo script adds a path, so an enumerated list prompts again on
+  # the next one. And an entry for /usr/bin/xargs or /bin/rm as root IS an
+  # immediate root primitive with no trail, which is exactly the property the
+  # 2026-08-31 argument held against ALL. An honest list is ALL with a
+  # maintenance burden.
   #
-  # /usr/sbin/installer's payload path IS user-writable (/opt/homebrew/Caskroom),
-  # so this does let a process that can write there install a package as root.
-  # That is the accepted trade, and it is the reason the rule stops at these two
-  # binaries instead of covering every command.
+  # The trade, stated plainly: any process running as this account can become
+  # root without a password. The account already could -- it edits the flake
+  # and activated it under the NOPASSWD darwin-rebuild entry this replaces, and
+  # the NOPASSWD /usr/sbin/installer entry took its payload from user-writable
+  # /opt/homebrew/Caskroom. The password was a consent tap; the consent trail is
+  # git, because the nix-only-guard hook forces every machine change through
+  # this repository. The requirement that decided it, from the account's owner
+  # on 2026-09-06: `nixup` must never ask for a password.
+  #
+  # The FIRST switch on a wiped machine still asks once -- this entry cannot
+  # predate the system it is part of -- and that one dialog is what the askpass
+  # helper above exists for.
   security.sudo.extraConfig = ''
-    ${local.user} ALL=(root) NOPASSWD: /usr/sbin/installer, /usr/sbin/pkgutil
-    ${local.user} ALL=(root) NOPASSWD:SETENV: /run/current-system/sw/bin/darwin-rebuild
+    ${local.user} ALL=(root) NOPASSWD:SETENV: ALL
   '';
 }

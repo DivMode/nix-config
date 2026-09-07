@@ -12,14 +12,24 @@
 # lock bump on main (branch, PR, squash-merge) so the machine and the
 # repository do not drift apart.
 #
-#   ./scripts/update.sh                       # every input and every pin
-#   ./scripts/update.sh homebrew-cask         # just the Homebrew casks
-#   ./scripts/update.sh stillpane             # just the stillpane release
-#   ./scripts/update.sh --dry-run             # update the lock, do not activate
+# Typed as `nixup` — modules/home/default.nix aliases it, and arguments pass
+# through — so nobody types this path:
+#
+#   nixup                    # every input and every pin
+#   nixup claude             # Claude Code: the llm-agents input and the pin
+#   nixup stillpane          # the stillpane release: cask and plugin tag
+#   nixup codex              # ChatGPT/Codex: the cask definition, plus where the app stands
+#   nixup homebrew-cask      # any flake input by its name in flake.nix
+#   nixup --dry-run          # move the versions and build, do not activate
+#
+# An application name is accepted wherever it is clearer than the input that
+# carries it; the table in the argument parser below maps each to what moves.
+# A name that is neither an application nor a flake input is refused with the
+# list of both, rather than handed to nix to fail on.
 #
 # Two versions are pinned by files of this repository's own rather than by the
 # lock, and this script refreshes those too, on a full run or by name: the
-# claude-code pin, from Anthropic's release bucket (`llm-agents`), and the
+# claude-code pin, from Anthropic's release bucket (`claude`), and the
 # stillpane release, which is a vendored cask AND a flake input tag moved
 # together from the project's latest GitHub release (`stillpane`).
 #
@@ -44,9 +54,23 @@ export NIX_CONFIG_LOCAL="$repository/local.nix"
 dryRun=false
 refreshStillpane=false
 inputs=()
+# Every direct flake input, from the lock rather than a hand-kept list, so a
+# new input is accepted the moment it is locked.
+knownInputs="$(jq -r '.nodes.root.inputs | keys[]' flake.lock 2>/dev/null || true)"
 for argument in "$@"; do
   case "$argument" in
     --dry-run) dryRun=true ;;
+    # ── Application names → what moves ──────────────────────────────────────
+    # Claude Code: the llm-agents input carries the build recipe, and the
+    # version pin is refreshed whenever that input is named (see below).
+    claude|claude-code) inputs+=(llm-agents) ;;
+    # ChatGPT.app, which bundles the codex CLI, updates itself through Sparkle
+    # and nothing declarative can hold or move it (modules/darwin/homebrew.nix,
+    # `chatgpt`). What this repository owns is the cask DEFINITION a fresh
+    # machine installs from, which lives in the homebrew-cask input; the
+    # report section below then says where the installed app stands and that
+    # launching it is how it moves.
+    codex|chatgpt) inputs+=(homebrew-cask) ;;
     # Not a plain flake input: the stillpane release is a vendored cask plus
     # the tag on the stillpane-src input, refreshed together below. Kept out
     # of `inputs` so `nix flake update` never sees a name it cannot move.
@@ -55,7 +79,15 @@ for argument in "$@"; do
       echo "error: unknown option $argument" >&2
       exit 1
       ;;
-    *) inputs+=("$argument") ;;
+    *)
+      if ! grep -qx -- "$argument" <<<"$knownInputs"; then
+        echo "error: '$argument' is neither an application name nor a flake input." >&2
+        echo "applications: claude, codex, stillpane" >&2
+        echo "flake inputs: $(tr '\n' ' ' <<<"$knownInputs")" >&2
+        exit 1
+      fi
+      inputs+=("$argument")
+      ;;
   esac
 done
 

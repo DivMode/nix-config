@@ -112,17 +112,22 @@ Anything else under sudo still prompts — the askpass dialog remains as the
 fallback (and covers the one first switch on a wiped machine, before the rules
 exist). Do not hand-assemble the `darwin-rebuild switch` command.
 
-To move the pinned inputs forward and apply the result in one step:
+To move the pinned inputs forward and apply the result in one step, type
+`nixup` (a shell alias for `scripts/update.sh`; arguments pass through):
 
 ```sh
-./scripts/update.sh                  # every input and the Claude Code pin
-./scripts/update.sh homebrew-cask    # only the Homebrew casks
+nixup                  # every input and every pin
+nixup claude           # only Claude Code
+nixup stillpane        # only the stillpane release
+nixup codex            # ChatGPT/Codex: the cask definition, and where the app stands
+nixup homebrew-cask    # any flake input, by its name
 ```
 
-Versions live in `flake.lock` and in the Claude Code pin the script also
-refreshes (`modules/home/claude-code-pin.json`); neither is edited by hand.
-ChatGPT.app, which carries the `codex` CLI, is a self-updating cask: launching
-it is the update, and the script reports where it stands.
+Versions live in `flake.lock`, in the Claude Code pin
+(`modules/home/claude-code-pin.json`), and in the stillpane cask; the script
+moves all of them and none is edited by hand. ChatGPT.app, which carries the
+`codex` CLI, is a self-updating cask: launching it is the update, and the
+script reports where it stands.
 
 Format and inspect changes before switching. Lock updates and detailed operating
 procedures are in [`docs/operations/rebuild.md`](docs/operations/rebuild.md).

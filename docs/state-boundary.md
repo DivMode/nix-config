@@ -27,6 +27,11 @@ was never stored in a declarative or provider-backed system.
 - Browser profiles and history
 - Gmail and Chrome authentication; Nix declares Gmail's installation policy,
   while Chrome owns each profile's PWA registration and generated app shim
+- Sign-in and settings inside force-installed Chrome extensions (Loom); Nix
+  declares only that the extension is installed
+- stillpane's macOS Accessibility and Screen Recording approvals, its login
+  item, and the captures under `~/.claude/stillpane/`; its app and its Claude
+  Code plugin are declarative
 - Application databases, caches, logs, indexes, and temporary files
 - Codex configuration outside the narrow declared preference layer, including
   project trust, plugins, marketplaces, generated paths, and desktop state

@@ -70,8 +70,8 @@
     # window capture to the next prompt, the PreToolUse hook that approves
     # reading it, and the `/stillpane` skill. Upstream's install path is
     # `/plugin marketplace add yayamaz/stillpane`, which writes mutable state
-    # under ~/.claude; modules/home/ai loads this tree with `--plugin-dir`
-    # instead, exactly like gcx-src above. The menu bar app itself is a
+    # under ~/.claude; modules/home/stillpane.nix installs it from a marketplace
+    # built out of this tree in the store instead. The menu bar app itself is a
     # Homebrew cask (taps/homebrew-pinned/Casks/stillpane.rb).
     #
     # Pinned to the same release tag as that cask, deliberately: the hook and

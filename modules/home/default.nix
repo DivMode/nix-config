@@ -25,6 +25,7 @@
     ./projects.nix
     ./screensaver.nix
     ./secrets.nix
+    ./stillpane.nix
     ./terminal.nix
   ];
 

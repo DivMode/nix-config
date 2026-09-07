@@ -16,9 +16,11 @@
 # No `auto_updates`: the app only ever CHECKS stillpane.dev for a newer
 # version and offers a link to the release page (docs/how-it-works.md,
 # "Its only network activity"); it never installs one. So `brew upgrade` is
-# the right owner of upgrades here, and a new release arrives by moving
-# `version` and `sha256` below. Move the `stillpane-src` tag in flake.nix with
-# it — that input carries the Claude Code plugin the same release ships.
+# the right owner of upgrades here. `version` and `sha256` below are moved by
+# `./scripts/update.sh` (on a full run, or `./scripts/update.sh stillpane`)
+# from the project's latest GitHub release, together with the `stillpane-src`
+# tag in flake.nix that carries the Claude Code plugin the same release ships;
+# the script verifies the dmg's Developer ID signature before adopting it.
 cask "stillpane" do
   version "1.1.1"
   sha256 "2759e5d32f00869d7b3d6ada9b936d90c28268b92263f9ff4541ef843c97017e"

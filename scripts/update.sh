@@ -268,22 +268,18 @@ fi
 
 # ── stillpane: cask and plugin tag, moved together from the latest release ──
 # stillpane is two pins that must agree: the vendored cask in the in-repo
-# tap (no upstream cask exists — see the cask header) and the tag on the
-# stillpane-src flake input, which feeds the Claude Code plugin the same
-# release ships. The app's own Check Setup compares the two, so they move as
-# one, from one source: the project's latest GitHub release.
+# tap and the tag on the stillpane-src flake input, which feeds the Claude
+# Code plugin the same release ships. The app's own Check Setup compares the
+# two, so they move as one, from one source: the project's latest GitHub
+# release.
 #
-# The dmg is downloaded once, hashed for the cask, and — before anything is
-# rewritten — mounted and checked against the same codesign requirement the
-# project's own installer skill enforces: stillpane's bundle identifier under
-# its Developer Team ID. A release that fails that check is not adopted, and
-# the run says so; a hash alone would faithfully pin whatever was uploaded.
-#
-# Nothing here reaches the Mac's installed copy. The cask moves at the next
-# activation; the plugin is reinstalled by modules/home/stillpane.nix when
-# the store copy changes.
+# The cask has to state a real sha256 and no published tap provides one (the
+# README's `yayamaz/tap` does not exist — see the cask header), so this does
+# what homebrew-cask's bump bot does for every other cask: download the
+# release asset once, hash it, write the hash. Nothing here reaches the Mac's
+# installed copy; the cask moves at the next activation, and the plugin is
+# reinstalled by modules/home/stillpane.nix when the store copy changes.
 stillpaneRepo="yayamaz/stillpane"
-stillpaneRequirement='=anchor apple generic and identifier "app.stillpane.Stillpane" and certificate leaf[subject.OU] = "7NV7GLDW87"'
 if [[ "$refreshStillpane" == true ]]; then
   stillpaneBefore="$(caskVersion "$stillpaneCask")"
   stillpaneTag=""
@@ -300,21 +296,9 @@ if [[ "$refreshStillpane" == true ]]; then
     echo "==> stillpane: ${stillpaneBefore} (current)"
   else
     stillpaneVersion="${stillpaneTag#v}"
-    stillpaneTmp="$(mktemp -d -t stillpane)"
-    stillpaneDmg="$stillpaneTmp/stillpane.dmg"
-    stillpaneMount="$stillpaneTmp/mount"
-    mkdir -p "$stillpaneMount"
-    stillpaneOk=false
+    stillpaneDmg="$(mktemp -t stillpane)"
     if curl -fsSL --max-time 120 -o "$stillpaneDmg" \
-        "https://github.com/${stillpaneRepo}/releases/download/${stillpaneTag}/stillpane-${stillpaneVersion}.dmg" \
-      && /usr/bin/hdiutil attach -nobrowse -readonly -quiet -mountpoint "$stillpaneMount" "$stillpaneDmg"; then
-      if /usr/bin/codesign --verify --strict --deep -R "$stillpaneRequirement" "$stillpaneMount/stillpane.app" 2>/dev/null \
-        && [[ "$(/usr/bin/defaults read "$stillpaneMount/stillpane.app/Contents/Info.plist" CFBundleShortVersionString 2>/dev/null)" == "$stillpaneVersion" ]]; then
-        stillpaneOk=true
-      fi
-      /usr/bin/hdiutil detach -quiet "$stillpaneMount" || true
-    fi
-    if [[ "$stillpaneOk" == true ]]; then
+        "https://github.com/${stillpaneRepo}/releases/download/${stillpaneTag}/stillpane-${stillpaneVersion}.dmg"; then
       stillpaneSha="$(/usr/bin/shasum -a 256 "$stillpaneDmg" | /usr/bin/awk '{ print $1 }')"
       sed -i '' \
         -e "s/^  version \".*\"/  version \"${stillpaneVersion}\"/" \
@@ -326,9 +310,9 @@ if [[ "$refreshStillpane" == true ]]; then
       nix flake update stillpane-src
       echo "==> stillpane: ${stillpaneBefore} -> ${stillpaneVersion} (cask and plugin tag)"
     else
-      echo "    warning: stillpane ${stillpaneTag} did not verify as a build of app.stillpane.Stillpane signed by team 7NV7GLDW87 at that version; stillpane stays at ${stillpaneBefore}" >&2
+      echo "    warning: could not download stillpane ${stillpaneTag}; stillpane stays at ${stillpaneBefore}" >&2
     fi
-    rm -rf "$stillpaneTmp"
+    rm -f "$stillpaneDmg"
   fi
 fi
 

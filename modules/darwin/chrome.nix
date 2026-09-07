@@ -7,17 +7,30 @@
 let
   plist = pkgs.formats.plist { };
 
-  # THIS FILE CARRIES ONE KEY, and that is the whole point of its size.
+  # THIS FILE CARRIES ONLY KEYS THAT MUST BE MANDATORY, and that is the whole
+  # point of its size.
   #
   # Everything below — generating a plist, hashing it, the receipt guard, the
-  # activation script, the boot reconciler — exists for `WebAppInstallForceList`
-  # and nothing else. That policy is declared `RECOMMENDED_PROHIBITED` in
-  # Chromium's handler list (chrome/browser/policy/
+  # activation script, the boot reconciler — exists because of
+  # `WebAppInstallForceList`. That policy is declared `RECOMMENDED_PROHIBITED`
+  # in Chromium's handler list (chrome/browser/policy/
   # configuration_policy_handler_list_factory.cc), so Chrome REFUSES it at
   # recommended level with "Policy level is not supported." Mandatory policy on
   # a Mac without MDM can only come from a forced value, and the only non-MDM
   # source of forced values is /Library/Managed Preferences — the directory
   # macOS rebuilds at boot. The machinery follows from that single constraint.
+  #
+  # `ExtensionInstallForcelist` rides in the same file for the same reason: its
+  # upstream definition (components/policy/resources/templates/
+  # policy_definitions/Extensions/ExtensionInstallForcelist.yaml) carries no
+  # `can_be_recommended`, so it too is mandatory-only. It costs nothing extra —
+  # the machinery already exists — but it inherits the machinery's one gap: the
+  # file is absent between a boot and the reconciler's next pass. Upstream is
+  # explicit that "if a previously force-installed app or extension is removed
+  # from this list, Google Chrome automatically uninstalls it", so a Chrome
+  # started inside that window may drop a forced extension and reinstall it
+  # once the policy returns. The Gmail PWA has lived with the same window since
+  # 2026-08-31; this is not a new failure mode, only a second passenger.
   #
   # The download settings USED to ride along in here, and paid for it. They are
   # now ordinary user preferences in the `system.defaults` block below, because
@@ -44,6 +57,23 @@ let
       }
     ];
 
+    # Extensions installed silently into every profile, which the user cannot
+    # disable or remove from chrome://extensions. Each entry is
+    # `<32-letter id>;<update url>`; the update URL is only used for the
+    # FIRST install and is the Web Store's, spelled out rather than left to the
+    # default so what Chrome fetches is written down here.
+    #
+    # Adding an extension here is a force-INSTALL, not an allow: it appears in
+    # every profile on this Mac. Sign-in to the extension itself remains
+    # profile state, exactly as the Gmail PWA's authentication does.
+    ExtensionInstallForcelist = [
+      # Loom — Screen Recorder & Screen Capture. The id is the one Chrome
+      # itself had already installed under
+      # ~/Library/Application Support/Google/Chrome/Default/Extensions on
+      # 2026-09-06 (manifest name "Loom – Screen Recorder & Screen Capture"),
+      # so the policy adopts that install rather than adding a second one.
+      "liecbddmkiiihnedobmlmillhodjkdmb;https://clients2.google.com/service/update2/crx"
+    ];
   };
   policyHash = builtins.hashFile "sha256" chromePolicy;
   policyPath = "/Library/Managed Preferences/com.google.Chrome.plist";

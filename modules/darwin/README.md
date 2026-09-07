@@ -69,20 +69,27 @@ alphabetical default. The tile shows a question mark whenever that path is an
 unmounted share; the stack renders the path it was given.
 
 `chrome.nix` is the single Chrome policy file. It declares Google's real Gmail
-PWA through Chrome's supported `WebAppInstallForceList` platform policy.
+PWA through Chrome's supported `WebAppInstallForceList` platform policy, and
+the Loom screen-recorder extension through `ExtensionInstallForcelist`.
 Chrome—not Nix—creates the native `~/Applications/Chrome Apps.localized/Gmail.app`
 shim after each profile first processes the policy. The Dock pins that shim
 immediately after Chrome.
 
-That generated policy file carries exactly one key, and the receipt guard and
-reconciler daemon around it exist only for that key.
-`WebAppInstallForceList` is `RECOMMENDED_PROHIBITED` upstream, so Chrome accepts
-it only as a forced value, and without MDM the only source of forced values is
+That generated policy file carries only keys that are mandatory-only upstream,
+and the receipt guard and reconciler daemon around it exist only for those.
+`WebAppInstallForceList` is `RECOMMENDED_PROHIBITED` and
+`ExtensionInstallForcelist` has no recommended form, so Chrome accepts both
+only as forced values, and without MDM the only source of forced values is
 `/Library/Managed Preferences` — the directory macOS rebuilds at every boot. The
 daemon therefore runs on an interval rather than only at load. Running at load
 is not enough: a one-shot cannot repair a wipe that happens after it exits, and
 on 2026-08-31 that is exactly what happened — the daemon ran, took its
 "hash matches, nothing to do" exit, and macOS rebuilt the directory afterwards.
+
+A force-installed extension lands in every profile, cannot be disabled from
+`chrome://extensions`, and — per the policy's own definition — is uninstalled
+by Chrome as soon as it leaves the list. Signing in to the extension is still
+per-profile state.
 
 Downloads are **not** in that file. `DownloadDirectory` and
 `PromptForDownloadLocation` are ordinary user preferences written to
@@ -103,8 +110,9 @@ The system-wide policy applies to every local Chrome profile and makes Chrome
 display **Managed by your organization**. Nix owns only the public install URL
 and window behavior. Chrome still owns profile selection, sign-in, cookies,
 history, Gmail sessions, and the derived app shim. On a new Mac, open or restart
-Chrome after the first switch, verify `WebAppInstallForceList` in
-`chrome://policy`, and reload the Dock after Gmail.app appears. Activation
+Chrome after the first switch, verify `WebAppInstallForceList` and
+`ExtensionInstallForcelist` in `chrome://policy`, and reload the Dock after
+Gmail.app appears. Activation
 refuses to overwrite a Chrome policy file it did not create or that changed
 outside nix-config.
 

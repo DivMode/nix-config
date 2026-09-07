@@ -71,8 +71,7 @@ script refreshes them on a full run or by name: the Claude Code CLI
 (`modules/home/claude-code-pin.json`, from Anthropic's release bucket, on
 `update.sh llm-agents`), and the stillpane release (the vendored cask in
 `taps/homebrew-pinned` and the `stillpane-src` tag in `flake.nix`, moved
-together from the project's latest GitHub release after the dmg's Developer ID
-signature is verified, on `update.sh stillpane`).
+together from the project's latest GitHub release, on `update.sh stillpane`).
 
 ChatGPT.app, which carries the `codex` CLI, is not moved by this script at
 all. It is a self-updating cask: Sparkle inside the app follows OpenAI's own

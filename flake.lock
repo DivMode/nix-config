@@ -301,7 +301,8 @@
         "mattpocock-skills": "mattpocock-skills",
         "nix-darwin": "nix-darwin",
         "nix-homebrew": "nix-homebrew",
-        "nixpkgs": "nixpkgs_2"
+        "nixpkgs": "nixpkgs_2",
+        "stillpane-src": "stillpane-src"
       }
     },
     "rust-overlay": {
@@ -322,6 +323,23 @@
       "original": {
         "owner": "oxalica",
         "repo": "rust-overlay",
+        "type": "github"
+      }
+    },
+    "stillpane-src": {
+      "flake": false,
+      "locked": {
+        "lastModified": 1788130185,
+        "narHash": "sha256-oKVSXQ2KE4xMZz/7I+RUyhriNHjCgGUV81Cq7nOyRbY=",
+        "owner": "yayamaz",
+        "repo": "stillpane",
+        "rev": "557146f1b811c7f5b633c2a3a42d706fc975e212",
+        "type": "github"
+      },
+      "original": {
+        "owner": "yayamaz",
+        "ref": "v1.1.1",
+        "repo": "stillpane",
         "type": "github"
       }
     },

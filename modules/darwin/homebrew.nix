@@ -24,6 +24,7 @@ let
   # homebrew.casks like every other cask.
   pinnedCasks = {
     thaw = ../../taps/homebrew-pinned/Casks/thaw.rb;
+    stillpane = ../../taps/homebrew-pinned/Casks/stillpane.rb;
   };
 
   # Mirrors how nix-darwin's own homebrew activation invokes brew: PATH
@@ -250,6 +251,31 @@ in
       # stay manual, documented there: the one-time permission grants Thaw asks
       # for, and which icons live in which section (⌘-drag in the menu bar).
       "nix-config/pinned/thaw"
+
+      # Menu bar app that captures the frontmost window — screenshot plus its
+      # accessibility tree as markdown — for the next Claude Code prompt. It is
+      # served from the in-repo tap for a different reason than Thaw: NO
+      # upstream cask exists, and the third-party tap its README names
+      # (yayamaz/tap) did not exist on 2026-09-06. See the cask header at
+      # taps/homebrew-pinned/Casks/stillpane.rb for the evidence.
+      #
+      # The Claude Code side — the hooks and `/stillpane` skill — is NOT
+      # installed by the app's setup assistant. That assistant runs `claude
+      # plugin marketplace add` and `claude plugin install`, which write mutable
+      # state under ~/.claude; modules/home/ai loads the same plugin from the
+      # `stillpane-src` flake input instead. Skip the "Claude Code" step of the
+      # assistant; the hooks are already loaded. Its Check Setup will still
+      # report the plugin as missing, because it looks for the id
+      # `stillpane@stillpane` in `claude plugin list --json` and a plugin
+      # loaded with --plugin-dir is listed as `stillpane@inline`
+      # (Sources/Stillpane/ClaudeCLI.swift, installedPluginVersion). That
+      # report is wrong here and the app works regardless.
+      #
+      # Two macOS permissions stay manual, as with every app that needs them:
+      # Accessibility (window text) and Screen Recording (the screenshot). The
+      # app also registers itself as a login item on first launch; that is the
+      # app's own state, not declared here. See docs/state-boundary.md.
+      "nix-config/pinned/stillpane"
 
       # The desktop app provides authentication and the CLI is a separate
       # vendor bundle; installing it does not enable secret injection.

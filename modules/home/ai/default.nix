@@ -102,6 +102,31 @@ let
     ${concatMapStringsSep "\n" (name: "rm -rf $out/skills/${name}") gcxSkillsExcluded}
   '';
 
+  # stillpane's Claude Code plugin, for Claude Code only: the repository root
+  # IS the plugin (.claude-plugin/plugin.json, hooks/, skills/). Its two hooks
+  # attach a fresh window capture from ~/.claude/stillpane/ to the next prompt
+  # and approve reading it without a permission dialog; `/stillpane` pulls in
+  # an older capture. Not mirrored into Codex: the hooks are Claude Code hook
+  # manifests and the capture directory is Claude Code's.
+  #
+  # Only the plugin's own files are copied; the Swift sources, tests and
+  # assets beside them are the app, not the plugin, and Claude Code has no
+  # business scanning them.
+  #
+  # The `stillpane-install` skill is left out. It downloads the release dmg and
+  # copies the app into /Applications by hand, which is exactly the imperative
+  # install the `nix-config/pinned/stillpane` cask in modules/darwin/homebrew.nix
+  # replaces — two installers for one path would fight over it. Leaving it out
+  # also drops the hook's one-time "install it?" offer, which keys on
+  # /Applications/stillpane.app being absent.
+  stillpaneClaudePlugin = pkgs.runCommand "stillpane-claude-plugin" { } ''
+    mkdir -p $out/skills
+    cp -r ${inputs.stillpane-src}/.claude-plugin $out/
+    cp -r ${inputs.stillpane-src}/hooks $out/
+    cp -r ${inputs.stillpane-src}/skills/stillpane $out/skills/
+    cp ${inputs.stillpane-src}/LICENSE ${inputs.stillpane-src}/NOTICE $out/
+  '';
+
   # The same gcx skills for Codex. Upstream's official cross-agent path is
   # `gcx agent skills install --all`, which copies this identical bundle (the
   # binary embeds claude-plugin/skills/, its canonical source) into
@@ -374,6 +399,7 @@ in
       plugins = [
         mattPocockSkills
         gcxClaudePlugin
+        stillpaneClaudePlugin
       ];
 
       context = instructions.text;

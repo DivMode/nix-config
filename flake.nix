@@ -66,6 +66,23 @@
       flake = false;
     };
 
+    # stillpane's Claude Code plugin: the UserPromptSubmit hook that attaches a
+    # window capture to the next prompt, the PreToolUse hook that approves
+    # reading it, and the `/stillpane` skill. Upstream's install path is
+    # `/plugin marketplace add yayamaz/stillpane`, which writes mutable state
+    # under ~/.claude; modules/home/ai loads this tree with `--plugin-dir`
+    # instead, exactly like gcx-src above. The menu bar app itself is a
+    # Homebrew cask (taps/homebrew-pinned/Casks/stillpane.rb).
+    #
+    # Pinned to the same release tag as that cask, deliberately: the hook and
+    # the app share a capture directory layout, and upstream ships them from
+    # one repository at one version. Move both together. Apache-2.0,
+    # referenced not vendored.
+    stillpane-src = {
+      url = "github:yayamaz/stillpane/v1.1.1";
+      flake = false;
+    };
+
     nix-homebrew.url = "github:zhaofengli/nix-homebrew";
 
     homebrew-core = {

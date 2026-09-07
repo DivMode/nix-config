@@ -261,15 +261,10 @@ in
       #
       # The Claude Code side — the hooks and `/stillpane` skill — is NOT
       # installed by the app's setup assistant. That assistant runs `claude
-      # plugin marketplace add` and `claude plugin install`, which write mutable
-      # state under ~/.claude; modules/home/ai loads the same plugin from the
-      # `stillpane-src` flake input instead. Skip the "Claude Code" step of the
-      # assistant; the hooks are already loaded. Its Check Setup will still
-      # report the plugin as missing, because it looks for the id
-      # `stillpane@stillpane` in `claude plugin list --json` and a plugin
-      # loaded with --plugin-dir is listed as `stillpane@inline`
-      # (Sources/Stillpane/ClaudeCLI.swift, installedPluginVersion). That
-      # report is wrong here and the app works regardless.
+      # plugin marketplace add` against GitHub; modules/home/stillpane.nix
+      # runs the same install against a marketplace built in the store from
+      # the `stillpane-src` flake input, at activation. The assistant's
+      # "Connect Claude Code" step then finds the plugin and offers Continue.
       #
       # Two macOS permissions stay manual, as with every app that needs them:
       # Accessibility (window text) and Screen Recording (the screenshot). The

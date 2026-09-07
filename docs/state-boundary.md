@@ -31,7 +31,9 @@ was never stored in a declarative or provider-backed system.
   declares only that the extension is installed
 - stillpane's macOS Accessibility and Screen Recording approvals, its login
   item, and the captures under `~/.claude/stillpane/`; its app and its Claude
-  Code plugin are declarative
+  Code plugin are declarative. The plugin's registration and cached copy under
+  `~/.claude/plugins/` are Claude Code's own files, regenerated from the
+  declaration at activation whenever they are missing or differ
 - Application databases, caches, logs, indexes, and temporary files
 - Codex configuration outside the narrow declared preference layer, including
   project trust, plugins, marketplaces, generated paths, and desktop state

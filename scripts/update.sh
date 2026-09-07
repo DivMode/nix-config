@@ -12,13 +12,16 @@
 # lock bump on main (branch, PR, squash-merge) so the machine and the
 # repository do not drift apart.
 #
-#   ./scripts/update.sh                       # every input and the claude-code pin
+#   ./scripts/update.sh                       # every input and every pin
 #   ./scripts/update.sh homebrew-cask         # just the Homebrew casks
+#   ./scripts/update.sh stillpane             # just the stillpane release
 #   ./scripts/update.sh --dry-run             # update the lock, do not activate
 #
-# One version is pinned by a file of this repository's own rather than by the
-# lock, and this script refreshes it too: the claude-code pin, from Anthropic's
-# release bucket, on a full run or an explicit `llm-agents`.
+# Two versions are pinned by files of this repository's own rather than by the
+# lock, and this script refreshes those too, on a full run or by name: the
+# claude-code pin, from Anthropic's release bucket (`llm-agents`), and the
+# stillpane release, which is a vendored cask AND a flake input tag moved
+# together from the project's latest GitHub release (`stillpane`).
 #
 # Most declared casks carry Homebrew's `auto_updates` flag and update themselves,
 # so they are unaffected either way — ChatGPT.app, which carries the codex CLI,
@@ -39,10 +42,15 @@ fi
 export NIX_CONFIG_LOCAL="$repository/local.nix"
 
 dryRun=false
+refreshStillpane=false
 inputs=()
 for argument in "$@"; do
   case "$argument" in
     --dry-run) dryRun=true ;;
+    # Not a plain flake input: the stillpane release is a vendored cask plus
+    # the tag on the stillpane-src input, refreshed together below. Kept out
+    # of `inputs` so `nix flake update` never sees a name it cannot move.
+    stillpane|stillpane-src) refreshStillpane=true ;;
     -*)
       echo "error: unknown option $argument" >&2
       exit 1
@@ -51,12 +59,19 @@ for argument in "$@"; do
   esac
 done
 
-# No arguments at all means everything: every lock input AND the claude-code
-# pin. An explicit list moves exactly what it names.
+# No arguments at all means everything: every lock input AND every pin. An
+# explicit list moves exactly what it names.
 fullUpdate=false
-if (( ${#inputs[@]} == 0 )); then
+if (( ${#inputs[@]} == 0 )) && [[ "$refreshStillpane" == false ]]; then
   fullUpdate=true
+  refreshStillpane=true
 fi
+
+# The version a vendored cask pins: the first `version "…"` line of the cask
+# file, the same rule modules/darwin/homebrew.nix applies at evaluation time.
+caskVersion() {
+  sed -n 's/^ *version "\([^"]*\)".*/\1/p' "$1" | head -n 1
+}
 
 host="${HOST:-example-mac}"
 
@@ -71,6 +86,8 @@ host="${HOST:-example-mac}"
 # reports each tag pin against the latest upstream release, one line per pin,
 # and prints failures rather than skipping silently: a check that cannot run
 # must not read as "everything current".
+# stillpane-src is a tag pin too, but this script moves it (see the stillpane
+# section below), so it is reported there and left out of this list.
 echo "==> Tag-pinned inputs (moved by editing flake.nix, not by this script)"
 if ! command -v jq >/dev/null 2>&1; then
   echo "    warning: jq not found — cannot check tag-pin staleness" >&2
@@ -102,6 +119,7 @@ else
     | ($nodes.root.inputs | [to_entries[].value]) as $rootKeys
     | $nodes | to_entries[]
     | select(.key != "root"
+             and .key != "stillpane-src"
              and .value.original.type == "github"
              and ((.value.original.ref // "") | test("^v?[0-9]")))
     | .key as $k
@@ -170,7 +188,22 @@ describeLockMoves() {
 # rather than what was requested. Every file this script may move is listed in
 # versionFiles: the lock, and the pin this repository keeps itself.
 claudePin="modules/home/claude-code-pin.json"
-versionFiles=(flake.lock "$claudePin")
+stillpaneCask="taps/homebrew-pinned/Casks/stillpane.rb"
+versionFiles=(flake.lock "$claudePin" "$stillpaneCask")
+
+# The stillpane refresh also rewrites the tag in flake.nix, so on a run that
+# refreshes it flake.nix is one of the files this script owns and lands. It
+# is added ONLY on those runs, and only when flake.nix is clean: the landing
+# step commits every file in versionFiles, and an unrelated edit sitting in
+# flake.nix must never be swept into an automated version bump.
+if [[ "$refreshStillpane" == true ]]; then
+  if ! git diff --quiet HEAD -- flake.nix; then
+    echo "error: flake.nix has uncommitted changes; not moving the stillpane tag over them." >&2
+    echo "Commit or stash them, or run without 'stillpane' / with explicit inputs." >&2
+    exit 1
+  fi
+  versionFiles+=(flake.nix)
+fi
 before="$(mktemp -d)"
 trap 'rm -rf "$before"' EXIT
 for file in "${versionFiles[@]}"; do
@@ -232,6 +265,73 @@ if [[ "$refreshClaudePin" == true ]]; then
   fi
 fi
 
+
+# ── stillpane: cask and plugin tag, moved together from the latest release ──
+# stillpane is two pins that must agree: the vendored cask in the in-repo
+# tap (no upstream cask exists — see the cask header) and the tag on the
+# stillpane-src flake input, which feeds the Claude Code plugin the same
+# release ships. The app's own Check Setup compares the two, so they move as
+# one, from one source: the project's latest GitHub release.
+#
+# The dmg is downloaded once, hashed for the cask, and — before anything is
+# rewritten — mounted and checked against the same codesign requirement the
+# project's own installer skill enforces: stillpane's bundle identifier under
+# its Developer Team ID. A release that fails that check is not adopted, and
+# the run says so; a hash alone would faithfully pin whatever was uploaded.
+#
+# Nothing here reaches the Mac's installed copy. The cask moves at the next
+# activation; the plugin is reinstalled by modules/home/stillpane.nix when
+# the store copy changes.
+stillpaneRepo="yayamaz/stillpane"
+stillpaneRequirement='=anchor apple generic and identifier "app.stillpane.Stillpane" and certificate leaf[subject.OU] = "7NV7GLDW87"'
+if [[ "$refreshStillpane" == true ]]; then
+  stillpaneBefore="$(caskVersion "$stillpaneCask")"
+  stillpaneTag=""
+  if command -v gh >/dev/null 2>&1; then
+    stillpaneTag="$(gh api "repos/${stillpaneRepo}/releases/latest" --jq '.tag_name' 2>/dev/null || true)"
+  fi
+  if [[ -z "$stillpaneTag" ]]; then
+    stillpaneTag="$(curl -fsSL --max-time 15 "https://api.github.com/repos/${stillpaneRepo}/releases/latest" 2>/dev/null \
+      | jq -r '.tag_name // empty' 2>/dev/null || true)"
+  fi
+  if [[ ! "$stillpaneTag" =~ ^v[0-9]+(\.[0-9]+)+$ ]]; then
+    echo "    warning: could not determine the latest stillpane release; stillpane stays at ${stillpaneBefore}" >&2
+  elif [[ "${stillpaneTag#v}" == "$stillpaneBefore" ]]; then
+    echo "==> stillpane: ${stillpaneBefore} (current)"
+  else
+    stillpaneVersion="${stillpaneTag#v}"
+    stillpaneTmp="$(mktemp -d -t stillpane)"
+    stillpaneDmg="$stillpaneTmp/stillpane.dmg"
+    stillpaneMount="$stillpaneTmp/mount"
+    mkdir -p "$stillpaneMount"
+    stillpaneOk=false
+    if curl -fsSL --max-time 120 -o "$stillpaneDmg" \
+        "https://github.com/${stillpaneRepo}/releases/download/${stillpaneTag}/stillpane-${stillpaneVersion}.dmg" \
+      && /usr/bin/hdiutil attach -nobrowse -readonly -quiet -mountpoint "$stillpaneMount" "$stillpaneDmg"; then
+      if /usr/bin/codesign --verify --strict --deep -R "$stillpaneRequirement" "$stillpaneMount/stillpane.app" 2>/dev/null \
+        && [[ "$(/usr/bin/defaults read "$stillpaneMount/stillpane.app/Contents/Info.plist" CFBundleShortVersionString 2>/dev/null)" == "$stillpaneVersion" ]]; then
+        stillpaneOk=true
+      fi
+      /usr/bin/hdiutil detach -quiet "$stillpaneMount" || true
+    fi
+    if [[ "$stillpaneOk" == true ]]; then
+      stillpaneSha="$(/usr/bin/shasum -a 256 "$stillpaneDmg" | /usr/bin/awk '{ print $1 }')"
+      sed -i '' \
+        -e "s/^  version \".*\"/  version \"${stillpaneVersion}\"/" \
+        -e "s/^  sha256 \".*\"/  sha256 \"${stillpaneSha}\"/" \
+        "$stillpaneCask"
+      sed -i '' \
+        -e "s|github:${stillpaneRepo}/v[0-9][0-9.]*\"|github:${stillpaneRepo}/${stillpaneTag}\"|" \
+        flake.nix
+      nix flake update stillpane-src
+      echo "==> stillpane: ${stillpaneBefore} -> ${stillpaneVersion} (cask and plugin tag)"
+    else
+      echo "    warning: stillpane ${stillpaneTag} did not verify as a build of app.stillpane.Stillpane signed by team 7NV7GLDW87 at that version; stillpane stays at ${stillpaneBefore}" >&2
+    fi
+    rm -rf "$stillpaneTmp"
+  fi
+fi
+
 unchanged=true
 for file in "${versionFiles[@]}"; do
   /usr/bin/cmp -s "$before/$file" "$file" || unchanged=false
@@ -241,13 +341,16 @@ if [[ "$unchanged" == true ]]; then
   exit 0
 fi
 
-# One line for the claude-code pin if it moved, old -> new, given the old
-# CONTENTS of the pin file (a snapshot here, HEAD's copy for the landing step).
+# One line per moved pin, old -> new, given the old CONTENTS of each pin file
+# (a snapshot here, HEAD's copy for the landing step).
 describePinMoves() {
-  local oldClaude="$1" was now
+  local oldClaude="$1" oldStillpane="$2" was now
   was="$(jq -r .version <<<"$oldClaude")"
   now="$(jq -r .version "$claudePin")"
   [[ "$was" != "$now" ]] && echo "    claude-code: ${was} -> ${now}"
+  was="$(caskVersion <(printf '%s\n' "$oldStillpane"))"
+  now="$(caskVersion "$stillpaneCask")"
+  [[ "$was" != "$now" ]] && echo "    stillpane: ${was} -> ${now}"
   return 0
 }
 
@@ -255,7 +358,7 @@ echo
 echo "==> What moved"
 if command -v jq >/dev/null 2>&1; then
   describeLockMoves "$before/flake.lock"
-  describePinMoves "$(cat "$before/$claudePin")"
+  describePinMoves "$(cat "$before/$claudePin")" "$(cat "$before/$stillpaneCask")"
 else
   git --no-pager diff --stat -- "${versionFiles[@]}" || true
 fi
@@ -333,7 +436,7 @@ if command -v jq >/dev/null 2>&1; then
   headLock="$(mktemp)"
   git show HEAD:flake.lock > "$headLock"
   moved="$(
-    describePinMoves "$(git show "HEAD:$claudePin")"
+    describePinMoves "$(git show "HEAD:$claudePin")" "$(git show "HEAD:$stillpaneCask")"
     describeLockMoves "$headLock" || echo "    (listing failed)"
   )"
   rm -f "$headLock"

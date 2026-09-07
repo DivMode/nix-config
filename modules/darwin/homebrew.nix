@@ -311,10 +311,11 @@ in
       # whitelist. ./sudo.nix's sudo.conf entry is NOT sufficient on its own:
       # that path is consulted only when -A is passed.
       #
-      # Be clear about what this buys. It does not make activation unattended —
-      # it converts a hard failure into a password dialog. Any rebuild that
-      # installs or upgrades a pkg cask will WAIT for someone to answer it.
-      # Rebuilds that touch no pkg cask are unaffected.
+      # Be clear about what this buys on its own. It does not make activation
+      # unattended — it converts a hard failure into a password dialog. What
+      # keeps that dialog from being drawn is the NOPASSWD:SETENV entry in
+      # ./sudo.nix; SETENV matters because the same sudo_prefix always passes
+      # -E, which sudoers refuses on an entry without that tag.
       extraEnv.SUDO_ASKPASS = "${sudoAskpass}";
 
       # Bring installed casks up to the version the pinned tap defines.

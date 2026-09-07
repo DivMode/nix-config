@@ -44,14 +44,18 @@ otherwise runs at every login and every 3.5 hours, and the in-app
 the other's gap, so both are declared.
 
 A `pkg` cask — `karabiner-elements`, `adobe-acrobat-pro`, `logi-options+` — is
-installed by handing its payload to `/usr/sbin/installer` as root, which
-activation cannot do from a shell with no terminal. `homebrew.nix` supplies
+installed by handing its payload to `/usr/sbin/installer` as root, and removed
+or upgraded through the vendor's own scripts, `launchctl`, `pkgutil`, and `rm`,
+all as root and all with sudo's `-E`. Activation cannot answer for any of that
+from a shell with no terminal. `homebrew.nix` supplies
 `onActivation.extraEnv.SUDO_ASKPASS` so Homebrew passes sudo's `-A`, and
-`sudo.nix` declares a NOPASSWD rule for `/usr/sbin/installer` and
-`/usr/sbin/pkgutil` so the dialog is never drawn. Both are needed: without the
-first, activation aborts mid-switch with *a terminal is required to read the
-password*; without the second it stops on a prompt. `askpass.nix` owns the
-single askpass helper both consumers share.
+`sudo.nix` declares a `NOPASSWD:SETENV: ALL` entry so no dialog is drawn. Both
+are needed: without the first, activation aborts mid-switch with *a terminal is
+required to read the password*; without the second it stops on a prompt. The
+entry is deliberately not a list of binaries — the earlier one, which named
+`installer` and `pkgutil` without SETENV, refused Homebrew's `-E` outright and
+broke a Karabiner upgrade half-way on 2026-09-06; `sudo.nix` carries the
+evidence. `askpass.nix` owns the single askpass helper both consumers share.
 
 Anthropic's Claude Code terminal CLI is **not** a cask here. It is a Nix
 package from the `llm-agents` flake input, because the cask lags the upstream

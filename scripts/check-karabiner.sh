@@ -80,8 +80,14 @@ else
 fi
 
 # 6. The definitive check: is the keyboard actually grabbed?
+#
+# The line's wording moved with Karabiner 16.3.0: up to 16.2.0 the core service
+# logged "hid queue value monitor is started (grabbed)", from 16.3.0 it logs
+# "hid device events monitor is started (grabbed)" (both present in this Mac's
+# core_service.log across the 2026-09-06 upgrade). Match the stable suffix so a
+# wording change does not report a working grab as a failure again.
 log=/var/log/karabiner/core_service.log
-if [[ -r "$log" ]] && tail -50 "$log" 2>/dev/null | grep -q "hid queue value monitor is started (grabbed)"; then
+if [[ -r "$log" ]] && tail -50 "$log" 2>/dev/null | grep -q "monitor is started (grabbed)"; then
   pass "keyboard grabbed — remapping is live"
 elif [[ -r "$log" ]] && tail -50 "$log" 2>/dev/null | grep -q "required permissions are not granted"; then
   fail "device_grabber not started — permissions" \

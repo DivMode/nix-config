@@ -76,8 +76,10 @@
     #
     # Pinned to the same release tag as that cask, deliberately: the hook and
     # the app share a capture directory layout, and upstream ships them from
-    # one repository at one version. Move both together. Apache-2.0,
-    # referenced not vendored.
+    # one repository at one version. Unlike the other tag pins, this one is
+    # NOT moved by editing it here: `./scripts/update.sh` (full run, or
+    # `update.sh stillpane`) rewrites this tag and the cask together from the
+    # latest GitHub release. Apache-2.0, referenced not vendored.
     stillpane-src = {
       url = "github:yayamaz/stillpane/v1.1.1";
       flake = false;

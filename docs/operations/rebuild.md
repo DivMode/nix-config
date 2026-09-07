@@ -60,14 +60,19 @@ edit a version by hand**; `nix flake update` rewrites the lock for you, and the
 pin is the receipt of what was pulled, not something you maintain.
 
 ```sh
-./scripts/update.sh                  # every input and the Claude Code pin, then build and activate
+./scripts/update.sh                  # every input and every pin, then build and activate
 ./scripts/update.sh homebrew-cask    # only the Homebrew casks
+./scripts/update.sh stillpane        # only the stillpane release (cask and plugin tag)
 ./scripts/update.sh --dry-run        # move the versions and build, do not activate
 ```
 
-One version lives outside the lock, in a file this repository owns, and the
-script refreshes it on a full run or on `update.sh llm-agents`: the Claude Code
-CLI (`modules/home/claude-code-pin.json`, from Anthropic's release bucket).
+Two versions live outside the lock, in files this repository owns, and the
+script refreshes them on a full run or by name: the Claude Code CLI
+(`modules/home/claude-code-pin.json`, from Anthropic's release bucket, on
+`update.sh llm-agents`), and the stillpane release (the vendored cask in
+`taps/homebrew-pinned` and the `stillpane-src` tag in `flake.nix`, moved
+together from the project's latest GitHub release after the dmg's Developer ID
+signature is verified, on `update.sh stillpane`).
 
 ChatGPT.app, which carries the `codex` CLI, is not moved by this script at
 all. It is a self-updating cask: Sparkle inside the app follows OpenAI's own

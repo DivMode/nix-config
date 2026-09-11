@@ -130,7 +130,46 @@ in
         # across a reboot and an activation. `-g` avoids stealing focus, `-j`
         # starts it hidden.
         run /usr/bin/pkill -x LinearMouse || true
-        run /usr/bin/open -gj /Applications/LinearMouse.app
+
+        # Wait until LAUNCHSERVICES has forgotten the old instance, not merely
+        # until the process is gone. `open` without `-n` asks LaunchServices
+        # for the bundle's running instance first, and LaunchServices learns
+        # of a death asynchronously, from launchd, a little after the kernel
+        # does. Measured on 2026-09-11: SIGTERM to process exit 49 ms; to
+        # LaunchServices dropping the registration 88 ms. `pkill` returns as
+        # soon as the signal is sent, so the old code's `open` arrived inside
+        # that gap — 31 ms after the exit on the 13:10 rebuild that day —
+        # matched the dead instance, sent it a reopen AppleEvent, and failed:
+        #
+        #   _LSOpenURLsWithCompletionHandler() failed with error -600.
+        #
+        # -600 is procNotFound. Nothing was relaunched, `open` exited 1, and
+        # because activation runs under `set -e` every entry after this one
+        # was skipped too. `lsappinfo find` reads the same registry `open`
+        # consults, so an empty answer is exactly the condition under which
+        # `open` will start a fresh instance.
+        #
+        # A relaunch failure is reported, not fatal. The entries ordered after
+        # this one (launch agents, default handlers) have nothing to do with a
+        # mouse utility, and silently skipping them is the worse outcome — the
+        # same reasoning as the registry guard in herdr/default.nix.
+        #
+        # Under DRY_RUN nothing was killed, so the wait could only time out;
+        # `run` echoes the relaunch instead.
+        if [[ -v DRY_RUN ]]; then
+          run /usr/bin/open -gj /Applications/LinearMouse.app
+        else
+          for _ in {1..100}; do
+            [[ -n "$(/usr/bin/lsappinfo find bundleid=com.lujjjh.LinearMouse)" ]] || break
+            /bin/sleep 0.05
+          done
+          if [[ -n "$(/usr/bin/lsappinfo find bundleid=com.lujjjh.LinearMouse)" ]]; then
+            warnEcho "LinearMouse is still running 5 s after SIGTERM; leaving that instance in place with its old settings"
+          else
+            run /usr/bin/open -gj /Applications/LinearMouse.app \
+              || warnEcho "LinearMouse could not be relaunched; start it by hand, or rebuild again"
+          fi
+        fi
       '';
 
   # These keys are LinearMouse's own documented Defaults values rather than part

@@ -197,6 +197,18 @@ in the place it was applied.
 
 Never expose secrets or private user data.
 
+## Credentials
+
+The owner's credentials are not the repository's. Never invoke the 1Password
+CLI (`op`) from an agent command, never unset, strip or override an `OP_*`
+variable, never read `~/.config/op/`, and never reach for the desktop app,
+biometric, or signed-in session. Secrets come only through the repository's
+own loader, which uses the self-hosted Connect server; if that loader fails
+for any reason, including a quota or rate limit, stop and report. Do not find
+another credential, do not write a wrapper that reads secrets another way. The
+hook guard denies these commands before they run; a denial here is never a
+false positive.
+
 ## Blocked tooling
 
 A hook or guard that blocks you is reporting a problem, not obstructing you.

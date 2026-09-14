@@ -106,6 +106,39 @@ def split_segments(command):
     return [s for s in re.split(r"&&|\|\||[;&|\n]", command) if s.strip()]
 
 
+# The owner's credentials are not the repository's. On 2026-09-14 an agent hit
+# the 1Password service account's quota and "worked around" it by unsetting the
+# token so `op` fell back to the signed-in desktop session, which raised an
+# authorisation dialog on the owner's screen for every process. These rules
+# deny that class of command before it runs: invoking the `op` CLI at all,
+# unsetting or overriding an OP_* variable, and reading ~/.config/op. Secrets
+# reach a repository only through its own loader (Connect); a failure there is
+# a stop, never a search for another credential.
+OP_VARIABLE_RE = re.compile(
+    r"(?:^|[\s;&|(])(?:env\s+(?:-\S+\s+)*-u\s+OP_|unset\s+(?:-\S+\s+)*OP_|"
+    r"(?:export\s+)?OP_(?:SERVICE_ACCOUNT_TOKEN|CONNECT_HOST|CONNECT_TOKEN|SESSION_[A-Za-z0-9_]+)=)"
+)
+OP_CONFIG_RE = re.compile(
+    r"(?:~|\$HOME|\$\{HOME\}|" + re.escape(HOME) + r")/\.config/op(?:/|\b)"
+)
+
+
+def credential_boundary(raw, prog):
+    """Deny commands that reach past the repository's secrets loader."""
+    if prog == "op":
+        return ("Blocked: the 1Password CLI (`op`) is never invoked from an agent command. "
+                "Secrets come only through the repository's own loader (Connect). "
+                "If it fails, stop and report; do not find another credential.")
+    if OP_VARIABLE_RE.search(raw):
+        return ("Blocked: unsetting or overriding an OP_* variable. The repository's secrets "
+                "loader owns 1Password access; nothing may strip its token or point it "
+                "at another session.")
+    if OP_CONFIG_RE.search(raw):
+        return ("Blocked: ~/.config/op holds the owner's 1Password credentials. Agents do "
+                "not read or write it; the repository's loader reads what it needs itself.")
+    return None
+
+
 def check(segment):
     raw = segment.strip()
     try:
@@ -120,6 +153,14 @@ def check(segment):
         head = os.path.basename(tokens[0])
         if head in WRAPPERS or re.match(r"^[A-Za-z_][A-Za-z0-9_]*=", tokens[0]):
             tokens = tokens[1:]
+            # A wrapper's own flags (`env -u NAME`, `env -i`, `sudo -E`,
+            # `nohup -p`) are not the program; skip them, and the argument of
+            # the flags that take one, so the real program is what gets judged.
+            while tokens and tokens[0].startswith("-"):
+                flag = tokens.pop(0)
+                if flag in {"-u", "--unset", "-C", "--chdir", "-S", "--split-string",
+                            "-p", "--prompt", "-g", "--group", "-h", "--host"} and tokens:
+                    tokens.pop(0)
             continue
         break
     if not tokens:
@@ -129,6 +170,10 @@ def check(segment):
     args = tokens[1:]
     flagless = [a for a in args if not a.startswith("-")]
     sub = flagless[0] if flagless else ""
+
+    credential = credential_boundary(raw, prog)
+    if credential:
+        return credential
 
     if prog in ALLOWED_PROGRAMS:
         return None

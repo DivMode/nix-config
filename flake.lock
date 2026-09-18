@@ -91,16 +91,16 @@
     "gcx-src": {
       "flake": false,
       "locked": {
-        "lastModified": 1787660179,
-        "narHash": "sha256-Dlg0HT/tW4+nCHLVZHaQR++sR2DRh+00Ueh8cVVSdyM=",
+        "lastModified": 1789376254,
+        "narHash": "sha256-F5IVa4Vb1TS4nqTtfJRc3GTGivwZsy/jrDaAcsvA8+o=",
         "owner": "grafana",
         "repo": "gcx",
-        "rev": "efde19fe31e4f9ea031b6ac24a3d4e05dbad6b7b",
+        "rev": "2c086395f972f59d12c35b2fb7d69f174a4f26bd",
         "type": "github"
       },
       "original": {
         "owner": "grafana",
-        "ref": "v1.2.0",
+        "ref": "v1.3.0",
         "repo": "gcx",
         "type": "github"
       }

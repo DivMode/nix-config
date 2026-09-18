@@ -102,10 +102,6 @@ let
     ${concatMapStringsSep "\n" (name: "rm -rf $out/skills/${name}") gcxSkillsExcluded}
   '';
 
-  # stillpane's Claude Code plugin is NOT in `plugins` below. It is installed
-  # through a marketplace from ../stillpane.nix, because the stillpane app's
-  # setup only recognises the id a marketplace install produces; see there.
-
   # The same gcx skills for Codex. Upstream's official cross-agent path is
   # `gcx agent skills install --all`, which copies this identical bundle (the
   # binary embeds claude-plugin/skills/, its canonical source) into

@@ -17,7 +17,6 @@
 #
 #   nixup                    # every input and every pin
 #   nixup claude             # Claude Code: the llm-agents input and the pin
-#   nixup stillpane          # the stillpane release: cask and plugin tag
 #   nixup codex              # ChatGPT/Codex: the cask definition, plus where the app stands
 #   nixup homebrew-cask      # any flake input by its name in flake.nix
 #   nixup --dry-run          # move the versions and build, do not activate
@@ -27,11 +26,9 @@
 # A name that is neither an application nor a flake input is refused with the
 # list of both, rather than handed to nix to fail on.
 #
-# Two versions are pinned by files of this repository's own rather than by the
-# lock, and this script refreshes those too, on a full run or by name: the
-# claude-code pin, from Anthropic's release bucket (`claude`), and the
-# stillpane release, which is a vendored cask AND a flake input tag moved
-# together from the project's latest GitHub release (`stillpane`).
+# One version is pinned by a file of this repository's own rather than by the
+# lock, and this script refreshes that too, on a full run or by name: the
+# claude-code pin, from Anthropic's release bucket (`claude`).
 #
 # Most declared casks carry Homebrew's `auto_updates` flag and update themselves,
 # so they are unaffected either way — ChatGPT.app, which carries the codex CLI,
@@ -52,7 +49,6 @@ fi
 export NIX_CONFIG_LOCAL="$repository/local.nix"
 
 dryRun=false
-refreshStillpane=false
 inputs=()
 # Every direct flake input, from the lock rather than a hand-kept list, so a
 # new input is accepted the moment it is locked.
@@ -71,10 +67,6 @@ for argument in "$@"; do
     # report section below then says where the installed app stands and that
     # launching it is how it moves.
     codex|chatgpt) inputs+=(homebrew-cask) ;;
-    # Not a plain flake input: the stillpane release is a vendored cask plus
-    # the tag on the stillpane-src input, refreshed together below. Kept out
-    # of `inputs` so `nix flake update` never sees a name it cannot move.
-    stillpane|stillpane-src) refreshStillpane=true ;;
     -*)
       echo "error: unknown option $argument" >&2
       exit 1
@@ -82,7 +74,7 @@ for argument in "$@"; do
     *)
       if ! grep -qx -- "$argument" <<<"$knownInputs"; then
         echo "error: '$argument' is neither an application name nor a flake input." >&2
-        echo "applications: claude, codex, stillpane" >&2
+        echo "applications: claude, codex" >&2
         echo "flake inputs: $(tr '\n' ' ' <<<"$knownInputs")" >&2
         exit 1
       fi
@@ -94,16 +86,9 @@ done
 # No arguments at all means everything: every lock input AND every pin. An
 # explicit list moves exactly what it names.
 fullUpdate=false
-if (( ${#inputs[@]} == 0 )) && [[ "$refreshStillpane" == false ]]; then
+if (( ${#inputs[@]} == 0 )); then
   fullUpdate=true
-  refreshStillpane=true
 fi
-
-# The version a vendored cask pins: the first `version "…"` line of the cask
-# file, the same rule modules/darwin/homebrew.nix applies at evaluation time.
-caskVersion() {
-  sed -n 's/^ *version "\([^"]*\)".*/\1/p' "$1" | head -n 1
-}
 
 host="${HOST:-example-mac}"
 
@@ -118,8 +103,6 @@ host="${HOST:-example-mac}"
 # reports each tag pin against the latest upstream release, one line per pin,
 # and prints failures rather than skipping silently: a check that cannot run
 # must not read as "everything current".
-# stillpane-src is a tag pin too, but this script moves it (see the stillpane
-# section below), so it is reported there and left out of this list.
 echo "==> Tag-pinned inputs (moved by editing flake.nix, not by this script)"
 if ! command -v jq >/dev/null 2>&1; then
   echo "    warning: jq not found — cannot check tag-pin staleness" >&2
@@ -151,7 +134,6 @@ else
     | ($nodes.root.inputs | [to_entries[].value]) as $rootKeys
     | $nodes | to_entries[]
     | select(.key != "root"
-             and .key != "stillpane-src"
              and .value.original.type == "github"
              and ((.value.original.ref // "") | test("^v?[0-9]")))
     | .key as $k
@@ -220,22 +202,7 @@ describeLockMoves() {
 # rather than what was requested. Every file this script may move is listed in
 # versionFiles: the lock, and the pin this repository keeps itself.
 claudePin="modules/home/claude-code-pin.json"
-stillpaneCask="taps/homebrew-pinned/Casks/stillpane.rb"
-versionFiles=(flake.lock "$claudePin" "$stillpaneCask")
-
-# The stillpane refresh also rewrites the tag in flake.nix, so on a run that
-# refreshes it flake.nix is one of the files this script owns and lands. It
-# is added ONLY on those runs, and only when flake.nix is clean: the landing
-# step commits every file in versionFiles, and an unrelated edit sitting in
-# flake.nix must never be swept into an automated version bump.
-if [[ "$refreshStillpane" == true ]]; then
-  if ! git diff --quiet HEAD -- flake.nix; then
-    echo "error: flake.nix has uncommitted changes; not moving the stillpane tag over them." >&2
-    echo "Commit or stash them, or run without 'stillpane' / with explicit inputs." >&2
-    exit 1
-  fi
-  versionFiles+=(flake.nix)
-fi
+versionFiles=(flake.lock "$claudePin")
 before="$(mktemp -d)"
 trap 'rm -rf "$before"' EXIT
 for file in "${versionFiles[@]}"; do
@@ -298,56 +265,6 @@ if [[ "$refreshClaudePin" == true ]]; then
 fi
 
 
-# ── stillpane: cask and plugin tag, moved together from the latest release ──
-# stillpane is two pins that must agree: the vendored cask in the in-repo
-# tap and the tag on the stillpane-src flake input, which feeds the Claude
-# Code plugin the same release ships. The app's own Check Setup compares the
-# two, so they move as one, from one source: the project's latest GitHub
-# release.
-#
-# The cask has to state a real sha256 and no published tap provides one (the
-# README's `yayamaz/tap` does not exist — see the cask header), so this does
-# what homebrew-cask's bump bot does for every other cask: download the
-# release asset once, hash it, write the hash. Nothing here reaches the Mac's
-# installed copy; the cask moves at the next activation, and the plugin is
-# reinstalled by modules/home/stillpane.nix when the store copy changes.
-stillpaneRepo="yayamaz/stillpane"
-if [[ "$refreshStillpane" == true ]]; then
-  stillpaneBefore="$(caskVersion "$stillpaneCask")"
-  stillpaneTag=""
-  if command -v gh >/dev/null 2>&1; then
-    stillpaneTag="$(gh api "repos/${stillpaneRepo}/releases/latest" --jq '.tag_name' 2>/dev/null || true)"
-  fi
-  if [[ -z "$stillpaneTag" ]]; then
-    stillpaneTag="$(curl -fsSL --max-time 15 "https://api.github.com/repos/${stillpaneRepo}/releases/latest" 2>/dev/null \
-      | jq -r '.tag_name // empty' 2>/dev/null || true)"
-  fi
-  if [[ ! "$stillpaneTag" =~ ^v[0-9]+(\.[0-9]+)+$ ]]; then
-    echo "    warning: could not determine the latest stillpane release; stillpane stays at ${stillpaneBefore}" >&2
-  elif [[ "${stillpaneTag#v}" == "$stillpaneBefore" ]]; then
-    echo "==> stillpane: ${stillpaneBefore} (current)"
-  else
-    stillpaneVersion="${stillpaneTag#v}"
-    stillpaneDmg="$(mktemp -t stillpane)"
-    if curl -fsSL --max-time 120 -o "$stillpaneDmg" \
-        "https://github.com/${stillpaneRepo}/releases/download/${stillpaneTag}/stillpane-${stillpaneVersion}.dmg"; then
-      stillpaneSha="$(/usr/bin/shasum -a 256 "$stillpaneDmg" | /usr/bin/awk '{ print $1 }')"
-      sed -i '' \
-        -e "s/^  version \".*\"/  version \"${stillpaneVersion}\"/" \
-        -e "s/^  sha256 \".*\"/  sha256 \"${stillpaneSha}\"/" \
-        "$stillpaneCask"
-      sed -i '' \
-        -e "s|github:${stillpaneRepo}/v[0-9][0-9.]*\"|github:${stillpaneRepo}/${stillpaneTag}\"|" \
-        flake.nix
-      nix flake update stillpane-src
-      echo "==> stillpane: ${stillpaneBefore} -> ${stillpaneVersion} (cask and plugin tag)"
-    else
-      echo "    warning: could not download stillpane ${stillpaneTag}; stillpane stays at ${stillpaneBefore}" >&2
-    fi
-    rm -f "$stillpaneDmg"
-  fi
-fi
-
 unchanged=true
 for file in "${versionFiles[@]}"; do
   /usr/bin/cmp -s "$before/$file" "$file" || unchanged=false
@@ -360,13 +277,10 @@ fi
 # One line per moved pin, old -> new, given the old CONTENTS of each pin file
 # (a snapshot here, HEAD's copy for the landing step).
 describePinMoves() {
-  local oldClaude="$1" oldStillpane="$2" was now
+  local oldClaude="$1" was now
   was="$(jq -r .version <<<"$oldClaude")"
   now="$(jq -r .version "$claudePin")"
   [[ "$was" != "$now" ]] && echo "    claude-code: ${was} -> ${now}"
-  was="$(caskVersion <(printf '%s\n' "$oldStillpane"))"
-  now="$(caskVersion "$stillpaneCask")"
-  [[ "$was" != "$now" ]] && echo "    stillpane: ${was} -> ${now}"
   return 0
 }
 
@@ -374,7 +288,7 @@ echo
 echo "==> What moved"
 if command -v jq >/dev/null 2>&1; then
   describeLockMoves "$before/flake.lock"
-  describePinMoves "$(cat "$before/$claudePin")" "$(cat "$before/$stillpaneCask")"
+  describePinMoves "$(cat "$before/$claudePin")"
 else
   git --no-pager diff --stat -- "${versionFiles[@]}" || true
 fi
@@ -452,7 +366,7 @@ if command -v jq >/dev/null 2>&1; then
   headLock="$(mktemp)"
   git show HEAD:flake.lock > "$headLock"
   moved="$(
-    describePinMoves "$(git show "HEAD:$claudePin")" "$(git show "HEAD:$stillpaneCask")"
+    describePinMoves "$(git show "HEAD:$claudePin")"
     describeLockMoves "$headLock" || echo "    (listing failed)"
   )"
   rm -f "$headLock"

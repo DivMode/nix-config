@@ -77,7 +77,7 @@ Two things live outside what `nix flake update` can move, and the script
 moves them on a full run or by name: the Claude Code CLI
 (`modules/home/claude-code-pin.json`, from Anthropic's release bucket, on
 `nixup claude`), and any input pinned to a release tag in `flake.nix` —
-Herdr and gcx — whose tag is rewritten to the latest GitHub release and
+currently gcx — whose tag is rewritten to the latest GitHub release and
 re-locked, with the Go vendor hash in `modules/home/gcx-pin.json` refreshed
 when it changed (`nixup gcx`). A bare `nixup` therefore moves everything this
 repository declares; nothing waits for a hand edit.

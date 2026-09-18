@@ -1,9 +1,9 @@
 # homebrew-pinned
 
 An in-repo Homebrew tap for casks the upstream `homebrew/homebrew-cask` pin
-cannot supply: either because this configuration deliberately holds one at a
-version upstream does not carry (`thaw`), or because no upstream cask exists
-at all (`stillpane`). It is wired into `nix-homebrew` by
+cannot supply: because this configuration deliberately holds one at a version
+upstream does not carry (`thaw`), or because no upstream cask exists at all
+(none currently). It is wired into `nix-homebrew` by
 `modules/darwin/homebrew.nix`, which is also where each pinned cask's
 declaration documents WHY it is here and what removing it takes.
 

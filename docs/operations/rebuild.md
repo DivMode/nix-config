@@ -67,18 +67,15 @@ both.
 ```sh
 nixup                  # every input and every pin, then build and activate
 nixup claude           # only Claude Code: the llm-agents input and the version pin
-nixup stillpane        # only the stillpane release (cask and plugin tag)
 nixup codex            # ChatGPT/Codex: the cask definition, plus where the installed app stands
 nixup homebrew-cask    # any flake input, by its name in flake.nix
 nixup --dry-run        # move the versions and build, do not activate
 ```
 
-Two versions live outside the lock, in files this repository owns, and the
-script refreshes them on a full run or by name: the Claude Code CLI
+One version lives outside the lock, in a file this repository owns, and the
+script refreshes it on a full run or by name: the Claude Code CLI
 (`modules/home/claude-code-pin.json`, from Anthropic's release bucket, on
-`nixup claude`), and the stillpane release (the vendored cask in
-`taps/homebrew-pinned` and the `stillpane-src` tag in `flake.nix`, moved
-together from the project's latest GitHub release, on `nixup stillpane`).
+`nixup claude`).
 
 ChatGPT.app, which carries the `codex` CLI, is not moved by this script at
 all. It is a self-updating cask: Sparkle inside the app follows OpenAI's own

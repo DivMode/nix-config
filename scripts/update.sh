@@ -19,6 +19,7 @@
 #   nixup claude             # Claude Code: the llm-agents input and the pin
 #   nixup codex              # ChatGPT/Codex: the cask definition, plus where the app stands
 #   nixup gcx                # gcx: the release tag in flake.nix and the Go vendor hash
+#   nixup herdr              # Herdr: the llm-agents input that packages it
 #   nixup homebrew-cask      # any flake input by its name in flake.nix
 #   nixup --dry-run          # move the versions and build, do not activate
 #
@@ -31,7 +32,7 @@
 # a full run or by name: the claude-code pin, from Anthropic's release bucket
 # (`claude`), and any input whose URL in flake.nix names a release TAG, which
 # `nix flake update` alone never moves — the tag is rewritten to the latest
-# GitHub release and the input re-locked (`herdr` and `gcx`).
+# GitHub release and the input re-locked (`gcx`, currently the only one).
 # "Every input" means every input: nothing declared here waits for a hand edit.
 #
 # Most declared casks carry Homebrew's `auto_updates` flag and update themselves,
@@ -64,6 +65,9 @@ for argument in "$@"; do
     # Claude Code: the llm-agents input carries the build recipe, and the
     # version pin is refreshed whenever that input is named (see below).
     claude|claude-code) inputs+=(llm-agents) ;;
+    # Herdr is llm-agents' package too (modules/home/herdr), served prebuilt
+    # from numtide's cache.
+    herdr) inputs+=(llm-agents) ;;
     # ChatGPT.app, which bundles the codex CLI, updates itself through Sparkle
     # and nothing declarative can hold or move it (modules/darwin/homebrew.nix,
     # `chatgpt`). What this repository owns is the cask DEFINITION a fresh
@@ -80,7 +84,7 @@ for argument in "$@"; do
     *)
       if ! grep -qx -- "$argument" <<<"$knownInputs"; then
         echo "error: '$argument' is neither an application name nor a flake input." >&2
-        echo "applications: claude, codex, gcx" >&2
+        echo "applications: claude, codex, gcx, herdr" >&2
         echo "flake inputs: $(tr '\n' ' ' <<<"$knownInputs")" >&2
         exit 1
       fi
@@ -99,7 +103,7 @@ fi
 host="${HOST:-example-mac}"
 
 # ── Tag-pinned inputs: found here, moved below ──────────────────────────────
-# An input whose flake.nix URL names a release tag (herdr, gcx-src) is not moved by
+# An input whose flake.nix URL names a release tag (gcx-src) is not moved by
 # `nix flake update`: the lock can only re-resolve the tag it was given. Until
 # 2026-09-17 adoption was a hand edit of flake.nix and this section only
 # reported staleness — which in practice meant the pins sat behind while every

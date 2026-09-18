@@ -228,7 +228,7 @@ in
         pmtiles
       ])
       ++ [
-        inputs.herdr.packages.${system}.default
+        inputs.llm-agents.packages.${system}.herdr
         # Outside the `with pkgs;` list so the name unambiguously means the
         # let-bound override above, not pkgs.gcx.
         gcx

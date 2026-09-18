@@ -320,9 +320,18 @@ in
       # could not load sites until Chrome was relaunched. Five later
       # activations that night, which moved no cask, left the same Chrome
       # session loading every probe — the breakage follows the bundle
-      # replacement, not activation itself. WHY a swapped bundle breaks only
-      # some tabs was not observed; a running Chrome losing the on-disk helpers
-      # it spawns new processes from is the hypothesis.
+      # replacement, not activation itself.
+      #
+      # Why only SOME tabs: reproduced 2026-09-18 on a throwaway headless copy
+      # of Chrome 153. macOS Chrome execs every renderer from
+      # Contents/Frameworks/…/Versions/<version>/Helpers inside its own
+      # bundle. With the bundle moved away under the running browser, already
+      # open tabs kept working, the first new site still loaded (Chrome holds
+      # one pre-spawned spare renderer), and the next five new sites never
+      # loaded — no renderer process was created after the move. An upgrade
+      # replaces Versions/<old> with Versions/<new>, which is the same loss.
+      # Keystone avoids it by staging the new version beside the old one and
+      # switching at relaunch; a package manager that swaps the bundle cannot.
       #
       # These apps update themselves (Chrome through Keystone, ChatGPT through
       # Sparkle), so nothing is lost: Homebrew still installs them on a fresh

@@ -14,16 +14,6 @@
       inputs.nixpkgs.follows = "nixpkgs";
     };
 
-    # Pinned to a release tag, as Herdr's own install documentation recommends,
-    # but not held there: `./scripts/update.sh` rewrites this tag to the latest
-    # GitHub release on every full run (or `update.sh herdr`), so Herdr moves
-    # with everything else. Until 2026-09-17 the tag only moved by hand edit,
-    # which is how it sat on v0.9.0 while v0.9.1 was out.
-    herdr = {
-      url = "github:herdrdev/herdr/v0.9.0";
-      inputs.nixpkgs.follows = "nixpkgs";
-    };
-
     # Packages for AI coding agents, updated daily by upstream automation.
     # Claude Code publishes several releases a day, far faster than its Homebrew
     # cask tracks: on 2026-08-13 the newest homebrew-cask commit still described

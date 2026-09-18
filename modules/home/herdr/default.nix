@@ -22,7 +22,15 @@
 let
   inherit (pkgs.stdenv.hostPlatform) system;
 
-  herdr = inputs.herdr.packages.${system}.default;
+  # From the llm-agents input, not Herdr's own flake (which this repository
+  # used until 2026-09-17). Herdr's flake has no binary cache, so every
+  # version change compiled Rust plus a vendored Zig library on this Mac, and
+  # it had to be pinned to a release tag that `nix flake update` cannot move.
+  # llm-agents packages the same upstream releases, its automation follows
+  # them daily, numtide's cache serves the built binary
+  # (modules/darwin/nix.nix), and it moves with `./scripts/update.sh` like any
+  # other input — `update.sh herdr` names it.
+  herdr = inputs.llm-agents.packages.${system}.herdr;
   herdrBin = lib.getExe herdr;
 
   tomlFormat = pkgs.formats.toml { };

@@ -119,10 +119,11 @@ in
         greedy = true;
       }
 
-      # Anthropic's terminal CLI is NOT here. It is a Nix package, declared in
-      # modules/home/development.nix from the llm-agents flake input, because
-      # the cask lags the release stream by days. Do not add `claude-code` back,
-      # and never add the separate `claude` desktop cask either.
+      # Anthropic's terminal CLI is NOT here. It is Anthropic's self-updating
+      # native install behind the launcher in modules/home/development.nix,
+      # because the cask lags the release stream by days. Do not add
+      # `claude-code` back, and never add the separate `claude` desktop cask
+      # either.
 
       # cmux is NOT here. Ghostty replaced it; see modules/home/terminal.nix.
 
@@ -350,7 +351,7 @@ in
       #
       # False means "install the pinned version, but leave anything already
       # installed stale forever" — it passes `--no-upgrade`. That stranded
-      # claude-code on 2.1.222 until 2026-08-13, before it moved to Nix. It went
+      # claude-code on 2.1.222 until 2026-08-13, before it stopped being a cask. It went
       # unnoticed because every other declared cask except 1password-cli carries
       # Homebrew's `auto_updates` flag and quietly updates itself, so this
       # setting is the only thing keeping 1password-cli current.

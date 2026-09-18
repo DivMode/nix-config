@@ -18,6 +18,7 @@
 #   nixup                    # every input and every pin
 #   nixup claude             # Claude Code: the llm-agents input and the pin
 #   nixup codex              # ChatGPT/Codex: the cask definition, plus where the app stands
+#   nixup gcx                # gcx: the release tag in flake.nix and the Go vendor hash
 #   nixup homebrew-cask      # any flake input by its name in flake.nix
 #   nixup --dry-run          # move the versions and build, do not activate
 #
@@ -26,9 +27,12 @@
 # A name that is neither an application nor a flake input is refused with the
 # list of both, rather than handed to nix to fail on.
 #
-# One version is pinned by a file of this repository's own rather than by the
-# lock, and this script refreshes that too, on a full run or by name: the
-# claude-code pin, from Anthropic's release bucket (`claude`).
+# Two things are pinned outside the lock, and this script moves those too, on
+# a full run or by name: the claude-code pin, from Anthropic's release bucket
+# (`claude`), and any input whose URL in flake.nix names a release TAG, which
+# `nix flake update` alone never moves — the tag is rewritten to the latest
+# GitHub release and the input re-locked (`herdr` and `gcx`).
+# "Every input" means every input: nothing declared here waits for a hand edit.
 #
 # Most declared casks carry Homebrew's `auto_updates` flag and update themselves,
 # so they are unaffected either way — ChatGPT.app, which carries the codex CLI,
@@ -67,6 +71,8 @@ for argument in "$@"; do
     # report section below then says where the installed app stands and that
     # launching it is how it moves.
     codex|chatgpt) inputs+=(homebrew-cask) ;;
+    # gcx is a release-tag pin; naming it moves the tag (see the tag section).
+    gcx) inputs+=(gcx-src) ;;
     -*)
       echo "error: unknown option $argument" >&2
       exit 1
@@ -74,7 +80,7 @@ for argument in "$@"; do
     *)
       if ! grep -qx -- "$argument" <<<"$knownInputs"; then
         echo "error: '$argument' is neither an application name nor a flake input." >&2
-        echo "applications: claude, codex" >&2
+        echo "applications: claude, codex, gcx" >&2
         echo "flake inputs: $(tr '\n' ' ' <<<"$knownInputs")" >&2
         exit 1
       fi
@@ -92,18 +98,36 @@ fi
 
 host="${HOST:-example-mac}"
 
-# ── Tag-pinned inputs: staleness notice ─────────────────────────────────────
-# Inputs pinned to a release tag (gcx-src, herdr) are deliberately NOT moved
-# by `nix flake update` — a new version arrives by editing the tag in
-# flake.nix, as a reviewable decision. The gcx 1.0→1.1 output-shape change
-# (2026-08-16) is why adoption stays manual: it silently inverted a health
-# check's verdict, and a deliberate update surfaced that within minutes
-# instead of at 3am. Detection, though, should be automatic — a pin nobody
-# remembers is how a tool goes stale for six months. So every update run
-# reports each tag pin against the latest upstream release, one line per pin,
-# and prints failures rather than skipping silently: a check that cannot run
-# must not read as "everything current".
-echo "==> Tag-pinned inputs (moved by editing flake.nix, not by this script)"
+# ── Tag-pinned inputs: found here, moved below ──────────────────────────────
+# An input whose flake.nix URL names a release tag (herdr, gcx-src) is not moved by
+# `nix flake update`: the lock can only re-resolve the tag it was given. Until
+# 2026-09-17 adoption was a hand edit of flake.nix and this section only
+# reported staleness — which in practice meant the pins sat behind while every
+# other input advanced (herdr v0.9.0 against v0.9.1, gcx v1.2.0 against
+# v1.3.0 on the day this changed). Now a full run, or a run naming the input,
+# moves each direct tag pin to upstream's latest release: this section finds
+# what is behind, and the step after `nix flake update` rewrites the tag and
+# re-locks it. The move is still a reviewable diff — it is printed under "What
+# moved" and lands as its own line in the PR — and still gated by the check,
+# build and activation below.
+#
+# The gcx 1.0→1.1 output-shape change (2026-08-16), which silently inverted a
+# health check's verdict, is why this prints every move loudly rather than
+# folding it into the lock noise. Failures to reach GitHub are printed too: a
+# check that cannot run must not read as "everything current".
+#
+# Transitive tag pins (brew-src, inside nix-homebrew) are reported only; they
+# are their owner's to move.
+tagMoves=()
+wantsInput() {
+  local wanted
+  [[ "$fullUpdate" == true ]] && return 0
+  for wanted in "${inputs[@]}"; do
+    [[ "$wanted" == "$1" ]] && return 0
+  done
+  return 1
+}
+echo "==> Tag-pinned inputs"
 if ! command -v jq >/dev/null 2>&1; then
   echo "    warning: jq not found — cannot check tag-pin staleness" >&2
 else
@@ -121,8 +145,13 @@ else
       echo "    ${name}: pinned ${ref} — could not determine latest release of ${owner}/${repo} (offline, rate-limited, or no releases)" >&2
     elif [[ "$latest" == "$ref" ]]; then
       echo "    ${name}: ${ref} (current)"
+    elif [[ "$via" == "direct" && ! "$latest" =~ ^v?[0-9]+(\.[0-9]+)+$ ]]; then
+      echo "    ${name}: pinned ${ref}; upstream's latest release is tagged '${latest}', not a plain version — not moving to it" >&2
+    elif [[ "$via" == "direct" ]] && wantsInput "$name"; then
+      echo "    ${name}: pinned ${ref}, upstream has ${latest} — moving"
+      tagMoves+=("${name}"$'\t'"${owner}"$'\t'"${repo}"$'\t'"${ref}"$'\t'"${latest}")
     elif [[ "$via" == "direct" ]]; then
-      echo "    ${name}: pinned ${ref}, upstream has ${latest} — to adopt, edit the tag in flake.nix"
+      echo "    ${name}: pinned ${ref}, upstream has ${latest} — not named in this run; './scripts/update.sh ${name}' moves it"
     else
       # A transitive pin is not ours to edit: it moves when ITS owner bumps
       # the tag and this lock re-locks that input. brew-src (nix-homebrew's
@@ -202,7 +231,22 @@ describeLockMoves() {
 # rather than what was requested. Every file this script may move is listed in
 # versionFiles: the lock, and the pin this repository keeps itself.
 claudePin="modules/home/claude-code-pin.json"
-versionFiles=(flake.lock "$claudePin")
+gcxPin="modules/home/gcx-pin.json"
+versionFiles=(flake.lock "$claudePin" "$gcxPin")
+
+# Moving a tag rewrites flake.nix, so on a run that moves one flake.nix is a
+# file this script owns and lands. It is added ONLY on those runs, and only
+# when flake.nix is clean: the landing step commits every file in
+# versionFiles, and an unrelated edit sitting in flake.nix must never be swept
+# into an automated version bump.
+if (( ${#tagMoves[@]} > 0 )); then
+  if ! git diff --quiet HEAD -- flake.nix; then
+    echo "error: flake.nix has uncommitted changes; not moving release tags over them." >&2
+    echo "Commit or stash them, then run again." >&2
+    exit 1
+  fi
+  versionFiles+=(flake.nix)
+fi
 before="$(mktemp -d)"
 trap 'rm -rf "$before"' EXIT
 for file in "${versionFiles[@]}"; do
@@ -217,6 +261,24 @@ elif (( ${#inputs[@]} > 0 )); then
   echo "==> Updating: ${inputs[*]}"
   nix flake update "${inputs[@]}"
 fi
+
+# ── Tag-pinned inputs: rewrite the tag, re-lock ─────────────────────────────
+# The URL in flake.nix is the single place a tag is written; versions derived
+# from it (gcx's, in modules/home/development.nix) are read back from the lock.
+# The sed is anchored on the exact `github:owner/repo/oldtag"` string found in
+# the lock, and verified to have changed the file, so a URL written any other
+# way fails loudly instead of re-locking the old tag and calling it moved.
+tagMoveLines=()
+for move in "${tagMoves[@]}"; do
+  IFS=$'\t' read -r name owner repo ref latest <<<"$move"
+  sed -i '' -e "s|github:${owner}/${repo}/${ref}\"|github:${owner}/${repo}/${latest}\"|" flake.nix
+  if ! grep -q "github:${owner}/${repo}/${latest}\"" flake.nix; then
+    echo "error: could not find 'github:${owner}/${repo}/${ref}' in flake.nix to move ${name} to ${latest}" >&2
+    exit 1
+  fi
+  nix flake update "$name"
+  tagMoveLines+=("    ${name}: ${ref} -> ${latest}")
+done
 
 # ── Claude Code: pin straight to Anthropic's latest release ─────────────────
 # The version is not taken from the llm-agents input, whose packaging
@@ -289,6 +351,7 @@ echo "==> What moved"
 if command -v jq >/dev/null 2>&1; then
   describeLockMoves "$before/flake.lock"
   describePinMoves "$(cat "$before/$claudePin")"
+  (( ${#tagMoveLines[@]} > 0 )) && printf '%s\n' "${tagMoveLines[@]}"
 else
   git --no-pager diff --stat -- "${versionFiles[@]}" || true
 fi
@@ -300,8 +363,34 @@ echo
 echo "==> Checking"
 nix flake check --impure
 
+# gcx is a Go program, and a release that changed its Go dependencies changes
+# the hash of its vendored modules — a fixed-output derivation whose hash has
+# to be declared (modules/home/gcx-pin.json) before it can be known. Nix
+# reports the real one in the failure, so when the gcx tag moved and the build
+# stops on exactly that mismatch, the reported hash is written to the pin and
+# the build runs once more. Any other failure, or a second one, is fatal as
+# before. The hash is of content fetched from the Go module proxy against
+# go.sum, which is the same trust the hand-copied hash always had.
+buildSystem() {
+  nix build --no-link --impure ".#darwinConfigurations.${host}.system" 2>&1 | tee "$before/build.log"
+  return "${PIPESTATUS[0]}"
+}
+
 echo "==> Building $host"
-nix build --no-link --impure ".#darwinConfigurations.${host}.system"
+if ! buildSystem; then
+  gcxVendorHash=""
+  if printf '%s\n' "${tagMoveLines[@]}" | grep -q '^    gcx-src:'; then
+    gcxVendorHash="$(/usr/bin/awk '
+      /hash mismatch in fixed-output derivation .*-gcx-[^ ]*-go-modules\.drv/ { found = 1 }
+      found && $1 == "got:" { print $2; exit }' "$before/build.log")"
+  fi
+  if [[ ! "$gcxVendorHash" =~ ^sha256-[A-Za-z0-9+/]{43}=$ ]]; then
+    exit 1
+  fi
+  echo "==> gcx's Go dependencies changed; vendor hash -> ${gcxVendorHash}"
+  jq -n --arg vendorHash "$gcxVendorHash" '{ vendorHash: $vendorHash }' > "$gcxPin"
+  buildSystem
+fi
 
 if [[ "$dryRun" == true ]]; then
   echo
@@ -367,6 +456,7 @@ if command -v jq >/dev/null 2>&1; then
   git show HEAD:flake.lock > "$headLock"
   moved="$(
     describePinMoves "$(git show "HEAD:$claudePin")"
+    (( ${#tagMoveLines[@]} > 0 )) && printf '%s\n' "${tagMoveLines[@]}"
     describeLockMoves "$headLock" || echo "    (listing failed)"
   )"
   rm -f "$headLock"

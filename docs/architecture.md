@@ -23,7 +23,7 @@ reusable user choices belong in `profiles/`. Future NixOS servers should add
 
 ## Ownership
 
-- **Nix** declares nixpkgs, Herdr `v0.8.0`, Home Manager, nix-darwin, and
+- **Nix** declares nixpkgs, Herdr, Home Manager, nix-darwin, and
   Homebrew inputs. `flake.lock` must pin them before activation.
 - **nix-darwin** owns macOS system configuration, system generations, and the
   system-wide JetBrains Mono Nerd Font installation.

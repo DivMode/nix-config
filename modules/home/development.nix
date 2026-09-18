@@ -51,20 +51,28 @@ let
   # into Claude Code, so the binary and the skills that describe it must move
   # together. The derivation is finalAttrs-style, so overriding version and src
   # recomputes the tag-dependent ldflags; vendorHash carries over until a Go
-  # dependency changes, at which point the build fails with the new hash to
-  # declare here.
+  # dependency changes, at which point the build fails with the new hash,
+  # which scripts/update.sh reads from that failure and writes to the pin.
   #
   # Why it is declared at all: the work monorepo's health and alert-liveness
   # scripts spawn `gcx` from PATH and hard-exit without it. On 2026-08-16 its
   # absence on this machine read as a dead observability stack during a real
   # incident — a missing tool reading as a broken system, the expensive kind
   # of wrong.
+  #
+  # The release is named ONCE, by the tag on the gcx-src input in flake.nix:
+  # the version here is read back from the lock's record of that tag, and the
+  # Go vendor hash lives in ./gcx-pin.json. `scripts/update.sh` moves the tag
+  # to the latest release and rewrites the hash when Go dependencies changed,
+  # so neither is edited by hand.
+  gcxTag = (builtins.fromJSON (builtins.readFile ../../flake.lock)).nodes.gcx-src.original.ref;
+  gcxPin = builtins.fromJSON (builtins.readFile ./gcx-pin.json);
   gcx = pkgs.gcx.overrideAttrs (old: {
-    version = "1.2.0";
+    version = lib.removePrefix "v" gcxTag;
     src = inputs.gcx-src;
-    vendorHash = "sha256-OvIK8sgWUo3t0+oure7+PpU7SFzbLyppyeaWQtKyZXg=";
+    inherit (gcxPin) vendorHash;
     meta = old.meta // {
-      changelog = "https://github.com/grafana/gcx/releases/tag/v1.2.0";
+      changelog = "https://github.com/grafana/gcx/releases/tag/${gcxTag}";
     };
   });
 

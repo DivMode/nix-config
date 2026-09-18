@@ -119,6 +119,7 @@ To move the pinned inputs forward and apply the result in one step, type
 nixup                  # every input and every pin
 nixup claude           # only Claude Code
 nixup codex            # ChatGPT/Codex: the cask definition, and where the app stands
+nixup gcx              # gcx: its release tag and Go vendor hash
 nixup homebrew-cask    # any flake input, by its name
 ```
 

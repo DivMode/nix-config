@@ -259,6 +259,145 @@ let
       }
     '';
   };
+  # "A newer Claude Code exists", because nothing else on this machine says so.
+  #
+  # Claude Code's own "update available" notice comes from its auto-updater,
+  # and the Nix package switches that off: llm-agents' recipe wraps the binary
+  # with `--set DISABLE_AUTOUPDATER 1` (packages/claude-code/package.nix),
+  # rightly, since a store path cannot update itself. The cost was silence —
+  # on 2026-09-17 this machine ran 2.1.269 with 2.1.276 published and nothing
+  # on screen said so.
+  #
+  # This segment compares the RUNNING version (the `version` field of the
+  # session JSON ccstatusline pipes on stdin) against Anthropic's `latest`
+  # pointer — the same URL scripts/update.sh pins from, so the notice and the
+  # update can never disagree about what "latest" means. It prints nothing
+  # when current, when the pointer is BEHIND the running version (Anthropic
+  # repoints it down to yank a release), or when anything fails: a status line
+  # must never show an error in place of a version.
+  #
+  # The status line renders many times a minute, so the answer is cached for
+  # an hour; a failed fetch re-uses the stale cache and retries after ten
+  # minutes rather than on every render.
+  claudeUpdateNotice = pkgs.writeTextFile {
+    name = "ccstatusline-claude-update-notice";
+    destination = "/bin/ccstatusline-claude-update-notice";
+    executable = true;
+    text = ''
+      #!${lib.getExe pkgs.nodejs}
+      const fs = require("fs");
+      const https = require("https");
+      const os = require("os");
+      const path = require("path");
+
+      const latestUrl = "https://storage.googleapis.com/claude-code-dist-86c565f3-f756-42ad-8dfa-d59b1c096819/claude-code-releases/latest";
+      const cacheMaxAgeMs = 60 * 60 * 1000;
+      const retryAfterFailureMs = 10 * 60 * 1000;
+      const home = process.env.HOME || os.homedir();
+      const cacheDir = process.env.XDG_CACHE_HOME
+        ? path.join(process.env.XDG_CACHE_HOME, "ccstatusline")
+        : path.join(home, ".cache", "ccstatusline");
+      const cacheFile = path.join(cacheDir, "claude-latest.json");
+      const versionPattern = /^\d+\.\d+\.\d+$/;
+
+      function parse(version) {
+        return typeof version === "string" && versionPattern.test(version)
+          ? version.split(".").map(Number)
+          : null;
+      }
+
+      function isNewer(candidate, running) {
+        const a = parse(candidate);
+        const b = parse(running);
+        if (!a || !b) {
+          return false;
+        }
+        for (let i = 0; i < 3; i += 1) {
+          if (a[i] !== b[i]) {
+            return a[i] > b[i];
+          }
+        }
+        return false;
+      }
+
+      function readCache() {
+        try {
+          return JSON.parse(fs.readFileSync(cacheFile, "utf8"));
+        } catch {
+          return null;
+        }
+      }
+
+      function writeCache(cache) {
+        try {
+          fs.mkdirSync(cacheDir, { recursive: true });
+          const temporary = cacheFile + "." + process.pid;
+          fs.writeFileSync(temporary, JSON.stringify(cache));
+          fs.renameSync(temporary, cacheFile);
+        } catch {
+          // A cache that cannot be written only costs a fetch next render.
+        }
+      }
+
+      function fetchLatest() {
+        return new Promise((resolve) => {
+          const request = https.get(latestUrl, { timeout: 2500 }, (response) => {
+            if (response.statusCode !== 200) {
+              response.resume();
+              resolve(null);
+              return;
+            }
+            let body = "";
+            response.setEncoding("utf8");
+            response.on("data", (chunk) => {
+              body += chunk;
+              if (body.length > 64) {
+                request.destroy();
+              }
+            });
+            response.on("end", () => resolve(parse(body.trim()) ? body.trim() : null));
+          });
+          request.on("timeout", () => request.destroy());
+          request.on("error", () => resolve(null));
+        });
+      }
+
+      async function latestVersion() {
+        const cache = readCache();
+        const now = Date.now();
+        if (cache && typeof cache.checkedAt === "number") {
+          const age = now - cache.checkedAt;
+          const limit = cache.failed ? retryAfterFailureMs : cacheMaxAgeMs;
+          if (age >= 0 && age < limit) {
+            return cache.latest || null;
+          }
+        }
+        const fetched = await fetchLatest();
+        if (fetched) {
+          writeCache({ latest: fetched, checkedAt: now });
+          return fetched;
+        }
+        const stale = cache && cache.latest ? cache.latest : null;
+        writeCache({ latest: stale, checkedAt: now, failed: true });
+        return stale;
+      }
+
+      async function main() {
+        let running = null;
+        try {
+          running = JSON.parse(fs.readFileSync(0, "utf8")).version;
+        } catch {
+          return;
+        }
+        const latest = await latestVersion();
+        if (isNewer(latest, running)) {
+          process.stdout.write("↑ Claude " + latest + " · nixup claude\n");
+        }
+      }
+
+      main().catch(() => {});
+    '';
+  };
 in
 {
   inherit package;
@@ -295,6 +434,16 @@ in
     };
     lines = [
       [
+        # First, so a narrow terminal truncates the quota figures rather than
+        # the one segment that is only ever shown when it matters. Renders as
+        # nothing, separator included, while Claude Code is current.
+        {
+          id = "13";
+          type = "custom-command";
+          color = color "yellow";
+          commandPath = lib.getExe claudeUpdateNotice;
+          timeout = 3000;
+        }
         {
           id = "1";
           type = "model";

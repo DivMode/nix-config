@@ -81,7 +81,7 @@
     # `update.sh stillpane`) rewrites this tag and the cask together from the
     # latest GitHub release. Apache-2.0, referenced not vendored.
     stillpane-src = {
-      url = "github:yayamaz/stillpane/v1.1.1";
+      url = "github:yayamaz/stillpane/v1.1.2";
       flake = false;
     };
 

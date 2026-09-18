@@ -297,6 +297,39 @@ in
       # -E, which sudoers refuses on an entry without that tag.
       extraEnv.SUDO_ASKPASS = "${sudoAskpass}";
 
+      # Never let activation reinstall a self-updating app over its own
+      # running copy.
+      #
+      # Current Homebrew upgrades `auto_updates true` casks BY DEFAULT whenever
+      # the app bundle on disk reports an older version than the tap — no
+      # `greedy` needed (Library/Homebrew/env_config.rb,
+      # HOMEBREW_UPGRADE_AUTO_UPDATES_CASKS: "This is the default unless
+      # $HOMEBREW_NO_UPGRADE_AUTO_UPDATES_CASKS is set"; the comparison is
+      # Cask#auto_updates_bundle_outdated? in cask/cask.rb). So every
+      # `update.sh` run that moved the homebrew-cask input past the installed
+      # Chrome made `brew bundle` delete /Applications/Google Chrome.app and
+      # copy a fresh one in while Chrome was running.
+      #
+      # Observed 2026-09-17: a full update activated at 23:02; the google-chrome
+      # Caskroom record and install receipt were rewritten at 23:06:54, and
+      # Chrome.app's inode (723300736) falls between ChatGPT.app's and
+      # calibre.app's, both replaced in the same run at 23:07 — so the bundle
+      # was recreated then, under a Chrome that had been running for days.
+      # (Its mtime still read Sep 16: an install preserves the dates inside the
+      # dmg, which is why mtime is no evidence here.) Afterwards some tabs
+      # could not load sites until Chrome was relaunched. Five later
+      # activations that night, which moved no cask, left the same Chrome
+      # session loading every probe — the breakage follows the bundle
+      # replacement, not activation itself. WHY a swapped bundle breaks only
+      # some tabs was not observed; a running Chrome losing the on-disk helpers
+      # it spawns new processes from is the hypothesis.
+      #
+      # These apps update themselves (Chrome through Keystone, ChatGPT through
+      # Sparkle), so nothing is lost: Homebrew still installs them on a fresh
+      # machine, and `greedy = true` on an individual cask still forces the
+      # tap's version where that is wanted (karabiner-elements).
+      extraEnv.HOMEBREW_NO_UPGRADE_AUTO_UPDATES_CASKS = "1";
+
       # Bring installed casks up to the version the pinned tap defines.
       #
       # This does NOT make activation pull arbitrary new software, which is the

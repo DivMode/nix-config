@@ -21,8 +21,8 @@
 # from the project's latest GitHub release, together with the `stillpane-src`
 # tag in flake.nix that carries the Claude Code plugin the same release ships.
 cask "stillpane" do
-  version "1.1.1"
-  sha256 "2759e5d32f00869d7b3d6ada9b936d90c28268b92263f9ff4541ef843c97017e"
+  version "1.1.2"
+  sha256 "b3feee64e3aa3836b6201380258f54d8f07274290168710e1691f3e775a7b741"
 
   url "https://github.com/yayamaz/stillpane/releases/download/v#{version}/stillpane-#{version}.dmg"
   name "stillpane"

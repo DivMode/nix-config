@@ -259,6 +259,14 @@ let
     theme = "dark";
     tui = "fullscreen";
 
+    # Claude Code keeps itself current: `claude` is Anthropic's native install
+    # behind the launcher in ../development.nix, and its background updater
+    # follows this channel. "latest" rather than "stable" (about a week
+    # behind), because staying on Anthropic's newest release is the reason the
+    # binary left Nix. The installer writes this same value on a fresh machine;
+    # declaring it means a rebuild puts it back if anything changes it.
+    autoUpdatesChannel = "latest";
+
     # Reasoning effort per model. The key shape is Claude Code's own, read from
     # what the client wrote into the live settings.json rather than guessed:
     # `modelSettings.<modelId>.effortLevel`, with "claude-opus-5" already
@@ -365,7 +373,9 @@ in
 
       # The module owns the package because `plugins` works by wrapping it with
       # `--plugin-dir`. development.nix therefore does NOT install claude-code;
-      # only one of them may, or they collide on bin/claude.
+      # only one of them may, or they collide on bin/claude. The package is a
+      # launcher for Anthropic's self-updating native install, not the binary,
+      # so the wrapping survives every update the client gives itself.
       package = config.nixConfig.claudeCode.package;
 
       # Loaded straight from the Nix store. `claude plugins install` would

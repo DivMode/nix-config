@@ -66,21 +66,24 @@ both.
 
 ```sh
 nixup                  # every input and every pin, then build and activate
-nixup claude           # only Claude Code: the llm-agents input and the version pin
 nixup codex            # ChatGPT/Codex: the cask definition, plus where the installed app stands
 nixup gcx              # gcx: the release tag in flake.nix and the Go vendor hash
 nixup homebrew-cask    # any flake input, by its name in flake.nix
 nixup --dry-run        # move the versions and build, do not activate
 ```
 
-Two things live outside what `nix flake update` can move, and the script
-moves them on a full run or by name: the Claude Code CLI
-(`modules/home/claude-code-pin.json`, from Anthropic's release bucket, on
-`nixup claude`), and any input pinned to a release tag in `flake.nix` —
-currently gcx — whose tag is rewritten to the latest GitHub release and
-re-locked, with the Go vendor hash in `modules/home/gcx-pin.json` refreshed
-when it changed (`nixup gcx`). A bare `nixup` therefore moves everything this
-repository declares; nothing waits for a hand edit.
+One kind of thing lives outside what `nix flake update` can move, and the
+script moves it on a full run or by name: any input pinned to a release tag in
+`flake.nix` — currently gcx — whose tag is rewritten to the latest GitHub
+release and re-locked, with the Go vendor hash in `modules/home/gcx-pin.json`
+refreshed when it changed (`nixup gcx`). A bare `nixup` therefore moves
+everything this repository pins; nothing waits for a hand edit.
+
+The Claude Code CLI is not moved by this script either: it is Anthropic's
+self-updating native install behind a Nix launcher
+(`modules/home/development.nix`), so it follows Anthropic's `latest` channel
+in the background and `claude update` forces a check. `nixup claude` is
+refused with that explanation.
 
 ChatGPT.app, which carries the `codex` CLI, is not moved by this script at
 all. It is a self-updating cask: Sparkle inside the app follows OpenAI's own
@@ -124,8 +127,8 @@ Three separate update channels feed this Mac, and only two are driven from here:
 Because `homebrew.onActivation.upgrade` is true, activation moves an installed
 cask to whatever version the pinned tap defines. The cask that actually depends
 on this is the one with no self-updater — currently `1password-cli` alone.
-`claude-code` was in that list until it stopped being a cask; the CLI now comes
-from the `llm-agents` flake input, so `nixpkgs`-style lock updates move it.
+`claude-code` was in that list until it stopped being a cask; the CLI is now
+Anthropic's self-updating native install, which no activation moves.
 
 ## Safety boundaries
 

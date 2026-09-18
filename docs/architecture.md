@@ -92,8 +92,8 @@ project's own repository; this layer is deliberately global-only.
 
 Claude Code's own Home Manager module, `programs.claude-code`, owns the
 instruction file and agent definitions. Its `package` and `settings` options are
-deliberately unused: the package is installed by `modules/home/development.nix`
-from the `llm-agents` flake input, and `settings.json` is installed as a real
+deliberately unused: the package is declared by `modules/home/development.nix`
+as a launcher for Anthropic's self-updating native install, and `settings.json` is installed as a real
 reasserted file because that option would make an application-writable file a
 read-only store symlink. The Claude desktop cask is not installed.
 

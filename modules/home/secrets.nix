@@ -193,8 +193,8 @@ let
     '') local.onePassword.awsProfiles
   );
 
-  # Claude Code is a Nix package rather than a Homebrew cask, so this reaches it
-  # by absolute store path. `development.nix` withholds the unwrapped package
+  # `claude` is a Nix launcher for Anthropic's native install rather than a
+  # Homebrew cask, so this reaches it by absolute store path. `development.nix` withholds the unwrapped package
   # whenever this launcher is enabled, because both provide bin/claude.
   claudeExecutable = getExe' config.nixConfig.claudeCode.package "claude";
   sshAgentConfig = concatMapStringsSep "\n" (itemId: ''

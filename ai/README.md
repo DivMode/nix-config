@@ -102,9 +102,10 @@ styles, plugins, and marketplaces when those are wanted.
 
 Two deliberate exceptions:
 
-- **The package is not declared there.** `modules/home/development.nix` installs
-  it, from the `llm-agents` flake input, and decides whether the unwrapped
-  binary or the 1Password launcher provides `claude`. Declaring it in both
+- **The package is not declared there.** `modules/home/development.nix` declares
+  it — a launcher for Anthropic's self-updating native install, not the binary
+  itself — and decides whether that launcher or the 1Password one provides
+  `claude`. Declaring it in both
   places would install it twice and collide on `bin/claude`.
 - **`settings.json` is not declared there.** That option writes a read-only Nix
   store symlink, and Claude Code writes to the file itself when settings change

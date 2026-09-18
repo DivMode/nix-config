@@ -6,23 +6,34 @@ belongs to Homebrew.
 
 ## Claude Code
 
-Anthropic's terminal CLI is declared here, from the `llm-agents` flake input,
-rather than as a Homebrew cask. Both deliver the same signed vendor binary, but
-Claude Code publishes several releases a day and the cask trails badly: on
-2026-08-13 the newest `homebrew-cask` commit still described 2.1.223 while
-upstream was on 2.1.231. Because the tap is itself a pinned flake input, no lock
-update could have closed that gap while it stayed a cask.
+Anthropic's terminal CLI updates itself. The binary is Anthropic's native
+install — versions under `~/.local/share/claude/versions`, reached through
+`~/.local/bin/claude` — and its background updater follows the `latest`
+channel, declared as `autoUpdatesChannel` in the managed settings. That is
+application-owned state, like ChatGPT.app's Sparkle updates; `claude update`
+forces a check.
 
-Update it like any other pin:
+What this module declares is the **launcher** that `claude` on PATH resolves
+to. It runs the native install, and on a machine that has none it first
+installs Anthropic's latest using a hash-pinned seed binary
+(`claude-code-bootstrap.json`) — the same `claude install` step Anthropic's
+install script performs, without piping an unpinned script into a shell. The
+seed's version is irrelevant and nothing refreshes it. `programs.claude-code`
+wraps the launcher with `--plugin-dir`, so plugins still come from the store;
+`~/.local/bin` stays off PATH so nothing reaches the binary around that
+wrapping.
 
-```sh
-./scripts/update.sh llm-agents
-```
+It was a Nix package until 2026-09-18, and every form of that lagged: the
+Homebrew cask by days (2026-08-13: 2.1.223 against 2.1.231), llm-agents'
+packaging by hours-to-a-day, and this repository's own version pin by however
+long since the last `nixup` (2026-09-17: 2.1.269 against 2.1.276). A store path
+cannot update itself, so that package also had to disable Claude Code's
+updater and its "update available" notice.
 
 Exactly one thing may provide `bin/claude`. When the 1Password launcher in
 `secrets.nix` is enabled it installs its own executable of that name, wrapping
-this same package by absolute store path, so this module withholds the
-unwrapped package to avoid a collision. `nixConfig.claudeCode.package` is the
+this same launcher by absolute store path, so this module withholds the
+unwrapped launcher to avoid a collision. `nixConfig.claudeCode.package` is the
 single source both modules read.
 
 Runtime ownership is deliberately single-purpose:

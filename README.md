@@ -117,17 +117,16 @@ To move the pinned inputs forward and apply the result in one step, type
 
 ```sh
 nixup                  # every input and every pin
-nixup claude           # only Claude Code
 nixup codex            # ChatGPT/Codex: the cask definition, and where the app stands
 nixup gcx              # gcx: its release tag and Go vendor hash
 nixup homebrew-cask    # any flake input, by its name
 ```
 
-Versions live in `flake.lock` and in the Claude Code pin
-(`modules/home/claude-code-pin.json`); the script moves both and neither is
-edited by hand. ChatGPT.app, which carries the
-`codex` CLI, is a self-updating cask: launching it is the update, and the
-script reports where it stands.
+Versions live in `flake.lock`; the script moves it and it is not edited by
+hand. Two things update themselves instead: Claude Code, whose native install
+keeps itself current in the background (`claude update` forces it), and
+ChatGPT.app, which carries the `codex` CLI — launching it is the update, and
+the script reports where it stands.
 
 Format and inspect changes before switching. Lock updates and detailed operating
 procedures are in [`docs/operations/rebuild.md`](docs/operations/rebuild.md).

@@ -57,9 +57,10 @@ entry is deliberately not a list of binaries — the earlier one, which named
 broke a Karabiner upgrade half-way on 2026-09-06; `sudo.nix` carries the
 evidence. `askpass.nix` owns the single askpass helper both consumers share.
 
-Anthropic's Claude Code terminal CLI is **not** a cask here. It is a Nix
-package from the `llm-agents` flake input, because the cask lags the upstream
-release stream by days. The separate Claude desktop cask is intentionally
+Anthropic's Claude Code terminal CLI is **not** a cask here. It is Anthropic's
+self-updating native install behind a Nix launcher
+(`modules/home/development.nix`), because the cask lags the upstream release
+stream by days. The separate Claude desktop cask is intentionally
 absent.
 
 ## Dock and macOS defaults

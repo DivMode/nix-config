@@ -16,7 +16,6 @@
 # through — so nobody types this path:
 #
 #   nixup                    # every input and every pin
-#   nixup claude             # Claude Code: the llm-agents input and the pin
 #   nixup codex              # ChatGPT/Codex: the cask definition, plus where the app stands
 #   nixup gcx                # gcx: the release tag in flake.nix and the Go vendor hash
 #   nixup herdr              # Herdr: the llm-agents input that packages it
@@ -28,11 +27,10 @@
 # A name that is neither an application nor a flake input is refused with the
 # list of both, rather than handed to nix to fail on.
 #
-# Two things are pinned outside the lock, and this script moves those too, on
-# a full run or by name: the claude-code pin, from Anthropic's release bucket
-# (`claude`), and any input whose URL in flake.nix names a release TAG, which
-# `nix flake update` alone never moves — the tag is rewritten to the latest
-# GitHub release and the input re-locked (`gcx`, currently the only one).
+# One kind of thing is pinned outside the lock, and this script moves it too,
+# on a full run or by name: any input whose URL in flake.nix names a release
+# TAG, which `nix flake update` alone never moves — the tag is rewritten to the
+# latest GitHub release and the input re-locked (`gcx`, currently the only one).
 # "Every input" means every input: nothing declared here waits for a hand edit.
 #
 # Most declared casks carry Homebrew's `auto_updates` flag and update themselves,
@@ -62,9 +60,15 @@ for argument in "$@"; do
   case "$argument" in
     --dry-run) dryRun=true ;;
     # ── Application names → what moves ──────────────────────────────────────
-    # Claude Code: the llm-agents input carries the build recipe, and the
-    # version pin is refreshed whenever that input is named (see below).
-    claude|claude-code) inputs+=(llm-agents) ;;
+    # Claude Code is Anthropic's self-updating native install behind a Nix
+    # launcher (modules/home/development.nix); no input or pin carries its
+    # version, so there is nothing here to move. Refused rather than ignored:
+    # an empty input list would otherwise read as "update everything".
+    claude|claude-code)
+      echo "error: Claude Code updates itself in the background; nothing in this repository pins it." >&2
+      echo "To move it right now, run: claude update" >&2
+      exit 1
+      ;;
     # Herdr is llm-agents' package too (modules/home/herdr), served prebuilt
     # from numtide's cache.
     herdr) inputs+=(llm-agents) ;;
@@ -84,7 +88,7 @@ for argument in "$@"; do
     *)
       if ! grep -qx -- "$argument" <<<"$knownInputs"; then
         echo "error: '$argument' is neither an application name nor a flake input." >&2
-        echo "applications: claude, codex, gcx, herdr" >&2
+        echo "applications: codex, gcx, herdr" >&2
         echo "flake inputs: $(tr '\n' ' ' <<<"$knownInputs")" >&2
         exit 1
       fi
@@ -234,9 +238,8 @@ describeLockMoves() {
 # Keep the pre-update state so the summary below reports what actually changed
 # rather than what was requested. Every file this script may move is listed in
 # versionFiles: the lock, and the pin this repository keeps itself.
-claudePin="modules/home/claude-code-pin.json"
 gcxPin="modules/home/gcx-pin.json"
-versionFiles=(flake.lock "$claudePin" "$gcxPin")
+versionFiles=(flake.lock "$gcxPin")
 
 # Moving a tag rewrites flake.nix, so on a run that moves one flake.nix is a
 # file this script owns and lands. It is added ONLY on those runs, and only
@@ -284,53 +287,6 @@ for move in "${tagMoves[@]}"; do
   tagMoveLines+=("    ${name}: ${ref} -> ${latest}")
 done
 
-# ── Claude Code: pin straight to Anthropic's latest release ─────────────────
-# The version is not taken from the llm-agents input, whose packaging
-# automation trails Anthropic by hours-to-a-day (measured 2026-09-01: it
-# packaged 2.1.252 while upstream had published 2.1.257 that morning).
-# modules/home/development.nix builds llm-agents' recipe against the version
-# and hash pinned in $claudePin; this refreshes that pin from the SAME
-# endpoints llm-agents' own updater reads — Anthropic's `latest` pointer and
-# the per-version manifest whose checksums are official. Following the pointer
-# also follows it DOWN: Anthropic yanks bad releases by repointing it.
-#
-# Only on a full update or an explicit llm-agents update — asking for just the
-# Homebrew casks must not move a coding agent. A refresh that cannot reach the
-# bucket warns and keeps the current pin: a stale-but-working version beats an
-# aborted update, and the staleness is printed rather than silent.
-refreshClaudePin="$fullUpdate"
-for input in "${inputs[@]}"; do
-  [[ "$input" == "llm-agents" ]] && refreshClaudePin=true
-done
-
-if [[ "$refreshClaudePin" == true ]]; then
-  claudeBucket="https://storage.googleapis.com/claude-code-dist-86c565f3-f756-42ad-8dfa-d59b1c096819/claude-code-releases"
-  if claudeLatest="$(curl -fsSL --max-time 15 "$claudeBucket/latest")" \
-    && [[ "$claudeLatest" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] \
-    && claudeManifest="$(curl -fsSL --max-time 15 "$claudeBucket/$claudeLatest/manifest.json")"; then
-    toSri() {
-      nix hash convert --hash-algo sha256 --to sri \
-        "$(jq -er --arg p "$1" '.platforms[$p].checksum' <<<"$claudeManifest")"
-    }
-    jq -n \
-      --arg version "$claudeLatest" \
-      --arg darwinArm "$(toSri darwin-arm64)" \
-      --arg linuxArm "$(toSri linux-arm64)" \
-      --arg linuxX64 "$(toSri linux-x64)" \
-      '{
-        version: $version,
-        hashes: {
-          "aarch64-darwin": $darwinArm,
-          "aarch64-linux": $linuxArm,
-          "x86_64-linux": $linuxX64
-        }
-      }' > "$claudePin"
-  else
-    echo "    warning: could not read Anthropic's release bucket; claude-code stays at $(jq -r .version "$claudePin")" >&2
-  fi
-fi
-
-
 unchanged=true
 for file in "${versionFiles[@]}"; do
   /usr/bin/cmp -s "$before/$file" "$file" || unchanged=false
@@ -340,21 +296,10 @@ if [[ "$unchanged" == true ]]; then
   exit 0
 fi
 
-# One line per moved pin, old -> new, given the old CONTENTS of each pin file
-# (a snapshot here, HEAD's copy for the landing step).
-describePinMoves() {
-  local oldClaude="$1" was now
-  was="$(jq -r .version <<<"$oldClaude")"
-  now="$(jq -r .version "$claudePin")"
-  [[ "$was" != "$now" ]] && echo "    claude-code: ${was} -> ${now}"
-  return 0
-}
-
 echo
 echo "==> What moved"
 if command -v jq >/dev/null 2>&1; then
   describeLockMoves "$before/flake.lock"
-  describePinMoves "$(cat "$before/$claudePin")"
   (( ${#tagMoveLines[@]} > 0 )) && printf '%s\n' "${tagMoveLines[@]}"
 else
   git --no-pager diff --stat -- "${versionFiles[@]}" || true
@@ -459,16 +404,14 @@ if command -v jq >/dev/null 2>&1; then
   headLock="$(mktemp)"
   git show HEAD:flake.lock > "$headLock"
   moved="$(
-    describePinMoves "$(git show "HEAD:$claudePin")"
     (( ${#tagMoveLines[@]} > 0 )) && printf '%s\n' "${tagMoveLines[@]}"
     describeLockMoves "$headLock" || echo "    (listing failed)"
   )"
   rm -f "$headLock"
 fi
 
-# The commit title names the lock only when the lock moved; a pin-only run
-# (`update.sh llm-agents` with an unchanged lock) must not be recorded as a
-# flake input update.
+# The commit title names the lock only when the lock moved; a run that moved
+# only a pin file must not be recorded as a flake input update.
 title="chore(flake): update inputs"
 if git diff --quiet HEAD -- flake.lock; then
   title="chore(pins): update pinned versions"

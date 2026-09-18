@@ -37,14 +37,19 @@ today and is intentionally structured to add NixOS servers later.
 - Nix/Home Manager own Zsh, its plugins, Git, portable CLIs, and Herdr.
   Homebrew owns only declared native/vendor casks; formulae require a documented
   nixpkgs incompatibility. Never declare the same executable through both.
-- Anthropic's Claude Code terminal CLI is a **Nix package**: the `llm-agents`
-  flake input provides the build recipe, and the VERSION is pinned by this
-  repository in `modules/home/claude-code-pin.json`, which `scripts/update.sh`
-  refreshes from Anthropic's own release bucket — so an update always delivers
-  Anthropic's latest, not a packager's. It is deliberately not the
-  `claude-code` Homebrew cask, which lags the release stream by days; do not
-  move it back, and do not hand the version back to llm-agents' automation,
-  which trails by hours-to-a-day. Never add the separate `claude` desktop
+- Anthropic's Claude Code terminal CLI **updates itself**: the binary is
+  Anthropic's native install under `~/.local/share/claude`, application-owned
+  like ChatGPT.app's Sparkle updates, and nothing in this repository pins its
+  version. Nix owns what surrounds it — `modules/home/development.nix` declares
+  the launcher that `claude` on PATH resolves to (it bootstraps the native
+  install from a hash-pinned seed when absent), `programs.claude-code` wraps
+  that launcher with `--plugin-dir`, and `autoUpdatesChannel` is declared in
+  the managed settings. Every Nix-delivered arrangement lagged — the
+  `claude-code` Homebrew cask by days, llm-agents' automation by
+  hours-to-a-day, this repository's own pin by however long since the last
+  `nixup` — so do not move the binary back into Nix or Homebrew, never set
+  `DISABLE_AUTOUPDATER`, and do not put `~/.local/bin` on the shell's PATH ahead of
+  the Nix profile, which would bypass the plugin wrapping. Never add the separate `claude` desktop
   cask. Ghostty is the terminal, installed by Home Manager from
   `pkgs.ghostty-bin` because `pkgs.ghostty` is Linux-only; Herdr runs inside it.
   cmux was the superseded terminal and was removed entirely on 2026-08-14.

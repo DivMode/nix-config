@@ -8,26 +8,44 @@
 let
   inherit (pkgs.stdenv.hostPlatform) system;
 
-  # Claude Code: llm-agents provides the BUILD RECIPE, this repository pins the
-  # VERSION. Two lags led here. The Homebrew cask lagged the release stream by
-  # days (2026-08-13: cask 2.1.223 against upstream 2.1.231), which moved the
-  # package to the llm-agents flake. Then llm-agents' own automation proved to
-  # trail by hours-to-a-day (2026-09-01: its HEAD packaged 2.1.252 while
-  # Anthropic had published 2.1.257 that morning) — and a full
-  # `./scripts/update.sh` faithfully delivering a stale version reads as the
-  # updater being broken.
+  # Claude Code updates ITSELF. This repository used to deliver it as a Nix
+  # package, and every arrangement of that lagged: the Homebrew cask by days
+  # (2026-08-13: cask 2.1.223 against upstream 2.1.231), llm-agents' packaging
+  # by hours-to-a-day (2026-09-01: 2.1.252 against 2.1.257), and finally a
+  # version pin this repository refreshed itself, which was current only as of
+  # the last `nixup` — 2026-09-17 ran 2.1.269 with 2.1.276 published. A store
+  # path cannot update itself, so the Nix package also had to switch Claude
+  # Code's own updater off, and a status-line segment was written to replace
+  # the notice that silenced. Anthropic ships several releases a week; chasing
+  # that through a lock file is the wrong owner.
   #
-  # So the version and per-platform hash live in ./claude-code-pin.json, and
-  # scripts/update.sh refreshes that file from Anthropic's OWN release bucket —
-  # the same `latest` pointer and manifest checksums llm-agents' updater reads
-  # (its package.nix passthru.updater documents the endpoints). The override
-  # only replaces `version` and `src`; the wrapper flags, install phase, and
-  # version check hook are still llm-agents' recipe, so a recipe change arrives
-  # through the normal lock bump while the version never waits on anyone's
-  # automation. The URL template and platform tokens mirror that recipe; if
-  # they drift, the build fails loudly on a 404 or hash mismatch rather than
-  # shipping the wrong bytes.
-  claudeCodePin = builtins.fromJSON (builtins.readFile ./claude-code-pin.json);
+  # So the binary is now Anthropic's native install, which lives in
+  # ~/.local/share/claude/versions, is reached through ~/.local/bin/claude, and
+  # keeps itself current in the background. That is application-owned mutable
+  # state, the same footing as ChatGPT.app's Sparkle updates. What Nix still
+  # owns is everything declarative AROUND it: this launcher is what `claude`
+  # on PATH resolves to, and `programs.claude-code` in ../ai wraps it with the
+  # `--plugin-dir` flags, so plugins, skills, agents and instructions still
+  # come from the store. ~/.local/bin is deliberately not on the shell's PATH —
+  # reaching the native binary directly would skip that wrapping. The launcher
+  # appends it to the END of its own PATH only, because the client otherwise
+  # warns on every `claude update` that the directory is missing and advises
+  # prepending it in .zshrc, which is exactly the bypass. Last on PATH, it
+  # shadows nothing: `claude` inside a session still resolves to the wrapper
+  # (verified 2026-09-18; DISABLE_INSTALLATION_CHECKS does not silence it).
+  #
+  # The launcher must not set DISABLE_AUTOUPDATER; that variable is the whole
+  # difference between this and what it replaced.
+  #
+  # Bootstrap: a machine with no native install gets one on first launch from
+  # the hash-pinned seed binary below, by the same `claude install` step
+  # Anthropic's own install script runs — but without piping an unpinned
+  # script from the network into a shell. The seed only ever runs `install
+  # latest`, so its version does not matter and nothing refreshes it; move
+  # ./claude-code-bootstrap.json by hand only if an old seed ever stops being
+  # able to install. URL template and platform tokens are Anthropic's release
+  # bucket layout, the one llm-agents' claude-code recipe documents.
+  claudeCodeBootstrap = builtins.fromJSON (builtins.readFile ./claude-code-bootstrap.json);
   claudeCodePlatform =
     {
       aarch64-darwin = "darwin-arm64";
@@ -35,12 +53,32 @@ let
       x86_64-linux = "linux-x64";
     }
     .${system};
-  claudeCode = (inputs.llm-agents.packages.${system}.claude-code).overrideAttrs {
-    inherit (claudeCodePin) version;
-    src = pkgs.fetchurl {
-      url = "https://storage.googleapis.com/claude-code-dist-86c565f3-f756-42ad-8dfa-d59b1c096819/claude-code-releases/${claudeCodePin.version}/${claudeCodePlatform}/claude";
-      hash = claudeCodePin.hashes.${system};
-    };
+  claudeCodeSeed =
+    pkgs.runCommand "claude-code-seed-${claudeCodeBootstrap.version}"
+      {
+        src = pkgs.fetchurl {
+          url = "https://storage.googleapis.com/claude-code-dist-86c565f3-f756-42ad-8dfa-d59b1c096819/claude-code-releases/${claudeCodeBootstrap.version}/${claudeCodePlatform}/claude";
+          hash = claudeCodeBootstrap.hashes.${system};
+        };
+      }
+      ''
+        install -Dm755 $src $out/bin/claude
+      '';
+  claudeCode = pkgs.writeShellApplication {
+    name = "claude";
+    text = ''
+      native="$HOME/.local/bin/claude"
+      if [[ ! -x "$native" ]]; then
+        echo "claude: no native install at $native; installing Anthropic's latest" >&2
+        ${claudeCodeSeed}/bin/claude install latest >&2
+        if [[ ! -x "$native" ]]; then
+          echo "claude: the installer finished but $native is still missing" >&2
+          exit 1
+        fi
+      fi
+      export PATH="$PATH:$HOME/.local/bin"
+      exec "$native" "$@"
+    '';
   };
 
   # Grafana's kubectl-style CLI for dashboards, alerts, metrics, logs and
@@ -83,7 +121,8 @@ in
     readOnly = true;
     default = claudeCode;
     description = ''
-      The Claude Code package this configuration uses. Declared here because
+      The Claude Code launcher this configuration uses: it runs Anthropic's
+      self-updating native install, bootstrapping it if absent. Declared here because
       this module owns portable developer tooling, but INSTALLED by
       `programs.claude-code` in ../ai, which wraps it with `--plugin-dir` to
       load plugins. Only one of them may install it, or they collide on

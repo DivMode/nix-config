@@ -23,9 +23,9 @@
     ./network-shares.nix
     ./privacy.nix
     ./projects.nix
+    ./retired-stillpane.nix
     ./screensaver.nix
     ./secrets.nix
-    ./stillpane.nix
     ./terminal.nix
   ];
 

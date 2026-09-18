@@ -14,6 +14,11 @@
       inputs.nixpkgs.follows = "nixpkgs";
     };
 
+    # Pinned to a release tag, as Herdr's own install documentation recommends,
+    # but not held there: `./scripts/update.sh` rewrites this tag to the latest
+    # GitHub release on every full run (or `update.sh herdr`), so Herdr moves
+    # with everything else. Until 2026-09-17 the tag only moved by hand edit,
+    # which is how it sat on v0.9.0 while v0.9.1 was out.
     herdr = {
       url = "github:herdrdev/herdr/v0.9.0";
       inputs.nixpkgs.follows = "nixpkgs";
@@ -58,9 +63,12 @@
     # Claude Code plugin. Building both from the same pin keeps the binary and
     # the skills that describe it at one version by construction.
     #
-    # A tag pin does not advance with `nix flake update` — updating gcx means
-    # moving the tag HERE, then letting the vendor-hash mismatch in
-    # development.nix report the new hash if Go dependencies changed.
+    # A tag pin does not advance with `nix flake update`, so
+    # `./scripts/update.sh` moves it: on a full run, or `update.sh gcx`, it
+    # rewrites this tag to the latest GitHub release, re-locks, and refreshes
+    # the Go vendor hash in modules/home/gcx-pin.json when it changed. The tag
+    # is a tag rather than the default branch because gcx's version string and
+    # release notes are derived from it.
     gcx-src = {
       url = "github:grafana/gcx/v1.2.0";
       flake = false;

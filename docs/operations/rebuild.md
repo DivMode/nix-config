@@ -68,14 +68,19 @@ both.
 nixup                  # every input and every pin, then build and activate
 nixup claude           # only Claude Code: the llm-agents input and the version pin
 nixup codex            # ChatGPT/Codex: the cask definition, plus where the installed app stands
+nixup gcx              # gcx: the release tag in flake.nix and the Go vendor hash
 nixup homebrew-cask    # any flake input, by its name in flake.nix
 nixup --dry-run        # move the versions and build, do not activate
 ```
 
-One version lives outside the lock, in a file this repository owns, and the
-script refreshes it on a full run or by name: the Claude Code CLI
+Two things live outside what `nix flake update` can move, and the script
+moves them on a full run or by name: the Claude Code CLI
 (`modules/home/claude-code-pin.json`, from Anthropic's release bucket, on
-`nixup claude`).
+`nixup claude`), and any input pinned to a release tag in `flake.nix` —
+Herdr and gcx — whose tag is rewritten to the latest GitHub release and
+re-locked, with the Go vendor hash in `modules/home/gcx-pin.json` refreshed
+when it changed (`nixup gcx`). A bare `nixup` therefore moves everything this
+repository declares; nothing waits for a hand edit.
 
 ChatGPT.app, which carries the `codex` CLI, is not moved by this script at
 all. It is a self-updating cask: Sparkle inside the app follows OpenAI's own

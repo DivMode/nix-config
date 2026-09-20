@@ -40,10 +40,19 @@ if [[ -n "$vault" ]]; then
     echo "error: automatic backup requires the service-account environment, not a Connect environment; no credentials were changed." >&2
     exit 1
   fi
-  op_bin=$(command -v op) || {
+  # Editor-launched shells may omit Homebrew's bin directory. Resolve the same
+  # vendor CLI declared by modules/home/secrets.nix, without changing credentials.
+  if ! op_bin=$(command -v op); then
+    case "$(uname -m)" in
+      arm64) op_bin=/opt/homebrew/bin/op ;;
+      x86_64) op_bin=/usr/local/bin/op ;;
+      *) op_bin="" ;;
+    esac
+  fi
+  if [[ ! -x "$op_bin" ]]; then
     echo "error: the configured 1Password CLI is unavailable." >&2
     exit 1
-  }
+  fi
   host_name=$(/usr/sbin/scutil --get LocalHostName)
   if [[ -z "$host_name" ]]; then
     echo "error: cannot identify this host's backup document." >&2
@@ -70,13 +79,9 @@ nix build --no-link --impure ".#darwinConfigurations.${host}.system"
 # ── 1Password must survive its own cask upgrade ─────────────────────────────
 # Homebrew's 1password cask declares `quit: "com.1password.1password"`, so an
 # activation that upgrades it quits the application and never starts it again.
-# That is not cosmetic. ../modules/home/default.nix signs every commit with
-# /Applications/1Password.app/Contents/MacOS/op-ssh-sign, which talks to the
-# desktop app's SSH agent, so a dead 1Password means no commits at all.
-#
-# Measured 2026-08-27: the 11:41:41 cask upgrade quit it, nothing restarted it,
-# and the next commit failed with "1Password: Could not connect to socket. Is
-# the agent running?".
+# Restore an application the user was already running. Git signing uses the
+# service-account signer and no longer depends on this desktop application's
+# availability or personal session.
 #
 # The state is recorded BEFORE activation and acted on after, so this only ever
 # restores what activation destroyed. An application the user had already quit
@@ -134,7 +139,7 @@ if [[ "$onePasswordWasRunning" == true ]] && ! /usr/bin/pgrep -x 1Password >/dev
   if /usr/bin/pgrep -x 1Password >/dev/null 2>&1; then
     echo "==> 1Password is running again"
   else
-    echo "warning: 1Password did not come back; commit signing will fail until it does" >&2
+    echo "warning: the previously running 1Password desktop application did not come back" >&2
   fi
 fi
 

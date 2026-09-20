@@ -13,6 +13,8 @@
     email = "replace-me@example.invalid";
     # Structurally valid public-only placeholder so generic flake checks work.
     signingKey = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
+    # Reference only: the matching private key is read by the service account.
+    signingKeyReference = "op://Automation/Git signing/private key?ssh-format=openssh";
   };
 
   # Project directories. Each attribute name becomes a Zsh function that changes

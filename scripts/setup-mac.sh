@@ -223,7 +223,7 @@ nix_escape() {
 }
 
 write_local_nix() {
-  local git_name="$1" git_email="$2" signing_key="$3" key_ids_file="$4" tmp
+  local git_name="$1" git_email="$2" signing_key="$3" key_ids_file="$4" signing_reference="$5" tmp
   tmp=$(mktemp "$REPO_ROOT/.local.nix.XXXXXX")
   {
     printf '{\n'
@@ -235,6 +235,7 @@ write_local_nix() {
     printf '    name = "%s";\n' "$(nix_escape "$git_name")"
     printf '    email = "%s";\n' "$(nix_escape "$git_email")"
     printf '    signingKey = "%s";\n' "$(nix_escape "$signing_key")"
+    printf '    signingKeyReference = "%s";\n' "$(nix_escape "$signing_reference")"
     printf '  };\n'
     printf '  onePassword.sshAgentKeyIds = [\n'
     while IFS= read -r item_id; do
@@ -342,7 +343,7 @@ if [[ -e "$LOCAL_FILE" ]]; then
     if confirm "Replace it with detected host fields and bootstrap placeholders?"; then
       bootstrap_ids=$(mktemp)
       printf '%s\n' "$BOOTSTRAP_ITEM_ID" > "$bootstrap_ids"
-      write_local_nix "Bootstrap User" "bootstrap@example.invalid" "$BOOTSTRAP_KEY" "$bootstrap_ids"
+      write_local_nix "Bootstrap User" "bootstrap@example.invalid" "$BOOTSTRAP_KEY" "$bootstrap_ids" "op://Automation/Git signing/private key?ssh-format=openssh"
       rm -f "$bootstrap_ids"
     else
       exit 1
@@ -353,7 +354,7 @@ if [[ -e "$LOCAL_FILE" ]]; then
 else
   bootstrap_ids=$(mktemp)
   printf '%s\n' "$BOOTSTRAP_ITEM_ID" > "$bootstrap_ids"
-  write_local_nix "Bootstrap User" "bootstrap@example.invalid" "$BOOTSTRAP_KEY" "$bootstrap_ids"
+  write_local_nix "Bootstrap User" "bootstrap@example.invalid" "$BOOTSTRAP_KEY" "$bootstrap_ids" "op://Automation/Git signing/private key?ssh-format=openssh"
   rm -f "$bootstrap_ids"
   say "Created ignored local.nix with detected Mac fields and public placeholders."
 fi
@@ -485,6 +486,9 @@ case "$SIGNING_KEY_NUMBER" in *[!0-9]*|'') warn "Enter a number from the list.";
   || { warn "Signing-key selection is out of range."; exit 1; }
 
 selected_id=$(sed -n "${SIGNING_KEY_NUMBER}p" "$keys_tsv" | cut -f1)
+selected_vault=$("$JQ" -er --arg id "$selected_id" '.[] | select(.id == $id) | .vault.id' "$keys_json")
+signing_reference="op://$selected_vault/$selected_id/private key?ssh-format=openssh"
+say "The configured service account must have read access to the selected signing key."
 signing_key=$("$OP" item get "$selected_id" --fields "public key")
 [[ "$signing_key" == ssh-ed25519\ * ]] \
   || { warn "The selected item does not expose an Ed25519 public key."; exit 1; }
@@ -503,7 +507,7 @@ elif [[ -n "$ADDITIONAL_KEY_NUMBERS" ]]; then
   done
 fi
 if confirm "Replace local.nix with the detected host and selected Git/SSH metadata?"; then
-  write_local_nix "$GIT_NAME" "$GIT_EMAIL" "$signing_key" "$ordered_ids"
+  write_local_nix "$GIT_NAME" "$GIT_EMAIL" "$signing_key" "$ordered_ids" "$signing_reference"
 else
   warn "No local identity was changed."
   exit 1

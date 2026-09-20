@@ -107,6 +107,7 @@
           "name"
           "email"
           "signingKey"
+          "signingKeyReference"
         ];
       sshAgentKeyIdsPresent =
         rawLocal ? onePassword
@@ -121,7 +122,7 @@
         if missingLocalFields != [ ] then
           throw "local.nix is missing one or more required top-level fields; compare it with local.example.nix"
         else if !gitFieldsPresent then
-          throw "local.nix git must define name, email, and signingKey; compare it with local.example.nix"
+          throw "local.nix git must define name, email, signingKey, and signingKeyReference; preserve existing fields and add the service-account key reference from local.example.nix"
         else if !sshAgentKeyIdsPresent then
           throw "local.nix onePassword.sshAgentKeyIds must contain one or more 26-character 1Password item IDs"
         else if
@@ -133,6 +134,7 @@
             rawLocal.git.name
             rawLocal.git.email
             rawLocal.git.signingKey
+            rawLocal.git.signingKeyReference
           ])
         then
           throw "local.nix identity values must be non-empty strings"

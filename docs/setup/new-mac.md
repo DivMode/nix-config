@@ -117,6 +117,14 @@ host input with bootstrap placeholders. The reference contains only item
 metadata, never the token or private key. A successful routine rebuild updates
 the stored backup with this field.
 
+GitHub SSH fetches and pushes use the same service-account key through the
+declarative Git transport. Register its public key for authentication on the
+intended GitHub account as well as for signing. The transport accepts only
+GitHub repository fetch/push commands, requires a trusted GitHub host key in
+OpenSSH's known-hosts file, and disables desktop-agent and password fallback.
+Other SSH Git hosts fail closed until a declarative transport is configured.
+Ordinary SSH outside Git retains its existing configuration.
+
 ### Validate
 
 Run the validation and non-activating build in

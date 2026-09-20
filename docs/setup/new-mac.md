@@ -1,7 +1,7 @@
 # New Mac setup
 
-This is the complete bootstrap procedure. The public repository contains no
-personal or machine identity.
+This documents bootstrap and its current limitations. The public repository
+contains no personal or machine identity.
 
 ## Prerequisites
 
@@ -13,35 +13,50 @@ personal or machine identity.
 
 Full Xcode is not required unless an Apple-platform project needs it.
 
-## Recommended automated path
+## Setup wizard
 
-Run:
+The wizard currently requires a complete, matching `local.nix` before its
+first build. Its placeholder writer omits required fields, so an empty or
+mismatched input fails evaluation before 1Password can be installed and before
+a saved document can be restored. Use the full-template manual preparation
+below first. This existing limitation is not fixed by the install-only mode.
+
+With that complete input in place, run:
 
 ```sh
 ./scripts/setup-mac.sh
 ```
 
-The wizard detects non-secret Mac fields, creates safe bootstrap placeholders,
-runs the first switch, and pauses for 1Password sign-in. It then **restores
-the ignored `local.nix` from 1Password**: each host's canonical copy lives as
+The wizard preserves the matching input, runs an install-only first switch
+without credential maintenance, and pauses for 1Password sign-in. It can then
+**restore the ignored `local.nix` from 1Password**: each host's canonical copy lives as
 a Document item titled `nix-config local.nix <LocalHostName>`, validated
-against the detected account/hostname/architecture before it is trusted. On a
-wiped machine that already has a stored copy, no identity or deploy wiring is
-ever retyped — the Connect host, 1Password item IDs, and AWS profiles all come
-back with the restore, and the final switch is the last step.
+against the detected account/hostname/architecture before it is trusted. After a complete bootstrap input has allowed that first switch, the Connect
+host, 1Password item IDs, and AWS profiles come back with the restore. The wizard explicitly bootstraps the cached service
+account and network-share Keychain entry before the final, ordinary switch.
+Personal-account access belongs to these interactive setup steps, not routine
+activation. Stopping after the first switch leaves setup incomplete.
 
-Only a brand-new host (no stored copy, or a mismatched one) continues into the
-interactive stage: choose the signing key and any additional SSH keys, the
-wizard writes ignored `local.nix` and uploads it as the host's stored copy for
-next time. Private keys never leave 1Password either way.
+If no matching stored copy is available, the identity writer collects Git/SSH
+metadata but still omits required configuration fields. That path cannot finish
+unattended; complete and validate the input manually before proceeding. Private
+keys never leave 1Password.
 
 `scripts/rebuild.sh` keeps the stored copy current: after every successful
 activation it compares `local.nix` against the Document item and re-uploads it
-when they differ.
+when they differ, then downloads the result to verify exact bytes. Routine
+rebuilds require the configured service account and never fall back to personal
+sign-in. The setup wizard creates the initial document; a failed routine read
+does not automatically create a replacement.
 
 ## Manual fallback
 
-The following steps describe what the wizard automates.
+The steps below also cover a brand-new host without a complete stored
+`local.nix`. The wizard's identity writer currently omits required download and
+credential configuration fields; it is not a complete new-host configurator.
+Prepare a complete input from `local.example.nix` before the first build, and
+retain those fields when setting the final identity. Restoring a complete
+existing host document avoids that limitation.
 
 ### Create the local host input
 
@@ -97,7 +112,9 @@ public signing key.
 ### Validate
 
 Run the validation and non-activating build in
-[`../operations/rebuild.md`](../operations/rebuild.md). Never switch a generation
+[`../operations/rebuild.md`](../operations/rebuild.md). For the human first-time
+installation only, set `NIX_CONFIG_SETUP_BOOTSTRAP=1` during evaluation/build
+to defer credential maintenance until sign-in. Never switch a generation
 whose lock, format, checks, evaluation, and build have not succeeded and been
 reviewed.
 
@@ -110,6 +127,7 @@ the official nix-darwin 26.05 bootstrap command and pass this repository's flake
 ```sh
 sudo env \
   NIX_CONFIG_LOCAL="$NIX_CONFIG_LOCAL" \
+  NIX_CONFIG_SETUP_BOOTSTRAP=1 \
   NIX_CONFIG="extra-experimental-features = nix-command flakes" \
   /nix/var/nix/profiles/default/bin/nix \
   run nix-darwin/nix-darwin-26.05#darwin-rebuild -- \
@@ -118,8 +136,14 @@ sudo env \
 
 The first generation installs 1Password and its CLI. Open 1Password, sign in,
 enable its SSH agent and CLI integration, then replace the bootstrap Git/SSH
-placeholders in `local.nix`. Run the routine switch in the operations guide to
-apply the final identity. This distinction follows the
+placeholders and credential references in `local.nix`. In the human setup
+terminal, run the generated `nix-config-bootstrap-onepassword` command with
+the declared service-account reference, then the network-share bootstrap below
+when configured. Remove the install-only marker from the setup environment,
+and open a fresh terminal so the declared shell initialization loads the cached
+service account. The initial recovery Document must exist before using the
+routine rebuild. Run the routine switch in the operations guide to apply the
+final identity. This distinction follows the
 [official nix-darwin installation instructions](https://github.com/nix-darwin/nix-darwin#step-2-installing-nix-darwin).
 
 ### 1Password and Git
@@ -160,9 +184,9 @@ the ability to set up your own computer, and you would discover it at the worst
 possible moment.
 
 Grant `read_items` **and** `write_items` on both. Write is not optional on the
-vault holding the `local.nix` backup: `rebuild.sh` only *warns* when the upload
-fails, so a read-only token leaves the backup silently stale — which is exactly
-the file a wiped machine needs.
+vault holding the `local.nix` backup: `rebuild.sh` reports failure when the upload
+or verification fails. Activation may already have succeeded; the recovery copy
+must be repaired before treating the maintenance run as complete.
 
 `setup-mac.sh` offers the homelab vault as the default answer when it asks which
 vault holds `local.nix`, so the usual case is a single Enter. That name can be
@@ -185,16 +209,18 @@ delete vaults it created, never a pre-existing one it was merely granted.
 reconciles them on a timer. The password is never in this repository or in
 `local.nix`; it lives in the login Keychain.
 
-On a machine with no Keychain entry yet, activation seeds one from 1Password
-using `local.networkShares.passwordReference`, so nothing is typed. That read
-tries the service-account token first and falls back to the desktop app
-integration — which is why the integration above is enabled, not merely
-convenient. Leave `passwordReference` null to skip seeding entirely and answer
-one Finder authentication dialog on the first mount instead.
+On a machine with no Keychain entry yet, the human setup wizard invokes
+`nix-config-bootstrap-network-share-password` with the declared server,
+account and `local.networkShares.passwordReference`. For manual setup, run
+that generated command with the same three arguments in the signed-in human
+terminal. It can use the desktop integration in this explicit bootstrap step.
+Routine activation only verifies the existing Keychain entry and fails if a
+configured entry is missing; it never falls back to personal authentication.
+Leave `passwordReference` null to manage the Keychain entry through Finder
+instead.
 
-Verified end to end on 2026-08-21 by deleting the Keychain entry outright:
-activation recreated it with a byte-identical password, and the mount agent then
-mounted the share off it with no prompt.
+The earlier 2026-08-21 end-to-end observation covered activation-time seeding.
+It does not establish end-to-end verification of the separate bootstrap flow.
 
 Home Manager configures SSH-format commit and tag signing through 1Password's
 `op-ssh-sign`; the private key remains inside 1Password.

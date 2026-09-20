@@ -111,9 +111,15 @@ client files by hand.
 
 ## Code quality
 
-Prefer correct, complete implementations over minimal ones. Use the appropriate
-data structure and algorithm rather than brute-forcing something with a known
-better solution.
+Deliver the smallest complete, correct change that satisfies the requested
+behavior and its necessary safety requirements. Completeness is measured against
+that outcome, not hypothetical future needs or the amount of code written.
+
+Prefer existing platform capabilities and repository mechanisms. Do not add
+speculative abstractions, compatibility layers, fallback paths, dependencies, or
+test infrastructure. Keep necessary authorization, trust-boundary validation,
+and data-integrity protections. Use the appropriate data structure and algorithm
+rather than brute-forcing something with a known better solution.
 
 When fixing a bug, fix the root cause, not the symptom.
 
@@ -127,14 +133,50 @@ Fix type errors properly, with real types and guards. Escape hatches that
 silence the checker — casts to a permissive type, `any`, suppression comments —
 convert a compile-time error into a runtime one.
 
-## Tests
+## Tests and verification
 
-Every test is expected to pass. Investigate every failure.
+Tests must protect meaningful required behavior, not justify an implementation,
+increase test counts, or satisfy a coverage target alone.
 
-No test is "flaky", "pre-existing", or "someone else's". Those are conclusions
-that require evidence, and reaching for them first is how a real defect gets
-shipped. Never re-run a failing test hoping for a different result: find the
-cause.
+Before adding or expanding tests, identify the concrete contract or failure
+mode and check whether existing tests, types, schemas, or acceptance checks
+already cover it adequately. Reuse existing coverage; no new test is a valid
+outcome. In the existing PR or completion report, briefly explain the distinct
+failure each new test group catches. One sentence per group is enough; do not
+create a new manifest, design document, or approval round for routine tests.
+
+Choose the smallest test scope that can detect the failure. Exercise the
+production implementation and derive expected results from the requirement,
+not by copying implementation logic. Mock only justified boundaries; do not
+mock away the behavior claimed as verified.
+
+Do not add tests that merely confirm mock setup, duplicate the implementation,
+assert incidental private structure, or inspect source text as a substitute
+for runtime behavior. Source or generated-file assertions are appropriate
+when those artifacts are themselves the contract. Snapshots and permutations
+must protect a distinct meaningful contract, not freeze incidental details.
+
+For bug fixes, show the regression check failing for the relevant reason before
+the fix and passing afterward when feasible. For high-risk new behavior, use a
+representative negative case or isolated known-bad change to check assertion
+sensitivity. A failing assertion is useful only if it protects the intended
+contract. Report evidence gaps; do not add a mutation-testing framework by default.
+
+Do not introduce a test runner, dependency, helper service, or generalized
+harness without showing why existing mechanisms cannot verify the requested
+behavior and ensuring the expansion is within the authorized scope.
+
+Investigate every observed failure. Attribute pre-existing, environmental, or
+nondeterministic failures only with evidence; never rerun hoping for green.
+Separate unrelated repairs from the authorized task. Do not delete, skip, or
+weaken legitimate checks merely to obtain a passing result.
+
+Verify the requested outcome through the actual application or integration
+boundary when the claim depends on that boundary. Passing unit tests alone does
+not establish that a feature is usable. Stop adding code and tests when the
+required outcome and relevant failure risks are adequately covered. Summarize
+what was verified and what remains unverified; do not invent work to appear
+more complete.
 
 ## Diagnosis
 
@@ -200,14 +242,23 @@ Never expose secrets or private user data.
 ## Credentials
 
 The owner's credentials are not the repository's. Never invoke the 1Password
-CLI (`op`) from an agent command, never unset, strip or override an `OP_*`
-variable, never read `~/.config/op/`, and never reach for the desktop app,
-biometric, or signed-in session. Secrets come only through the repository's
+CLI (`op`) directly or through an improvised wrapper, never unset, strip or
+override an `OP_*` variable, never read `~/.config/op/`, and never reach for the
+desktop app, biometric, or signed-in session. Secrets come only through the repository's
 own loader, which uses the self-hosted Connect server; if that loader fails
 for any reason, including a quota or rate limit, stop and report. Do not find
 another credential, do not write a wrapper that reads secrets another way. The
 hook guard denies these commands before they run; a denial here is never a
 false positive.
+
+An explicitly authorized, reviewed declarative rebuild entry point named in the
+repository's instructions may use its declared credential interface for
+configuration backup and credential refresh. Its unattended path must require
+the designated service account and fail closed on missing credentials or an
+authentication error; it must never fall back to a personal session. First-time
+personal sign-in belongs to an explicit human setup workflow. This permits
+running that maintenance entry point, not extracting credentials, changing
+accounts, weakening guards, or inventing a new loader to evade this boundary.
 
 ## Blocked tooling
 

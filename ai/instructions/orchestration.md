@@ -13,7 +13,9 @@ That is the whole list. This is a policy for **local workers**.
 
 **ChatGPT on the web does not read either file** — they are files on this Mac
 and a browser session cannot see them. Do not assume a remote participant has
-read this policy. Supply relevant instructions with the task when needed.
+read this policy. Supply relevant canonical policy excerpts and acceptance
+criteria with remote tasks, including review tasks; a link alone is not proof
+that the recipient received or read them.
 
 ## Roles
 
@@ -65,6 +67,8 @@ read this policy. Supply relevant instructions with the task when needed.
    an interruption, inspect the current client's worker status and any pending
    results. Events are history; the current worker status is the liveness
    authority. Resume the worker that owns the task before creating another.
+   After resumption or context loss, re-read the applicable instructions and
+   durable acceptance criteria; do not restart implementation from a summary.
 
 7. **Model routing for Claude workers.** Default to **Opus 5** (`opus`) for
    implementation, hard debugging, architecture, and substantive review.
@@ -83,6 +87,11 @@ read this policy. Supply relevant instructions with the task when needed.
    the diff and the original requirement, not the implementer's summary.
    **Implementation workers do not self-approve**: they hand their evidence to
    the ChatGPT foreman, which is where approval and merge live.
+   **Review necessity before correctness.** For each new test group or support
+   subsystem, check the required behavior, distinct failure it detects, and
+   cheaper existing alternative. Reject unjustified additions even when all
+   tests pass. Inspect the original requirement, actual diff, and execution
+   evidence; a clean automated review is not proof of necessity or completion.
 
 9. **A separate Claude reviewer is optional, not mandatory.** Open one when
    risk, complexity, or local execution earns a genuinely independent read —

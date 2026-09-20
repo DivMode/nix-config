@@ -31,8 +31,7 @@ separate CLI package, but leaves runtime injection disabled. If runtime injectio
 is deliberately enabled later, the generated `ai.env` contains only
 `NAME=op://...` references, and the `claude` launcher resolves them with `op run`
 at process start. There is no Codex launcher. The wrapper targets the absolute,
-architecture-correct Homebrew Claude Code terminal binary rather than a Nix AI
-package. Never replace this with `builtins.readFile` on a
+architecture-correct Claude Code binary from the declared package. Never replace this with `builtins.readFile` on a
 decrypted file, `op read` during evaluation, or a derivation that writes resolved
 values: all of those can expose secrets through the Nix store or build logs.
 
@@ -41,6 +40,20 @@ The setup wizard also requires **Settings > Developer > Integrate with 1Password
 CLI** while it discovers public SSH metadata after the first switch. The dormant
 runtime-injection feature uses the same integration if enabled later. Nix cannot
 perform the protected sign-in or toggle that GUI setting.
+
+With a complete matching `local.nix`, the first generation is an install-only
+phase. The wizard's placeholder writer is currently incomplete; see the
+[setup limitations](../docs/setup/new-mac.md#setup-wizard) before attempting a
+fresh host. The setup wizard passes a
+temporary bootstrap marker so credential-dependent activation entries do not
+run before 1Password is installed and signed in. After the sign-in step it
+invokes the generated `nix-config-bootstrap-onepassword` command in an
+interactive terminal, which writes the service-account token to its 0600 cache.
+If network shares are configured, it also invokes
+`nix-config-bootstrap-network-share-password` to seed the login Keychain. These
+commands are deliberately unavailable to non-interactive callers. Every ordinary
+activation requires the cached service-account token and fails if the Connect
+refresh cannot authenticate; it never falls back to the desktop session.
 
 The macOS 1Password application owns:
 

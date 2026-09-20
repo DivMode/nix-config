@@ -57,6 +57,69 @@ let
   sshAgentSocket = "${config.home.homeDirectory}/Library/Group Containers/2BUA8C4S2C.com.1password/t/agent.sock";
   homebrewPrefix = if pkgs.stdenv.hostPlatform.isAarch64 then "/opt/homebrew" else "/usr/local";
   opExecutable = "${homebrewPrefix}/bin/op";
+  setupBootstrap = cfg.setupBootstrap;
+
+  # First-machine bootstrap is deliberately a separate, interactive command.
+  # Routine activation never authenticates through the desktop application: it
+  # requires the token this command stores and fails closed when that token is
+  # absent. The setup wizard invokes this only after the user has signed in and
+  # enabled the CLI integration.
+  onePasswordBootstrap = pkgs.writeShellApplication {
+    name = "nix-config-bootstrap-onepassword";
+    runtimeInputs = [ pkgs.coreutils ];
+    text = ''
+      if [ ! -t 0 ] || [ ! -t 1 ]; then
+        printf '%s\n' '1Password bootstrap requires an interactive human setup terminal.' >&2
+        exit 1
+      fi
+
+      reference="''${1:?service-account reference required}"
+      tokenPath="''${2:-$HOME/.config/op/service-account-token}"
+
+      if [ -s "$tokenPath" ]; then
+        exit 0
+      fi
+
+      if [ -n "''${OP_SERVICE_ACCOUNT_TOKEN:-}" ]; then
+        printf '%s\n' 'A service-account token is already set but its cache is empty; start a fresh setup terminal.' >&2
+        exit 1
+      fi
+
+      if [ ! -x ${escapeShellArg opExecutable} ]; then
+        printf '%s\n' '1Password CLI is unavailable; complete the first Nix generation before bootstrapping.' >&2
+        exit 1
+      fi
+
+      if ! mkdir -p "$(dirname "$tokenPath")"; then
+        printf '%s\n' 'Could not create the service-account token directory.' >&2
+        exit 1
+      fi
+      tmp="$(mktemp "''${tokenPath}.tmp.XXXXXX")" || {
+        printf '%s\n' 'Could not create a private temporary token file.' >&2
+        exit 1
+      }
+      trap 'rm -f "$tmp"' EXIT
+      umask 077
+      if ! ${escapeShellArg opExecutable} read "$reference" > "$tmp" 2>/dev/null; then
+        printf '%s\n' 'Could not read the service-account token; confirm the 1Password app is signed in and CLI integration is enabled.' >&2
+        exit 1
+      fi
+      if [ ! -s "$tmp" ]; then
+        printf '%s\n' '1Password returned an empty service-account token.' >&2
+        exit 1
+      fi
+
+      if ! chmod 600 "$tmp"; then
+        printf '%s\n' 'Could not set private permissions on the service-account token.' >&2
+        exit 1
+      fi
+      if ! mv "$tmp" "$tokenPath"; then
+        printf '%s\n' 'Could not publish the service-account token.' >&2
+        exit 1
+      fi
+      trap - EXIT
+    '';
+  };
 
   # AWS reads credentials by EXECUTING this and parsing its stdout
   # (`credential_process`). Nothing is cached to disk: the keys stay in
@@ -176,9 +239,15 @@ let
   # evaluation time; the token is resolved at activation, so no secret reaches
   # the store.
   connectEnvLines = ''
-    printf '%s=%s\n' OP_CONNECT_HOST ${escapeShellArg local.onePassword.connectHost} >> "$tmp"
+    if ! printf '%s=%s\n' OP_CONNECT_HOST ${escapeShellArg local.onePassword.connectHost} >> "$tmp"; then
+      printf '%s\n' 'Could not write OP_CONNECT_HOST to the temporary Connect environment file.' >&2
+      exit 1
+    fi
     if value=$(${escapeShellArg opExecutable} read ${escapeShellArg local.onePassword.connectReference} 2>/dev/null) && [ -n "$value" ]; then
-      printf '%s=%s\n' OP_CONNECT_TOKEN "$value" >> "$tmp"
+      if ! printf '%s=%s\n' OP_CONNECT_TOKEN "$value" >> "$tmp"; then
+        printf '%s\n' 'Could not write OP_CONNECT_TOKEN to the temporary Connect environment file.' >&2
+        exit 1
+      fi
     else
       printf '%s\n' 'Could not resolve OP_CONNECT_TOKEN from 1Password; the Connect environment file was not written.' >&2
       resolved=0
@@ -230,6 +299,14 @@ let
 in
 {
   options.nixConfig.secrets.onePassword = {
+    setupBootstrap = mkOption {
+      type = types.bool;
+      readOnly = true;
+      internal = true;
+      default = builtins.getEnv "NIX_CONFIG_SETUP_BOOTSTRAP" == "1";
+      description = "Whether this evaluation is the explicit install-only bootstrap generation.";
+    };
+
     enable = mkEnableOption "runtime secret injection from 1Password on macOS";
 
     references = mkOption {
@@ -389,6 +466,11 @@ in
     })
 
     (mkIf cfg.serviceAccount.enable {
+      # The command is present for the explicit first-machine setup step. It
+      # refuses non-interactive callers and accepts the reference/path at run
+      # time so the first generation's placeholder local.nix is harmless.
+      home.packages = [ onePasswordBootstrap ];
+
       # `.zshenv`, not `.zshrc`: zsh reads `.zshrc` only for INTERACTIVE shells,
       # and the processes that must never prompt — `just` recipes, Lefthook
       # hooks, an agent's Bash tool — are non-interactive. Wiring this into
@@ -399,31 +481,32 @@ in
         fi
       '';
 
-      # The token is fetched here rather than written by hand, so a new machine
-      # needs no manual step beyond the 1Password sign-in that stage 3 of
-      # setup-mac.sh already requires. Nix owns the PROCEDURE; the value lands
-      # only in a 0600 file and never in the store.
+      # The token is fetched by the explicit interactive bootstrap command
+      # rather than this routine activation entry. A new machine needs the
+      # 1Password sign-in that stage 3 of setup-mac.sh already requires; after
+      # that, every unattended refresh uses only the cached service-account
+      # value. Nix owns the procedure; the value lands only in a 0600 file and
+      # never in the store.
       home.activation.onePasswordServiceAccountToken = lib.hm.dag.entryAfter [ "writeBoundary" ] ''
         tokenPath=${escapeShellArg cfg.serviceAccount.tokenPath}
-        if [ -s "$tokenPath" ]; then
+        if ${if setupBootstrap then "true" else "false"}; then
+          # The setup wizard's first generation exists to install 1Password;
+          # its explicit interactive bootstrap runs after sign-in. The flag is
+          # read during this one impure evaluation, so this generation carries
+          # an install-only branch; the final normal evaluation restores the
+          # strict routine path.
+          printf '%s\n' 'First-generation setup: service-account bootstrap deferred until after interactive sign-in.' >&2
+        elif [ -s "$tokenPath" ]; then
           # Already cached. Activation runs on EVERY rebuild, and this account
           # is capped at 1,000 API requests per rolling 24h account-wide, so
           # an ungated fetch here would spend the same budget deploys need.
           :
         elif [ ! -x ${escapeShellArg opExecutable} ]; then
-          printf '%s\n' '1Password CLI unavailable; OP_SERVICE_ACCOUNT_TOKEN will be unset until the next rebuild.' >&2
+          printf '%s\n' '1Password CLI is unavailable during routine activation; refusing to continue without the configured credential loader.' >&2
+          exit 1
         else
-          mkdir -p "$(dirname "$tokenPath")"
-          (
-            umask 077
-            if ${escapeShellArg opExecutable} read ${escapeShellArg local.onePassword.serviceAccountReference} > "$tokenPath.tmp" 2>/dev/null; then
-              mv "$tokenPath.tmp" "$tokenPath"
-              chmod 600 "$tokenPath"
-            else
-              rm -f "$tokenPath.tmp"
-              printf '%s\n' 'Could not read the 1Password service-account token. Sign in to the 1Password application, enable Settings > Developer > Integrate with 1Password CLI, and rebuild.' >&2
-            fi
-          )
+          printf '%s\n' 'Cached 1Password service-account token is missing; run the interactive bootstrap before rebuilding.' >&2
+          exit 1
         fi
       '';
     })
@@ -448,23 +531,42 @@ in
         lib.hm.dag.entryAfter [ "onePasswordServiceAccountToken" ]
           ''
             envPath=${escapeShellArg cfg.connect.envPath}
-            if [ ! -x ${escapeShellArg opExecutable} ]; then
-              printf '%s\n' '1Password CLI unavailable; the Connect environment file was not written.' >&2
+            if ${if setupBootstrap then "true" else "false"}; then
+              printf '%s\n' 'First-generation setup: Connect refresh deferred until after interactive sign-in.' >&2
+            elif [ ! -s ${escapeShellArg cfg.serviceAccount.tokenPath} ]; then
+              if [ ! -x ${escapeShellArg opExecutable} ]; then
+                printf '%s\n' '1Password CLI is unavailable during routine Connect refresh; refusing to continue.' >&2
+                exit 1
+              else
+                printf '%s\n' 'Cached 1Password service-account token is missing; Connect refresh cannot use the desktop session.' >&2
+                exit 1
+              fi
+            elif [ ! -x ${escapeShellArg opExecutable} ]; then
+              printf '%s\n' '1Password CLI is unavailable while a cached service-account token exists.' >&2
+              exit 1
             else
+              if [ -n "''${OP_CONNECT_HOST:-}" ] || [ -n "''${OP_CONNECT_TOKEN:-}" ]; then
+                printf '%s\n' 'Connect variables are already set; refusing to refresh through an inherited credential context.' >&2
+                exit 1
+              fi
               # Authenticate with the cached service-account token. Activation runs
               # from darwin-rebuild, NOT a login zsh, so OP_SERVICE_ACCOUNT_TOKEN is
-              # absent from this environment and `op` would otherwise fall back to
-              # the desktop application and raise a biometric prompt — observed
-              # 2026-08-13, one prompt per rebuild that had to fetch.
-              if [ -r ${escapeShellArg cfg.serviceAccount.tokenPath} ]; then
-                OP_SERVICE_ACCOUNT_TOKEN="$(cat ${escapeShellArg cfg.serviceAccount.tokenPath})"
-                export OP_SERVICE_ACCOUNT_TOKEN
+              # absent from this environment. Read it explicitly so `op` cannot
+              # fall back to the desktop application.
+              OP_SERVICE_ACCOUNT_TOKEN="$(cat ${escapeShellArg cfg.serviceAccount.tokenPath})"
+              if [ -z "$OP_SERVICE_ACCOUNT_TOKEN" ]; then
+                printf '%s\n' 'Cached 1Password service-account token is empty; Connect refresh aborted.' >&2
+                exit 1
               fi
+              export OP_SERVICE_ACCOUNT_TOKEN
               mkdir -p "$(dirname "$envPath")"
-              (
+              if ! (
                 umask 077
-                tmp="$envPath.tmp"
-                : > "$tmp"
+                tmp="$(mktemp "''${envPath}.tmp.XXXXXX")" || {
+                  printf '%s\n' 'Could not create a private temporary Connect environment file.' >&2
+                  exit 1
+                }
+                trap 'rm -f "$tmp"' EXIT
                 resolved=1
                 ${connectEnvLines}
                 # All-or-nothing. A half-written file exports some variables and
@@ -479,16 +581,37 @@ in
                 # the old one until the file was deleted by hand. Observed
                 # 2026-08-21, two rebuilds with no effect.
                 if [ "$resolved" = 1 ]; then
-                  if cmp -s "$tmp" "$envPath"; then
-                    rm -f "$tmp"
-                  else
-                    mv "$tmp" "$envPath"
-                    chmod 600 "$envPath"
+                  publish=1
+                  if [ -e "$envPath" ]; then
+                    if cmp -s "$tmp" "$envPath"; then
+                      rm -f "$tmp"
+                      publish=0
+                    else
+                      cmp_status=$?
+                      if [ "$cmp_status" -ne 1 ]; then
+                        printf '%s\n' 'Could not compare the refreshed Connect environment with the existing file.' >&2
+                        exit 1
+                      fi
+                    fi
+                  fi
+                  if [ "$publish" = 1 ]; then
+                    if ! chmod 600 "$tmp"; then
+                      printf '%s\n' 'Could not set private permissions on the Connect environment file.' >&2
+                      exit 1
+                    fi
+                    if ! mv "$tmp" "$envPath"; then
+                      printf '%s\n' 'Could not publish the refreshed Connect environment file.' >&2
+                      exit 1
+                    fi
                   fi
                 else
                   rm -f "$tmp"
+                  exit 1
                 fi
-              )
+              ); then
+                printf '%s\n' 'Could not refresh the 1Password Connect environment with the cached service-account token.' >&2
+                exit 1
+              fi
             fi
           '';
     })

@@ -242,14 +242,23 @@ Never expose secrets or private user data.
 ## Credentials
 
 The owner's credentials are not the repository's. Never invoke the 1Password
-CLI (`op`) from an agent command, never unset, strip or override an `OP_*`
-variable, never read `~/.config/op/`, and never reach for the desktop app,
-biometric, or signed-in session. Secrets come only through the repository's
+CLI (`op`) directly or through an improvised wrapper, never unset, strip or
+override an `OP_*` variable, never read `~/.config/op/`, and never reach for the
+desktop app, biometric, or signed-in session. Secrets come only through the repository's
 own loader, which uses the self-hosted Connect server; if that loader fails
 for any reason, including a quota or rate limit, stop and report. Do not find
 another credential, do not write a wrapper that reads secrets another way. The
 hook guard denies these commands before they run; a denial here is never a
 false positive.
+
+An explicitly authorized, reviewed declarative rebuild entry point named in the
+repository's instructions may use its declared credential interface for
+configuration backup and credential refresh. Its unattended path must require
+the designated service account and fail closed on missing credentials or an
+authentication error; it must never fall back to a personal session. First-time
+personal sign-in belongs to an explicit human setup workflow. This permits
+running that maintenance entry point, not extracting credentials, changing
+accounts, weakening guards, or inventing a new loader to evade this boundary.
 
 ## Blocked tooling
 

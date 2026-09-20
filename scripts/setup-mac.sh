@@ -190,8 +190,8 @@ finish() {
 # Replace the example below. Set the two totals to match the stages you write.
 # ──────────────────────────────────────────────────────────────────────────
 
-TOTAL_STAGES=7
-TOTAL_MINUTES=21
+TOTAL_STAGES=8
+TOTAL_MINUTES=23
 
 REPO_ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 ENV_FILE="$REPO_ROOT/.setup-mac.env"
@@ -254,18 +254,37 @@ write_local_nix() {
 }
 
 run_switch() {
+  local mode="${1:-routine}"
   export NIX_CONFIG_LOCAL="$LOCAL_FILE"
   if [[ -x /run/current-system/sw/bin/darwin-rebuild ]]; then
-    sudo -A --preserve-env=NIX_CONFIG_LOCAL \
-      /run/current-system/sw/bin/darwin-rebuild switch --impure \
-      --flake "path:$REPO_ROOT#example-mac"
+    if [[ "$mode" == bootstrap ]]; then
+      export NIX_CONFIG_SETUP_BOOTSTRAP=1
+      sudo -A --preserve-env=NIX_CONFIG_LOCAL,NIX_CONFIG_SETUP_BOOTSTRAP \
+        /run/current-system/sw/bin/darwin-rebuild switch --impure \
+        --flake "path:$REPO_ROOT#example-mac"
+      unset NIX_CONFIG_SETUP_BOOTSTRAP
+    else
+      sudo -A --preserve-env=NIX_CONFIG_LOCAL \
+        /run/current-system/sw/bin/darwin-rebuild switch --impure \
+        --flake "path:$REPO_ROOT#example-mac"
+    fi
   else
-    sudo env \
-      NIX_CONFIG_LOCAL="$NIX_CONFIG_LOCAL" \
-      NIX_CONFIG="extra-experimental-features = nix-command flakes" \
-      /nix/var/nix/profiles/default/bin/nix \
-      run nix-darwin/nix-darwin-26.05#darwin-rebuild -- \
-      switch --impure --flake "path:$REPO_ROOT#example-mac"
+    if [[ "$mode" == bootstrap ]]; then
+      sudo env \
+        NIX_CONFIG_LOCAL="$NIX_CONFIG_LOCAL" \
+        NIX_CONFIG_SETUP_BOOTSTRAP=1 \
+        NIX_CONFIG="extra-experimental-features = nix-command flakes" \
+        /nix/var/nix/profiles/default/bin/nix \
+        run nix-darwin/nix-darwin-26.05#darwin-rebuild -- \
+        switch --impure --flake "path:$REPO_ROOT#example-mac"
+    else
+      sudo env \
+        NIX_CONFIG_LOCAL="$NIX_CONFIG_LOCAL" \
+        NIX_CONFIG="extra-experimental-features = nix-command flakes" \
+        /nix/var/nix/profiles/default/bin/nix \
+        run nix-darwin/nix-darwin-26.05#darwin-rebuild -- \
+        switch --impure --flake "path:$REPO_ROOT#example-mac"
+    fi
   fi
 }
 
@@ -280,6 +299,13 @@ read_local_attr() {
     NIX_CONFIG="extra-experimental-features = nix-command flakes" \
     "$NIX_BIN" eval --impure --raw --expr \
     "(import (builtins.toPath (builtins.getEnv \"SETUP_LOCAL\"))).$attr"
+}
+
+read_local_optional_attr() {
+  local attr="$1"
+  SETUP_LOCAL="$LOCAL_FILE" \
+    NIX_CONFIG="extra-experimental-features = nix-command flakes" "$NIX_BIN" eval --impure --raw --expr \
+    "(let local = import (builtins.toPath (builtins.getEnv \"SETUP_LOCAL\")); value = local.$attr or null; in if value == null then \"\" else value)"
 }
 
 banner "Declarative Mac setup"
@@ -336,10 +362,15 @@ stage "Install the declared system" 8
 say "This first switch installs 1Password and every other declared application."
 if confirm "Validate, build, and apply the first Nix generation now?"; then
   cd "$REPO_ROOT"
+  # The first system is an install-only generation. This impure evaluation
+  # flag is consumed by the Nix modules while generating activation, so it does
+  # not depend on an environment hop through nix-darwin's user activation.
+  export NIX_CONFIG_SETUP_BOOTSTRAP=1
   run_nix flake check --impure
   run_nix build --no-link --impure \
     .#darwinConfigurations.example-mac.system
-  run_switch
+  run_switch bootstrap
+  unset NIX_CONFIG_SETUP_BOOTSTRAP
 else
   warn "The wizard cannot continue until the first switch installs 1Password and its CLI."
   exit 1
@@ -485,17 +516,67 @@ say "Wrote public identity and ordered 1Password item IDs to ignored local.nix."
 # captured by the rebuild.sh sync, not here.
 if "$OP" document get "$LOCAL_DOC_TITLE" --vault "$LOCAL_DOC_VAULT" >/dev/null 2>&1; then
   if "$OP" document edit "$LOCAL_DOC_TITLE" "$LOCAL_FILE" --vault "$LOCAL_DOC_VAULT" >/dev/null 2>&1; then
-    say "Updated the stored local.nix in 1Password ($LOCAL_DOC_TITLE)."
+    updated_backup=$(mktemp)
+    if "$OP" document get "$LOCAL_DOC_TITLE" --vault "$LOCAL_DOC_VAULT" > "$updated_backup" 2>/dev/null \
+        && cmp -s "$LOCAL_FILE" "$updated_backup"; then
+      rm -f "$updated_backup"
+      say "Updated and verified the stored local.nix in 1Password ($LOCAL_DOC_TITLE)."
+    else
+      rm -f "$updated_backup"
+      warn "The updated local.nix backup did not verify byte-for-byte; fix 1Password access and rerun setup."
+      exit 1
+    fi
   else
-    warn "Could not update the stored local.nix; scripts/rebuild.sh will retry after activation."
+    warn "Could not update the existing stored local.nix; fix 1Password access and rerun setup."
+    exit 1
   fi
 else
-  if "$OP" document create "$LOCAL_FILE" --title "$LOCAL_DOC_TITLE" --vault "$LOCAL_DOC_VAULT" --file-name local.nix >/dev/null 2>&1; then
+  if ! confirm "No readable local.nix backup was found. Create a new backup for this Mac?"; then
+    warn "No local.nix backup was created; routine rebuilds require an existing backup document."
+    exit 1
+  elif "$OP" document create "$LOCAL_FILE" --title "$LOCAL_DOC_TITLE" --vault "$LOCAL_DOC_VAULT" --file-name local.nix >/dev/null 2>&1; then
     say "Stored local.nix in 1Password for future restores ($LOCAL_DOC_TITLE)."
+    created_backup=$(mktemp)
+    if ! "$OP" document get "$LOCAL_DOC_TITLE" --vault "$LOCAL_DOC_VAULT" > "$created_backup" 2>/dev/null \
+        || ! cmp -s "$LOCAL_FILE" "$created_backup"; then
+      rm -f "$created_backup"
+      warn "The new local.nix backup did not verify byte-for-byte; routine rebuilds require a verified backup document."
+      exit 1
+    fi
+    rm -f "$created_backup"
   else
-    warn "Could not store local.nix; scripts/rebuild.sh will retry after activation."
+    warn "Could not create the local.nix backup; routine rebuilds require an existing backup document. Fix 1Password access and rerun setup."
+    exit 1
   fi
 fi
+fi
+
+stage "Bootstrap runtime credentials" 2
+PROFILE_BIN="/etc/profiles/per-user/$MAC_USER/bin"
+ONEPASSWORD_BOOTSTRAP="$PROFILE_BIN/nix-config-bootstrap-onepassword"
+NETWORK_SHARE_BOOTSTRAP="$PROFILE_BIN/nix-config-bootstrap-network-share-password"
+SERVICE_ACCOUNT_REFERENCE=$(read_local_optional_attr "onePassword.serviceAccountReference" || true)
+if [[ ! -x "$ONEPASSWORD_BOOTSTRAP" ]]; then
+  warn "The generated 1Password bootstrap command is missing; rerun the first generation."
+  exit 1
+fi
+if [[ -z "$SERVICE_ACCOUNT_REFERENCE" ]]; then
+  warn "local.nix does not declare onePassword.serviceAccountReference; add it before the final switch."
+  exit 1
+fi
+"$ONEPASSWORD_BOOTSTRAP" "$SERVICE_ACCOUNT_REFERENCE" "$MAC_HOME/.config/op/service-account-token"
+
+NETWORK_SERVER=$(read_local_optional_attr "networkShares.server" || true)
+NETWORK_ACCOUNT=$(read_local_optional_attr "networkShares.account" || true)
+NETWORK_PASSWORD_REFERENCE=$(read_local_optional_attr "networkShares.passwordReference" || true)
+if [[ -n "$NETWORK_SERVER" && -n "$NETWORK_ACCOUNT" && -n "$NETWORK_PASSWORD_REFERENCE" ]]; then
+  if [[ ! -x "$NETWORK_SHARE_BOOTSTRAP" ]]; then
+    warn "The generated network-share bootstrap command is missing; rerun the first generation."
+    exit 1
+  fi
+  "$NETWORK_SHARE_BOOTSTRAP" "$NETWORK_SERVER" "$NETWORK_ACCOUNT" "$NETWORK_PASSWORD_REFERENCE"
+else
+  say "No network-share password bootstrap is configured."
 fi
 
 stage "Apply the final identity" 3

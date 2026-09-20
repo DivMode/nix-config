@@ -1,4 +1,5 @@
 {
+  config,
   lib,
   local,
   pkgs,
@@ -10,6 +11,7 @@ let
     escapeShellArg
     hasPrefix
     mkIf
+    mkMerge
     ;
 
   # A machine whose local.nix predates this module still evaluates.
@@ -166,125 +168,133 @@ let
   seedsKeychain = passwordReference != null;
   homebrewPrefix = if pkgs.stdenv.hostPlatform.isAarch64 then "/opt/homebrew" else "/usr/local";
   opExecutable = "${homebrewPrefix}/bin/op";
+  setupBootstrap = config.nixConfig.secrets.onePassword.setupBootstrap;
+
+  # First-machine network-share seeding is a separate, interactive command.
+  # Routine activation only checks for the already-seeded Keychain item and
+  # fails closed when it is missing; it never drops the service-account token
+  # to reach the desktop session.
+  networkShareBootstrap = pkgs.writeShellApplication {
+    name = "nix-config-bootstrap-network-share-password";
+    runtimeInputs = [ pkgs.coreutils ];
+    text = ''
+      if [ ! -t 0 ] || [ ! -t 1 ]; then
+        printf '%s\n' 'Network-share bootstrap requires an interactive human setup terminal.' >&2
+        exit 1
+      fi
+
+      server="''${1:?server required}"
+      account="''${2:?account required}"
+      reference="''${3:?password reference required}"
+
+      if /usr/bin/security find-internet-password -a "$account" -s "$server" -r 'smb ' >/dev/null 2>&1; then
+        exit 0
+      fi
+
+      if [ ! -x ${escapeShellArg opExecutable} ]; then
+        printf '%s\n' '1Password CLI is unavailable; complete the first Nix generation before bootstrapping.' >&2
+        exit 1
+      fi
+
+      password=""
+      if [ -n "''${OP_SERVICE_ACCOUNT_TOKEN:-}" ]; then
+        password="$(${escapeShellArg opExecutable} read "$reference" 2>/dev/null || true)"
+      fi
+      if [ -z "$password" ]; then
+        # This branch is reachable only from this interactive setup command.
+        # Routine activation never strips OP_SERVICE_ACCOUNT_TOKEN.
+        password="$(/usr/bin/env -u OP_SERVICE_ACCOUNT_TOKEN ${escapeShellArg opExecutable} read "$reference" 2>/dev/null || true)"
+      fi
+      if [ -z "$password" ]; then
+        printf '%s\n' 'Could not read the network-share password; confirm the 1Password app is signed in and CLI integration is enabled.' >&2
+        exit 1
+      fi
+
+      /usr/bin/security add-internet-password \
+        -a "$account" \
+        -s "$server" \
+        -r 'smb ' \
+        -D 'Network Password' \
+        -l "$server" \
+        -T /System/Library/CoreServices/NetAuthAgent.app/Contents/MacOS/NetAuthSysAgent \
+        -w "$password"
+      unset password
+    '';
+  };
 in
 {
-  config = mkIf enabled {
-    assertions = [
-      {
-        assertion = (shares.server or "") != "" && (shares.account or "") != "";
-        message = "local.networkShares needs both `server` and `account` when `mounts` is non-empty. The account is half the Keychain lookup key; without it macOS cannot find the stored password and every mount prompts.";
-      }
-      {
-        assertion = !seedsKeychain || hasPrefix "op://" passwordReference;
-        message = "local.networkShares.passwordReference must be an op:// URI, never the password itself. A literal value here would be copied into the world-readable Nix store.";
-      }
-    ];
+  config = mkMerge [
+    {
+      # The command accepts its local arguments at setup time, so it is
+      # available during the first generation before the real local.nix is
+      # restored and before network-share options are enabled.
+      home.packages = [ networkShareBootstrap ];
+    }
+    (mkIf enabled {
+      assertions = [
+        {
+          assertion = (shares.server or "") != "" && (shares.account or "") != "";
+          message = "local.networkShares needs both `server` and `account` when `mounts` is non-empty. The account is half the Keychain lookup key; without it macOS cannot find the stored password and every mount prompts.";
+        }
+        {
+          assertion = !seedsKeychain || hasPrefix "op://" passwordReference;
+          message = "local.networkShares.passwordReference must be an op:// URI, never the password itself. A literal value here would be copied into the world-readable Nix store.";
+        }
+      ];
 
-    # Seed the login Keychain from 1Password, once, on a machine that has no
-    # entry yet.
-    #
-    # This is the answer to "how does a brand-new Mac get the password". Without
-    # it the first mount raises a Finder authentication dialog and a human has
-    # to type it and tick "Remember this password in my keychain" — which works,
-    # but is a manual step that a wiped machine has to remember, and this
-    # repository's whole setup path is built to avoid exactly that.
-    #
-    # The secret goes Keychain-ward only. It is read from 1Password at
-    # activation and handed to `security` on a command line that Nix never
-    # sees: `passwordReference` is a NAME, so the store holds the reference and
-    # never the value.
-    home.activation.seedNetworkSharePassword = mkIf seedsKeychain (
-      lib.hm.dag.entryAfter [ "writeBoundary" ] ''
-        server=${escapeShellArg shares.server}
-        account=${escapeShellArg shares.account}
+      # Seed the login Keychain from 1Password, once, on a machine that has no
+      # entry yet.
+      #
+      # This is the answer to "how does a brand-new Mac get the password". Without
+      # it the first mount raises a Finder authentication dialog and a human has
+      # to type it and tick "Remember this password in my keychain" — which works,
+      # but is a manual step that a wiped machine has to remember, and this
+      # repository's whole setup path is built to avoid exactly that.
+      #
+      # The secret goes Keychain-ward only. The setup wizard's explicit human
+      # bootstrap command reads it from 1Password and hands it to `security` on a
+      # command line that Nix never sees: `passwordReference` is a NAME, so the
+      # store holds the reference and never the value. Routine activation only
+      # verifies that the Keychain entry already exists.
+      home.activation.seedNetworkSharePassword = mkIf seedsKeychain (
+        lib.hm.dag.entryAfter [ "writeBoundary" ] ''
+          server=${escapeShellArg shares.server}
+          account=${escapeShellArg shares.account}
 
-        # Gated on absence, not run unconditionally. `security` would either
-        # refuse (without -U) or rewrite the item on every rebuild, and
-        # rewriting resets the item's access-control list — which is what
-        # decides whether NetAuthSysAgent may read it without prompting.
-        if /usr/bin/security find-internet-password -a "$account" -s "$server" -r 'smb ' >/dev/null 2>&1; then
-          verboseEcho "Network share password already in the login Keychain"
-        elif [ ! -x ${escapeShellArg opExecutable} ]; then
-          printf '%s\n' '1Password CLI unavailable; the network share password was not seeded. The first mount will prompt.' >&2
-        else
-          # TWO authentication paths, tried in order, because the vault holding
-          # this password is deliberately not one the shell-exported service
-          # account can reach.
-          #
-          # 1Password service account vault access is IMMUTABLE. That is
-          # documented behaviour, not a quirk of this setup: "After you create
-          # a service account, you can't add additional vaults or edit any
-          # vault permissions it has." The account this machine exports was
-          # minted against one vault, so a reference into any other vault is
-          # unreachable to it and always will be. There is no "add vault"
-          # control to go looking for.
-          #
-          # So: try the service-account token, then fall back to the desktop
-          # app integration. The fallback is not a regression to the biometric
-          # prompt secrets.nix warns about, because this entry is gated on the
-          # Keychain entry being ABSENT — it is one authorization, once per
-          # machine, at a moment (setup-mac.sh) when a human is already signing
-          # into the 1Password app anyway.
-          tokenPath="$HOME/.config/op/service-account-token"
-          sharePassword=""
-
-          if [ -r "$tokenPath" ]; then
-            sharePassword="$(
-              OP_SERVICE_ACCOUNT_TOKEN="$(cat "$tokenPath")" \
-                ${escapeShellArg opExecutable} read ${escapeShellArg (toString passwordReference)} 2>/dev/null || true
-            )"
-          fi
-
-          if [ -z "$sharePassword" ]; then
-            # `env -u`, not OP_SERVICE_ACCOUNT_TOKEN="". op prefers the
-            # variable whenever it is SET, so blanking it authenticates as a
-            # service account with an empty token and fails rather than
-            # reaching the desktop app.
-            sharePassword="$(
-              env -u OP_SERVICE_ACCOUNT_TOKEN \
-                ${escapeShellArg opExecutable} read ${escapeShellArg (toString passwordReference)} 2>/dev/null || true
-            )"
-          fi
-
-          if [ -n "$sharePassword" ]; then
-            # -r 'smb ' — four characters, trailing space included. That is a
-            # SecProtocolType FourCharCode, not a typo, and an entry written
-            # without it is not the entry NetAuthSysAgent looks up.
-            #
-            # -T grants NetAuthSysAgent access without a per-mount "allow"
-            # dialog. It is the process that actually performs an SMB mount,
-            # so omitting it produces a Keychain entry that exists and still
-            # prompts.
-            run /usr/bin/security add-internet-password \
-              -a "$account" \
-              -s "$server" \
-              -r 'smb ' \
-              -D 'Network Password' \
-              -l "$server" \
-              -T /System/Library/CoreServices/NetAuthAgent.app/Contents/MacOS/NetAuthSysAgent \
-              -w "$sharePassword"
-            unset sharePassword
+          # Gated on absence, not run unconditionally. `security` would either
+          # refuse (without -U) or rewrite the item on every rebuild, and
+          # rewriting resets the item's access-control list — which is what
+          # decides whether NetAuthSysAgent may read it without prompting.
+          if ${if setupBootstrap then "true" else "false"}; then
+            printf '%s\n' 'Install-only generation: network-share bootstrap deferred until after interactive sign-in.' >&2
+          elif /usr/bin/security find-internet-password -a "$account" -s "$server" -r 'smb ' >/dev/null 2>&1; then
+            verboseEcho "Network share password already in the login Keychain"
+          elif [ ! -x ${escapeShellArg opExecutable} ]; then
+            printf '%s\n' '1Password CLI is unavailable during routine network-share activation; refusing to continue.' >&2
+            exit 1
           else
-            printf '%s\n' 'Could not read the network share password from 1Password; the first mount will prompt.' >&2
-          fi
-        fi
-      ''
-    );
+            printf '%s\n' 'Network-share password is not in the login Keychain; run the interactive bootstrap before rebuilding.' >&2
+            exit 1
 
-    # RunAtLoad covers login. StartInterval makes it a reconciler rather than a
-    # one-shot, which matters because an SMB mount does not survive the server
-    # rebooting, the Mac sleeping, or Wi-Fi dropping — and a stale unmount is
-    # silent. Chrome would just start writing downloads into a local directory
-    # nobody looks in.
-    launchd.agents.mount-network-shares = {
-      enable = true;
-      config = {
-        ProgramArguments = [ "${mountScript}/bin/mount-network-shares" ];
-        RunAtLoad = true;
-        StartInterval = 300;
-        ProcessType = "Background";
-        StandardErrorPath = "${local.homeDirectory}/Library/Logs/mount-network-shares.log";
+          fi
+        ''
+      );
+
+      # RunAtLoad covers login. StartInterval makes it a reconciler rather than a
+      # one-shot, which matters because an SMB mount does not survive the server
+      # rebooting, the Mac sleeping, or Wi-Fi dropping — and a stale unmount is
+      # silent. Chrome would just start writing downloads into a local directory
+      # nobody looks in.
+      launchd.agents.mount-network-shares = {
+        enable = true;
+        config = {
+          ProgramArguments = [ "${mountScript}/bin/mount-network-shares" ];
+          RunAtLoad = true;
+          StartInterval = 300;
+          ProcessType = "Background";
+          StandardErrorPath = "${local.homeDirectory}/Library/Logs/mount-network-shares.log";
+        };
       };
-    };
-  };
+    })
+  ];
 }

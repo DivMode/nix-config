@@ -4,9 +4,9 @@
 # dialog rather than on a terminal.
 #
 # This is the same command documented in docs/operations/rebuild.md, wrapped so
-# it can be started from a shell with no controlling terminal. Everything
-# before activation is a pure build: nothing touches the Mac until the final
-# `darwin-rebuild switch` line.
+# it can be started from a shell with no controlling terminal. Credentials are
+# supplied by the configured service account; this path never signs in through
+# the desktop application. First-time credential setup belongs to setup-mac.sh.
 
 set -euo pipefail
 
@@ -20,6 +20,43 @@ fi
 
 export NIX_CONFIG_LOCAL="$repository/local.nix"
 export SUDO_ASKPASS="$repository/scripts/sudo-askpass.sh"
+
+if [[ -n "${NIX_CONFIG_SETUP_BOOTSTRAP:-}" ]]; then
+  echo "error: install-only bootstrap is reserved for the interactive setup wizard, not routine rebuilding." >&2
+  exit 1
+fi
+
+# Validate the backup's authentication before changing the running system.
+# Connect variables take precedence over the service account in the CLI;
+# reject an incompatible environment instead of stripping credentials.
+vault=$(nix eval --impure --raw --expr \
+  '(import (builtins.toPath (builtins.getEnv "NIX_CONFIG_LOCAL"))).onePassword.vault or ""')
+if [[ -n "$vault" ]]; then
+  if [[ -z "${OP_SERVICE_ACCOUNT_TOKEN:-}" ]]; then
+    echo "error: rebuilding with automatic backup requires the configured service-account environment; use the human setup workflow if credentials are missing." >&2
+    exit 1
+  fi
+  if [[ -n "${OP_CONNECT_HOST:-}" || -n "${OP_CONNECT_TOKEN:-}" ]]; then
+    echo "error: automatic backup requires the service-account environment, not a Connect environment; no credentials were changed." >&2
+    exit 1
+  fi
+  op_bin=$(command -v op) || {
+    echo "error: the configured 1Password CLI is unavailable." >&2
+    exit 1
+  }
+  host_name=$(/usr/sbin/scutil --get LocalHostName)
+  if [[ -z "$host_name" ]]; then
+    echo "error: cannot identify this host's backup document." >&2
+    exit 1
+  fi
+  doc_title="nix-config local.nix $host_name"
+  backup_dir=$(umask 077; mktemp -d)
+  trap 'rm -rf "$backup_dir"' EXIT
+  if ! (umask 077; "$op_bin" document get "$doc_title" --vault "$vault" > "$backup_dir/stored" 2>/dev/null); then
+    echo "error: backup authentication/read preflight failed; check service-account access and the setup-created document. Activation was not attempted; no fallback or document creation was attempted." >&2
+    exit 1
+  fi
+fi
 
 # Every activation re-asserts the private-name guard, so a fresh clone is
 # protected from its first rebuild rather than from whenever someone remembers.
@@ -106,31 +143,27 @@ fi
 # deploy identity — the Connect host, 1Password item IDs, and AWS profile
 # wiring. scripts/setup-mac.sh restores it on a wiped machine from a Document
 # item titled "nix-config local.nix <LocalHostName>", so that item must track
-# every local.nix edit. Best-effort: runs only after a SUCCESSFUL activation
-# (set -e above), and a locked or unauthenticated 1Password only warns.
+# every local.nix edit. Runs only after successful activation. A backup failure
+# is reported as a failure, without switching accounts or creating another item.
 #
 # The vault comes FROM local.nix. It was hard-coded here until 2026-08-14, when
 # an audit found the vault name — a private name — in four lines of this script
 # and two of the wizard, in a public repository.
-host_name=$(/usr/sbin/scutil --get LocalHostName 2>/dev/null || true)
-op_bin=$(command -v op || true)
-vault=$(LOCAL_PATH="$repository/local.nix" nix eval --impure --raw --expr \
-  '(import (builtins.toPath (builtins.getEnv "LOCAL_PATH"))).onePassword.vault or ""' 2>/dev/null || true)
 if [[ -z "$vault" ]]; then
-  echo "warning: local.nix has no onePassword.vault — skipping the 1Password sync" >&2
-elif [[ -n "$host_name" && -n "$op_bin" ]]; then
-  doc_title="nix-config local.nix $host_name"
-  if stored=$("$op_bin" document get "$doc_title" --vault "$vault" 2>/dev/null); then
-    if [[ "$stored" != "$(cat local.nix)" ]]; then
-      if "$op_bin" document edit "$doc_title" local.nix --vault "$vault" >/dev/null 2>&1; then
-        echo "==> Synced local.nix to 1Password ($doc_title)"
-      else
-        echo "warning: could not sync local.nix to 1Password — the stored copy is stale" >&2
-      fi
+  echo "==> No local.nix backup vault configured"
+else
+  if ! cmp -s local.nix "$backup_dir/stored"; then
+    if ! "$op_bin" document edit "$doc_title" local.nix --vault "$vault" >/dev/null 2>&1; then
+      echo "error: activation succeeded but the local.nix backup could not be updated." >&2
+      exit 1
     fi
-  elif "$op_bin" document create local.nix --title "$doc_title" --vault "$vault" --file-name local.nix >/dev/null 2>&1; then
-    echo "==> Stored local.nix in 1Password ($doc_title)"
+    if ! (umask 077; "$op_bin" document get "$doc_title" --vault "$vault" > "$backup_dir/verified" 2>/dev/null) \
+      || ! cmp -s local.nix "$backup_dir/verified"; then
+      echo "error: activation succeeded but the local.nix backup did not verify." >&2
+      exit 1
+    fi
+    echo "==> Updated and verified the local.nix backup"
   else
-    echo "warning: could not store local.nix in 1Password" >&2
+    echo "==> Verified the local.nix backup is current"
   fi
 fi

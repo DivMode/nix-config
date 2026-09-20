@@ -22,19 +22,37 @@ Review the change and build result before activation. Then run:
 That is the activation path, for people and for agents alike. It sets
 `NIX_CONFIG_LOCAL` and `SUDO_ASKPASS` and calls `sudo -A`, so the password is
 collected in a native dialog rather than from a controlling terminal — which is
-why it works from an editor-hosted or automated shell that has no TTY. Nothing
-before its final line changes the Mac.
+why it works from an editor-hosted or automated shell that has no TTY. It also
+installs the repository's Git hooks before building.
+
+Routine rebuilding is unattended credential maintenance. When a backup vault is
+configured, the shell must already have the configured service-account token;
+the script rejects missing credentials or a conflicting Connect environment
+before activation. It also downloads the existing backup document before
+activation, so invalid credentials, rate limits and unreadable documents stop
+the run before the system switch. It does not change authentication variables
+or sign in through the desktop app. The service account needs access to the
+backup vault. Credential bootstrap is an explicit step in the human setup
+wizard.
+
+After successful activation, the script compares `local.nix` with the downloaded
+setup-created Document item using exact bytes, updates it only when different,
+and downloads it again to verify an update. A failed read is not evidence that
+the item is missing: it stops without creating another document or changing
+accounts. Backup failure returns a failure status and explicitly reports that
+activation has already succeeded. No backup content or credential is logged.
 
 Do not hand-assemble the underlying command. It is recorded here only so the
 script's final step is reviewable:
 
 ```sh
-sudo env NIX_CONFIG_LOCAL="$NIX_CONFIG_LOCAL" \
+sudo -A --preserve-env=NIX_CONFIG_LOCAL,SUDO_ASKPASS \
   /run/current-system/sw/bin/darwin-rebuild switch --impure \
   --flake "path:$PWD#example-mac"
 ```
 
-Activation is the only step above that changes the running Mac.
+Activation changes the running Mac; the subsequent backup updates only its
+configured recovery document.
 
 ## After activating
 

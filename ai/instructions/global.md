@@ -251,6 +251,27 @@ another credential, do not write a wrapper that reads secrets another way. The
 hook guard denies these commands before they run; a denial here is never a
 false positive.
 
+This boundary also applies to programs Git invokes implicitly. Before creating
+a commit or tag, pushing, or requesting signature verification, inspect Git's
+effective signing configuration and the transport without invoking either.
+Every agent-created commit must remain signed using the approved service-account
+signing identity and noninteractive credential path, never the owner's personal
+desktop account. Service-account authentication alone does not select a Git
+signing key; both the authorized key and its access path must be established.
+If the operation would use a personal desktop signer, SSH agent, biometric,
+or password prompt, stop before starting it and use only an already documented,
+approved noninteractive repository path. Do not assume a credential-loader fix
+also changed Git signing or transport. Never disable signing, override its
+configuration, switch credentials, or bypass a hook to get the operation through.
+Preserve the work and report the exact configuration conflict instead.
+
+The declarative Git service-account signer is an approved signing interface:
+it may read only its configured signing-key reference using the existing
+service-account environment, verify the key against the configured public
+identity, and sign the Git payload. It must fail closed on missing credentials,
+conflicting authentication, or a failed read. This does not authorize general
+CLI secret access, a personal-session fallback, or unsigned commits.
+
 An explicitly authorized, reviewed declarative rebuild entry point named in the
 repository's instructions may use its declared credential interface for
 configuration backup and credential refresh. Its unattended path must require

@@ -5,7 +5,24 @@
   pkgs,
   ...
 }:
+let
+  signingReference = local.git.signingKeyReference or "";
+  signingPublicKey = pkgs.writeText "git-service-account-public-key" local.git.signingKey;
+  serviceAccountSigner = pkgs.writeShellScript "git-service-account-sign" ''
+    exec ${pkgs.python3}/bin/python3 ${../../scripts/git-service-account-sign.py} \
+      ${if pkgs.stdenv.hostPlatform.isAarch64 then "/opt/homebrew" else "/usr/local"}/bin/op \
+      ${pkgs.openssh}/bin/ssh-keygen \
+      ${lib.escapeShellArg signingReference} ${signingPublicKey} "$@"
+  '';
+in
 {
+  assertions = [
+    {
+      assertion =
+        builtins.match "op://[^/]+/[^/]+/private key\\?ssh-format=openssh" signingReference != null;
+      message = "git.signingKeyReference must name the approved service-account SSH key in OpenSSH format.";
+    }
+  ];
   imports = [
     ./ai
     ./archives.nix
@@ -71,7 +88,7 @@
       pull.rebase = true;
       gpg = {
         format = "ssh";
-        ssh.program = "/Applications/1Password.app/Contents/MacOS/op-ssh-sign";
+        ssh.program = "${serviceAccountSigner}";
 
         # Without this, git SIGNS correctly and then cannot verify what it just
         # signed: `git log --show-signature` reports "No signature" and %G?

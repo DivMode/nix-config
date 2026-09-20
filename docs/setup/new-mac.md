@@ -82,6 +82,8 @@ After installing and signing in to 1Password, replace:
 - `git.name`: public author name embedded in commits;
 - `git.email`: Git-host-verified address embedded in commits;
 - `git.signingKey`: Ed25519 SSH **public** key used for signing;
+- `git.signingKeyReference`: reference to that same item's private key, ending
+  in `/private key?ssh-format=openssh`, readable by the service account;
 - `onePassword.sshAgentKeyIds`: ordered item IDs for every SSH key this Mac
   should offer, with the Git signing/authentication key first.
 
@@ -108,6 +110,12 @@ export NIX_CONFIG_LOCAL="$PWD/local.nix"
 Commands require `--impure` because a flake intentionally excludes ignored
 files. Evaluation validates every required field and accepts only an Ed25519
 public signing key.
+
+Older host inputs and restored backups must have `git.signingKeyReference`
+added before rebuilding. Preserve every existing field; do not replace the
+host input with bootstrap placeholders. The reference contains only item
+metadata, never the token or private key. A successful routine rebuild updates
+the stored backup with this field.
 
 ### Validate
 
@@ -222,8 +230,16 @@ instead.
 The earlier 2026-08-21 end-to-end observation covered activation-time seeding.
 It does not establish end-to-end verification of the separate bootstrap flow.
 
-Home Manager configures SSH-format commit and tag signing through 1Password's
-`op-ssh-sign`; the private key remains inside 1Password.
+Home Manager requires SSH-format commit and tag signatures through the declared
+service-account signer. Set `git.signingKeyReference` in ignored `local.nix` to
+the approved key's private-key reference with `?ssh-format=openssh`; the existing
+`git.signingKey` is its public identity. The service account must have read access
+to that item. Its token must already be present in the process environment.
+The signer rejects missing service-account authentication and conflicting
+Connect variables rather than falling back to the desktop app. It checks the
+retrieved key against the configured public key, signs through OpenSSH, and
+removes its private temporary key file afterward. Verification uses OpenSSH
+without accessing credentials. Commit and tag signing remain mandatory.
 
 ### Manual checklist
 

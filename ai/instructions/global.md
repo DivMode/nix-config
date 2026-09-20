@@ -272,6 +272,11 @@ identity, and sign the Git payload. It must fail closed on missing credentials,
 conflicting authentication, or a failed read. This does not authorize general
 CLI secret access, a personal-session fallback, or unsigned commits.
 
+The declarative Git service-account transport may use that same configured,
+verified key for GitHub Git fetches and pushes. It must enforce host-key
+verification, disable SSH-agent and password authentication, and reject other
+hosts and arbitrary remote commands. This grants no general SSH or secret access.
+
 An explicitly authorized, reviewed declarative rebuild entry point named in the
 repository's instructions may use its declared credential interface for
 configuration backup and credential refresh. Its unattended path must require

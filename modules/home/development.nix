@@ -236,6 +236,10 @@ in
         cloudflared
         atlas
         talosctl
+        # The shared infrastructure deploy invokes ansible-playbook locally.
+        # Its 2026-09-20 apply failed with command-not-found: the executable
+        # had never been declared alongside the other deployment tools.
+        python3Packages.ansible-core
         # Same rebuild loss, found the same way but by a GATE rather than a
         # deploy (2026-08-14): the work monorepo's pre-push helm-template-check
         # renders every Helm release with `helm template` before a push. Without

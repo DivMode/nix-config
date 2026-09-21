@@ -32,6 +32,18 @@ let
   brewAsOwner = "PATH=\"${config.homebrew.prefix}/bin:$PATH\" sudo --preserve-env=PATH --user=${lib.escapeShellArg config.homebrew.user} --set-home brew";
 in
 {
+  # Vendor CLIs must also be visible to noninteractive deploy shells. The
+  # default brew shellenv integration runs only from /etc/zshrc; the installed
+  # CLI was absent from an editor-launched login shell's PATH on 2026-09-20.
+  # Append so Nix-owned tools retain priority, including in existing app trees
+  # that already inherited nix-darwin's environment-initialized marker.
+  programs.zsh.shellInit = ''
+    case ":$PATH:" in
+      *":${config.homebrew.prefix}/bin:"*) ;;
+      *) export PATH="$PATH:${config.homebrew.prefix}/bin" ;;
+    esac
+  '';
+
   nix-homebrew = {
     enable = true;
     user = local.user;

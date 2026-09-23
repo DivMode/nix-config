@@ -229,12 +229,10 @@ in
         #                 plugin that spawns `oci`; without it every OKE
         #                 resource reads as "unreachable cluster".
         #   cloudflared — `cloudflared access tcp` carries the pg-oke tunnel
-        #                 the Atlas migration step connects through.
-        #   atlas       — applies the SQL migrations over that tunnel.
+        #                 the migration step connects through.
         #   talosctl    — Talos cluster administration/debugging.
         oci-cli
         cloudflared
-        atlas
         talosctl
         # The shared infrastructure deploy invokes ansible-playbook locally.
         # Its 2026-09-20 apply failed with command-not-found: the executable

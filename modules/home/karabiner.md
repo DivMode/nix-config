@@ -20,6 +20,7 @@ Run `scripts/check-karabiner.sh` to verify the whole chain at once.
 - Hold Caps Lock: Hyper (Control + Option + Command + Shift).
 - Tap Caps Lock: Escape.
 - Hyper + I/J/K/L: Up/Left/Down/Right.
+- Hyper + S: Right Option, FluidVoice's dictation key (see `fluidvoice.md`).
 - Tap Return normally; hold Return for Control.
 - Physical Escape: backtick/tilde.
 - Left Shift + Right Shift together: real Caps Lock.

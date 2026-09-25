@@ -29,25 +29,47 @@ Undeclared on purpose, beyond the ordinary application state:
 ## The hotkey
 
 Hyper + S — hold Caps Lock, which `karabiner.nix` emits as
-`Ctrl+Opt+Cmd+Shift`, and press S. Declared in `fluidvoice.nix`, applied at
-activation, and reproducible on a new machine.
+`Ctrl+Opt+Cmd+Shift`, and press S. Karabiner turns that chord into **Right
+Option**, held for as long as S is held, and FluidVoice's stored shortcut is
+Right Option, modifier-only. The physical Right Option key starts dictation too.
 
-It replaced plain `Shift+S`, which was unusable for the obvious reason: that is
-the chord for typing a capital S. Hyper+S is not, because FluidVoice matches on
-an **equality** of the relevant modifier set
-(`HotkeyShortcut.matches(keyCode:modifiers:)`), and a capital S carries Shift
-alone.
+### Why Karabiner owns the chord and FluidVoice only hears Right Option
+
+FluidVoice detects its shortcut with a CGEventTap. While any application holds
+**Secure Event Input**, macOS withholds key-down events from every event tap. A
+letter chord like Hyper+S then stops working until that application lets go.
+Only the application that enabled secure input can disable it. On 2026-09-24,
+`kCGSSessionSecureInputPID` named ChatGPT.app, and the state outlived that
+process. 1Password is widely reported doing the same.
+
+Measured the same day, with a listen-only tap while secure input was forced on
+by `EnableSecureEventInput()`: Hyper+S delivered **zero** keyDown events, while
+every Hyper modifier's `flagsChanged` event still arrived. With this
+arrangement, dictation then worked end to end with secure input still on.
+
+Karabiner reads the keyboard at the HID layer, below event taps, so secure
+input does not affect its rules. FluidVoice cannot be triggered by Karabiner
+directly: it has no URL scheme or supported external trigger (its
+`com.FluidApp.debug.toggleRecording` notification is a diagnostics-only
+toggle, inert unless a debug default is set, and cannot do hold-to-talk). So
+FluidVoice still needs *a* key, and the only kind that survives secure input is
+a modifier. Right Option is the one modifier this keyboard never otherwise
+uses.
+
+Hyper+S was chosen originally over plain `Shift+S`, which fired on every
+capital S.
 
 ### How it is stored, and why it needs its own activation entry
 
 `HotkeyShortcutKey` and `PrimaryDictationShortcuts` are **CFData holding JSON**:
 
 ```
-{"kind":"keyboard","modifierFlagsRawValue":1966080,"keyCode":1}
+{"keyCode":61,"kind":"keyboard","modifierFlagsRawValue":0,"modifierKeyCodes":[61]}
 ```
 
-`1966080` is `shift|control|option|command` as `NSEvent.ModifierFlags` raw
-values; `1` is `kVK_ANSI_S`. The schema is FluidVoice's own `HotkeyShortcut`
+`61` is `kVK_RightOption`. For a modifier-only shortcut FluidVoice stores the
+trigger in `modifierKeyCodes` and subtracts its own flag from the modifier
+flags, leaving `0`. The schema is FluidVoice's own `HotkeyShortcut`
 type in `Sources/Fluid/Models/HotkeyShortcut.swift`, read rather than guessed.
 
 `targets.darwin.defaults` cannot carry it. It renders through
@@ -67,12 +89,11 @@ its preferences at launch and a running process can write its stale in-memory
 value back; gating it is what stops every unrelated rebuild killing the
 dictation application mid-sentence.
 
-## Why not a modifier-only key
+## Why Right Option and not a left-hand modifier
 
-FluidVoice's own default is Right Option, and a modifier-only shortcut is
-genuinely better in one way: there is no letter to collide with and none to
-auto-repeat. It was rejected for a **left-hand** shortcut specifically, on the
-evidence of `Sources/Fluid/Services/GlobalHotkeyManager.swift`.
+FluidVoice's own default is Right Option. A modifier-only shortcut is
+required here anyway (secure input, above), but a **left-hand** one is wrong, on
+the evidence of `Sources/Fluid/Services/GlobalHotkeyManager.swift`.
 
 In `hold` mode a modifier-only shortcut arms with **no threshold**.
 `scheduleModifierOnlyStart` calls `behavior.onHoldStart()` directly on the
@@ -95,17 +116,15 @@ modifier-only are not compatible here.
 
 ## Things that are true and worth not re-deriving
 
-- **Holding the chord does not type `sssss`.** The event tap consumes a
-  matching key-down, auto-repeats included: `GlobalHotkeyManager` returns `nil`
-  for the primary shortcut.
+- **Holding the chord does not type `sssss`.** Karabiner consumes the S and
+  emits only Right Option, which does not auto-repeat.
 - **The cost is a Karabiner dependency.** Without it Caps Lock is Caps Lock, so
   dictation stops working AND the keyboard latches into capitals.
   `karabiner.md` records how that chain breaks. It is a dependency this
   keyboard already carries for its arrow keys and its Escape.
 - **What other tools default to**, for when this is revisited: FluidVoice ships
   Right Option, Wispr Flow holds Fn, superwhisper uses Option+Space. All three
-  are single-purpose keys the user does not otherwise press — the same property
-  Hyper+S gets from requiring four modifiers at once.
+  are single-purpose keys the user does not otherwise press.
 
 ## Changing it later
 

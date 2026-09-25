@@ -38,21 +38,28 @@ let
   # dictation stops AND the keyboard latches into capitals. karabiner.md records
   # how that chain breaks. It is a dependency this keyboard already has for its
   # arrow keys and its Escape.
-  hyperFlags =
-    131072 # NSEventModifierFlagShift    1 << 17
-    + 262144 # NSEventModifierFlagControl  1 << 18
-    + 524288 # NSEventModifierFlagOption   1 << 19
-    + 1048576; # NSEventModifierFlagCommand  1 << 20
-
+  #
+  # UPDATE 2026-09-24: the physical chord is still Hyper+S, but FluidVoice no
+  # longer sees it as Hyper+S. Karabiner turns it into Right Option (see the
+  # "Hyper+S" rule in karabiner.nix), and the shortcut below is Right Option,
+  # modifier-only. The reason: while any app holds Secure Event Input, macOS
+  # withholds key-down events from event taps, so a letter chord stops working
+  # until that app lets go. Modifier flagsChanged events still arrive, measured
+  # the same day. Right Option is the one modifier-only key this Mac never
+  # otherwise uses, which the WHY NOT above already allows for, so the
+  # no-threshold objection does not apply to it. The physical Right Option key
+  # now starts dictation too.
   dictationShortcut = {
     # `kind` is FluidVoice's own ShortcutKind enum: keyboard or mouse.
     kind = "keyboard";
-    modifierFlagsRawValue = hyperFlags;
-    # kVK_ANSI_S. Not a modifier key code, so FluidVoice treats this as an
-    # ordinary chord rather than a modifier-only shortcut, and `modifierKeyCodes`
-    # is correctly absent — its encoder omits the field unless the trigger key is
-    # itself a modifier.
-    keyCode = 1;
+    # kVK_RightOption. For a modifier-only shortcut FluidVoice's
+    # HotkeyShortcut.init(keyCode:modifierFlags:modifierKeyCodes:) stores the
+    # trigger in `modifierKeyCodes` and subtracts the trigger's own flag from
+    # `modifierFlags`, leaving 0; its encoder writes `modifierKeyCodes` only for
+    # such a shortcut (Sources/Fluid/Models/HotkeyShortcut.swift).
+    keyCode = 61;
+    modifierFlagsRawValue = 0;
+    modifierKeyCodes = [ 61 ];
   };
 
   # Written as JSON from a typed Nix attribute set rather than as a hand-authored

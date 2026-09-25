@@ -105,6 +105,40 @@ let
             ];
           }
           {
+            # FluidVoice's dictation chord. Delivered to macOS as Right Option,
+            # held for as long as S is held, and never as Hyper+S.
+            #
+            # FluidVoice sees keys through a CGEventTap, and while any app holds
+            # Secure Event Input macOS withholds key-down events from every tap.
+            # Measured 2026-09-24 with a listen-only tap while secure input was
+            # on: Hyper+S delivered zero keyDown events, while all four Hyper
+            # modifier flagsChanged events still arrived. So a letter chord dies
+            # whenever some app forgets to release secure input (ChatGPT.app
+            # was the recorded holder that day, kCGSSessionSecureInputPID), and
+            # a modifier-only shortcut does not. fluidvoice.nix declares Right
+            # Option as that shortcut. Karabiner reads the keyboard below the
+            # event-tap layer, so this rule itself is unaffected.
+            #
+            # Karabiner drops `from`'s mandatory modifiers from the output, and
+            # the Hyper modifiers are lazy, so macOS sees Right Option alone.
+            description = "Use Hyper+S as FluidVoice's Right Option dictation key";
+            manipulators = [
+              {
+                type = "basic";
+                from = {
+                  key_code = "s";
+                  modifiers.mandatory = [
+                    "left_command"
+                    "left_control"
+                    "left_option"
+                    "left_shift"
+                  ];
+                };
+                to = [ { key_code = "right_option"; } ];
+              }
+            ];
+          }
+          {
             description = "Tap Caps Lock for Escape; hold it for Hyper (Control+Option+Command+Shift)";
             manipulators = [
               {

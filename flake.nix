@@ -58,7 +58,7 @@
     # is a tag rather than the default branch because gcx's version string and
     # release notes are derived from it.
     gcx-src = {
-      url = "github:grafana/gcx/v1.3.0";
+      url = "github:grafana/gcx/v1.3.1";
       flake = false;
     };
 

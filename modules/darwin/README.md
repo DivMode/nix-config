@@ -43,7 +43,7 @@ otherwise runs at every login and every 3.5 hours, and the in-app
 **Help > Check for Updates**, which never touches launchd. Neither half covers
 the other's gap, so both are declared.
 
-A `pkg` cask — `karabiner-elements`, `adobe-acrobat-pro`, `logi-options+` — is
+A `pkg` cask — `karabiner-elements`, `adobe-acrobat-pro` — is
 installed by handing its payload to `/usr/sbin/installer` as root, and removed
 or upgraded through the vendor's own scripts, `launchctl`, `pkgutil`, and `rm`,
 all as root and all with sudo's `-E`. Activation cannot answer for any of that

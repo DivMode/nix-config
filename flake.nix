@@ -73,6 +73,12 @@
       url = "github:homebrew/homebrew-cask";
       flake = false;
     };
+
+    # Anomaly's own tap, which is where the Hex dictation cask is published.
+    homebrew-anomalyco = {
+      url = "github:anomalyco/homebrew-tap";
+      flake = false;
+    };
   };
 
   outputs =

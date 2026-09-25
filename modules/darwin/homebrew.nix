@@ -53,6 +53,7 @@ in
     taps = {
       "homebrew/homebrew-core" = inputs.homebrew-core;
       "homebrew/homebrew-cask" = inputs.homebrew-cask;
+      "anomalyco/homebrew-tap" = inputs.homebrew-anomalyco;
 
       # In-repo tap for casks deliberately held at a version the upstream tap
       # does not carry — see taps/homebrew-pinned/README.md for its rules. Each
@@ -108,6 +109,11 @@ in
       # Local, on-device voice input used on this Mac. Keeping it declared is
       # required because strict Homebrew reconciliation removes undeclared casks.
       "fluidvoice"
+
+      # Hex, Anomaly's local-first dictation app, from their own tap. Like
+      # chatgpt, it is an `auto_updates` cask whose built-in Sparkle updater
+      # keeps it current after Homebrew installs it once, so no `greedy`.
+      "anomalyco/tap/hex"
 
       # Native keyboard remapper. Home Manager owns its complete declarative
       # configuration directory; Raycast's native Hyper Key stays disabled.

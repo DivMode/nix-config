@@ -174,6 +174,12 @@ in
         # a documented nixpkgs incompatibility, which trailing the latest
         # release by a single patch version is not.
         bun
+        # `promtool`, Prometheus's CLI only (the `cli` output, no server). A
+        # repository's pre-push gate evaluates its production alert expression
+        # with `promtool test rules` and, by design, never installs tools
+        # during a push, so a missing promtool aborted an unrelated ship on
+        # 2026-09-30 with "Executable not found in $PATH: \"promtool\"".
+        prometheus.cli
         # Fetches subtitle and caption tracks, which is the only reliable way
         # to read a video's transcript from a shell: the pages are client-side
         # applications that serve a navigation shell to a plain fetch, the

@@ -81,6 +81,36 @@ let
     '';
   };
 
+  # OpenAI's Codex CLI is the copy ChatGPT.app bundles, which the app's Sparkle
+  # updater keeps current together with the app (the `chatgpt` cask in
+  # ../darwin/homebrew.nix). Nix owns only this launcher, the same split as
+  # `claude` above: the vendor owns the self-updating binary, and nothing here
+  # pins a codex version. A Nix-packaged codex would be a second installation
+  # beside the one the app runs, moving only when flake.lock does. Measured
+  # 2026-10-01: the app bundled 0.159.2; locked nixpkgs (nixos-26.05) packaged
+  # 0.146.0; llm-agents packaged 0.160.0.
+  #
+  # The path is the bundle's declared entrypoint: codex-cli/codex-package.json
+  # reads `"entrypoint": "bin/codex"` (layoutVersion 1), and bin/codex is a
+  # small sh script that resolves symlinks and execs
+  # CodexCLI.app/Contents/MacOS/codex beside it. The app ships no installer for
+  # a shell command: app.asar contains neither `/usr/local/bin/codex` nor
+  # `.local/bin/codex`. Its sibling codex-path/ holds only an `rg` binary, and
+  # ripgrep is already declared below, so that directory is not put on PATH.
+  #
+  # Exactly one thing provides `bin/codex`; never also install a codex package.
+  codex = pkgs.writeShellApplication {
+    name = "codex";
+    text = ''
+      bundled=/Applications/ChatGPT.app/Contents/Resources/codex-cli/bin/codex
+      if [[ ! -x "$bundled" ]]; then
+        echo "codex: ChatGPT.app's bundled CLI is missing at $bundled; the chatgpt cask in this configuration installs it" >&2
+        exit 127
+      fi
+      exec "$bundled" "$@"
+    '';
+  };
+
   # Grafana's kubectl-style CLI for dashboards, alerts, metrics, logs and
   # traces, agent-optimized. Rebuilt from the flake-pinned release tag rather
   # than taken from nixpkgs as-is: nixpkgs trails upstream badly — nixos-26.05
@@ -279,7 +309,9 @@ in
         # Outside the `with pkgs;` list so the name unambiguously means the
         # let-bound override above, not pkgs.gcx.
         gcx
-      ];
+      ]
+      # The launcher execs a macOS app bundle, so it exists only on darwin.
+      ++ lib.optionals pkgs.stdenv.hostPlatform.isDarwin [ codex ];
 
     programs.zsh.initContent = lib.mkAfter ''
       eval "$(${lib.getExe pkgs.mise} activate zsh)"

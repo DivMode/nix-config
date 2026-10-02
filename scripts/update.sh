@@ -18,6 +18,7 @@
 #   nixup                    # every input and every pin
 #   nixup codex              # ChatGPT/Codex: the cask definition, plus where the app stands
 #   nixup gcx                # gcx: the release tag in flake.nix and the Go vendor hash
+#   nixup cli-proxy          # upstream gateway and Manager Full native releases
 #   nixup herdr              # Herdr: the llm-agents input that packages it
 #   nixup homebrew-cask      # any flake input by its name in flake.nix
 #   nixup --dry-run          # move the versions and build, do not activate
@@ -31,6 +32,8 @@
 # on a full run or by name: any input whose URL in flake.nix names a release
 # TAG, which `nix flake update` alone never moves — the tag is rewritten to the
 # latest GitHub release and the input re-locked (`gcx`, currently the only one).
+# Native gateway/dashboard releases in cli-proxy-pin.json move on a full run
+# or `nixup cli-proxy`, using GitHub's release asset SHA-256 digests.
 # "Every input" means every input: nothing declared here waits for a hand edit.
 #
 # Most declared casks carry Homebrew's `auto_updates` flag and update themselves,
@@ -52,6 +55,7 @@ fi
 export NIX_CONFIG_LOCAL="$repository/local.nix"
 
 dryRun=false
+cliProxyUpdate=false
 inputs=()
 # Every direct flake input, from the lock rather than a hand-kept list, so a
 # new input is accepted the moment it is locked.
@@ -81,6 +85,7 @@ for argument in "$@"; do
     codex|chatgpt) inputs+=(homebrew-cask) ;;
     # gcx is a release-tag pin; naming it moves the tag (see the tag section).
     gcx) inputs+=(gcx-src) ;;
+    cli-proxy|cliproxyapi|cpa-manager-plus) cliProxyUpdate=true ;;
     -*)
       echo "error: unknown option $argument" >&2
       exit 1
@@ -88,7 +93,7 @@ for argument in "$@"; do
     *)
       if ! grep -qx -- "$argument" <<<"$knownInputs"; then
         echo "error: '$argument' is neither an application name nor a flake input." >&2
-        echo "applications: codex, gcx, herdr" >&2
+        echo "applications: cli-proxy, codex, gcx, herdr" >&2
         echo "flake inputs: $(tr '\n' ' ' <<<"$knownInputs")" >&2
         exit 1
       fi
@@ -100,7 +105,7 @@ done
 # No arguments at all means everything: every lock input AND every pin. An
 # explicit list moves exactly what it names.
 fullUpdate=false
-if (( ${#inputs[@]} == 0 )); then
+if (( ${#inputs[@]} == 0 )) && [[ "$cliProxyUpdate" == false ]]; then
   fullUpdate=true
 fi
 
@@ -240,6 +245,20 @@ describeLockMoves() {
 # versionFiles: the lock, and the pin this repository keeps itself.
 gcxPin="modules/home/gcx-pin.json"
 versionFiles=(flake.lock "$gcxPin")
+cliProxyPin="modules/home/cli-proxy-pin.json"
+if [[ "$fullUpdate" == true || "$cliProxyUpdate" == true ]]; then
+  if ! git diff --quiet HEAD -- "$cliProxyPin"; then
+    echo "error: CLIProxyAPI pins have uncommitted changes; not updating over them." >&2
+    exit 1
+  fi
+  versionFiles+=("$cliProxyPin")
+fi
+for file in "${versionFiles[@]}"; do
+  if ! git diff --quiet HEAD -- "$file"; then
+    echo "error: $file has uncommitted changes; not updating or committing over them." >&2
+    exit 1
+  fi
+done
 
 # Moving a tag rewrites flake.nix, so on a run that moves one flake.nix is a
 # file this script owns and lands. It is added ONLY on those runs, and only
@@ -287,6 +306,40 @@ for move in "${tagMoves[@]}"; do
   tagMoveLines+=("    ${name}: ${ref} -> ${latest}")
 done
 
+nativeMoveLines=()
+if [[ "$fullUpdate" == true || "$cliProxyUpdate" == true ]]; then
+  echo "==> Updating CLIProxyAPI and CPA Manager Plus native pins"
+  for component in gateway manager; do
+    repo=$(jq -er --arg component "$component" '.[$component].repository' "$cliProxyPin")
+    release=$(curl -fsSL --max-time 30 "https://api.github.com/repos/$repo/releases/latest")
+    tag=$(jq -er '.tag_name' <<<"$release")
+    if [[ ! "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+      echo "error: $repo latest release is not a stable version: $tag" >&2
+      exit 1
+    fi
+    version=${tag#v}
+    oldVersion=$(jq -er --arg component "$component" '.[$component].version' "$cliProxyPin")
+    prefix=$(jq -er --arg component "$component" '.[$component].assetPrefix' "$cliProxyPin")
+    hashes='{}'
+    for platform in aarch64-darwin x86_64-darwin; do
+      suffix=$(jq -er --arg component "$component" --arg platform "$platform" '.[$component].assetSuffixes[$platform]' "$cliProxyPin")
+      asset="${prefix}${version}_${suffix}"
+      digest=$(jq -er --arg asset "$asset" '.assets[] | select(.name == $asset) | .digest' <<<"$release")
+      if [[ ! "$digest" =~ ^sha256:[a-f0-9]{64}$ ]]; then
+        echo "error: missing SHA-256 digest for $repo/$asset" >&2
+        exit 1
+      fi
+      hashes=$(jq -c --arg platform "$platform" --arg hash "${digest#sha256:}" '. + {($platform): $hash}' <<<"$hashes")
+    done
+    jq --arg component "$component" --arg version "$version" --argjson hashes "$hashes" \
+      '.[$component].version = $version | .[$component].hashes = $hashes' "$cliProxyPin" > "$before/native-pin.json"
+    cat "$before/native-pin.json" > "$cliProxyPin"
+    if [[ "$oldVersion" != "$version" ]]; then
+      nativeMoveLines+=("    ${repo}: ${oldVersion} -> ${version}")
+    fi
+  done
+fi
+
 unchanged=true
 for file in "${versionFiles[@]}"; do
   /usr/bin/cmp -s "$before/$file" "$file" || unchanged=false
@@ -301,6 +354,7 @@ echo "==> What moved"
 if command -v jq >/dev/null 2>&1; then
   describeLockMoves "$before/flake.lock"
   (( ${#tagMoveLines[@]} > 0 )) && printf '%s\n' "${tagMoveLines[@]}"
+  (( ${#nativeMoveLines[@]} > 0 )) && printf '%s\n' "${nativeMoveLines[@]}"
 else
   git --no-pager diff --stat -- "${versionFiles[@]}" || true
 fi
@@ -405,6 +459,7 @@ if command -v jq >/dev/null 2>&1; then
   git show HEAD:flake.lock > "$headLock"
   moved="$(
     (( ${#tagMoveLines[@]} > 0 )) && printf '%s\n' "${tagMoveLines[@]}"
+    (( ${#nativeMoveLines[@]} > 0 )) && printf '%s\n' "${nativeMoveLines[@]}"
     describeLockMoves "$headLock" || echo "    (listing failed)"
   )"
   rm -f "$headLock"

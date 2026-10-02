@@ -58,7 +58,10 @@ today and is intentionally structured to add NixOS servers later.
   current. Do not pin it and do not declare its Sparkle `SU*` user defaults:
   the app rewrites them on every launch (measured 2026-09-05), so a pin holds
   nothing. The reasoning is at the `chatgpt` entry in
-  `modules/darwin/homebrew.nix`.
+  `modules/darwin/homebrew.nix`. `codex` reaches PATH through a launcher in
+  `modules/home/development.nix` that execs the app's bundled
+  `Contents/Resources/codex-cli/bin/codex`; that launcher is the only provider
+  of `bin/codex`, so never also install a Nix or Homebrew codex package.
 - Exactly one thing may provide `bin/claude`. `development.nix` withholds the
   unwrapped package whenever the 1Password launcher in `secrets.nix` is enabled,
   because that launcher installs its own executable of the same name.

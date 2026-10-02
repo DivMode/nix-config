@@ -53,3 +53,11 @@ Git is installed and configured through Home Manager. Its complete identity and
 signing setup is documented in [`../../secrets/README.md`](../../secrets/README.md).
 The standalone Home Manager CLI is disabled so `darwin-rebuild` remains the
 single routine activation path.
+
+## Codex
+
+The Codex CLI is the copy ChatGPT.app bundles and updates with itself. This
+module declares only the `codex` launcher on PATH, which execs
+`/Applications/ChatGPT.app/Contents/Resources/codex-cli/bin/codex` and exits 127
+with a message when the app is absent. Nothing pins a codex version, and the
+launcher is the single provider of `bin/codex`.

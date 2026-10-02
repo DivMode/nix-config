@@ -1,0 +1,66 @@
+--- a/internal/api/server.go
++++ b/internal/api/server.go
+@@ -11,6 +11,8 @@
+ 	"fmt"
+ 	"net"
+ 	"net/http"
++
++	"github.com/router-for-me/CLIProxyAPI/v8/internal/nixlocal"
+ 	"os"
+ 	"strings"
+ 	"sync"
+@@ -129,6 +131,8 @@
+ 		gin.SetMode(gin.ReleaseMode)
+ 	}
+ 
++	nixlocal.RequireAddress(fmt.Sprintf("%s:%d", cfg.Host, cfg.Port))
++
+ 	// Create gin engine
+ 	engine := gin.New()
+ 	if errSetTrustedProxies := engine.SetTrustedProxies(cfg.TrustedProxies); errSetTrustedProxies != nil {
+@@ -240,7 +244,7 @@
+ 
+ 	// Register management routes when configuration or environment secrets are available,
+ 	// or when a local management password is provided (e.g. TUI mode).
+-	hasManagementSecret := cfg.RemoteManagement.SecretKey != "" || envManagementSecret || s.localPassword != ""
++	hasManagementSecret := cfg.Host == "127.0.0.1" || cfg.RemoteManagement.SecretKey != "" || envManagementSecret || s.localPassword != ""
+ 	s.managementRoutesEnabled.Store(hasManagementSecret)
+ 	redisqueue.SetEnabled(hasManagementSecret || (cfg != nil && cfg.Home.Enabled))
+ 	if hasManagementSecret {
+@@ -256,7 +260,7 @@
+ 	// Create HTTP server
+ 	s.server = &http.Server{
+ 		Addr:    fmt.Sprintf("%s:%d", cfg.Host, cfg.Port),
+-		Handler: engine,
++		Handler: nixlocal.Wrap(engine),
+ 	}
+ 
+ 	return s
+--- a/internal/api/server_reload.go
++++ b/internal/api/server_reload.go
+@@ -128,9 +128,9 @@
+ 
+ 	prevSecretEmpty := true
+ 	if oldCfg != nil {
+-		prevSecretEmpty = oldCfg.RemoteManagement.SecretKey == ""
+-	}
+-	newSecretEmpty := cfg.RemoteManagement.SecretKey == ""
++		prevSecretEmpty = oldCfg.Host != "127.0.0.1" && oldCfg.RemoteManagement.SecretKey == ""
++	}
++	newSecretEmpty := cfg.Host != "127.0.0.1" && cfg.RemoteManagement.SecretKey == ""
+ 	if s.envManagementSecret {
+ 		s.registerManagementRoutes()
+ 		if s.managementRoutesEnabled.CompareAndSwap(false, true) {
+--- a/internal/api/handlers/management/handler.go
++++ b/internal/api/handlers/management/handler.go
+@@ -307,6 +307,10 @@
+ 	}
+ 
+ 	cfg := h.cfg
++	// This Nix build is restricted to loopback by the HTTP server wrapper.
++	if cfg != nil && cfg.Host == "127.0.0.1" && localClient {
++		return true, http.StatusOK, ""
++	}
+ 	var (
+ 		allowRemote bool
+ 		secretHash  string

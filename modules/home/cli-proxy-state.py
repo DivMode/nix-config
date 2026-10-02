@@ -3,12 +3,10 @@
 import json
 import os
 from pathlib import Path
-import secrets
 import stat
 import sys
 import tempfile
 
-import bcrypt
 import yaml
 
 
@@ -62,26 +60,11 @@ def prepare(state, desired):
         if marker.read_text() != "cli-proxy-state-v1\n":
             raise ValueError("Unrecognized deployment marker")
 
-    for name in ("keys", "gateway", "auth", "plugins", "manager", "logs"):
+    for name in ("gateway", "auth", "plugins", "manager", "logs"):
         path = state / name
         if not path.exists() and not path.is_symlink():
             path.mkdir(mode=0o700)
         owned(path, directory=True)
-
-    keys = {}
-    for name in ("management", "admin", "client"):
-        path = state / "keys" / name
-        if not path.exists() and not path.is_symlink():
-            if initialized:
-                raise ValueError(f"Missing {name} key; restore it instead of rotating credentials")
-            # Exclusive creation never overwrites credentials.
-            with path.open("x") as output:
-                output.write(secrets.token_urlsafe(32) + "\n")
-        owned(path)
-        value = path.read_text().strip()
-        if len(value) < 32 or any(c.isspace() for c in value):
-            raise ValueError(f"Invalid {name} key file")
-        keys[name] = value
 
     path = state / "gateway" / "config.yaml"
     current = {}
@@ -96,24 +79,6 @@ def prepare(state, desired):
     # CPA v8 gives canonical fields precedence over legacy spellings. Use the
     # canonical layout so old UI writes cannot override the declared listener.
     merge(current, desired)
-    management = current["management"]
-    existing_hash = management.get("secret-key", "")
-    valid_hash = False
-    if isinstance(existing_hash, str) and existing_hash.startswith(("$2a$", "$2b$", "$2y$")):
-        try:
-            valid_hash = bcrypt.checkpw(keys["management"].encode(), existing_hash.encode())
-        except ValueError:
-            pass
-    if not valid_hash:
-        management["secret-key"] = bcrypt.hashpw(keys["management"].encode(), bcrypt.gensalt()).decode()
-    access = current.setdefault("access", {})
-    if not isinstance(access, dict):
-        raise ValueError("Client access config must be an object")
-    client_keys = access.setdefault("api-keys", [])
-    if not isinstance(client_keys, list) or not all(isinstance(key, str) for key in client_keys):
-        raise ValueError("Client API keys must be a list of strings")
-    if keys["client"] not in client_keys:
-        client_keys.append(keys["client"])
     write_changed(path, yaml.safe_dump(current, sort_keys=False))
     write_changed(marker, "cli-proxy-state-v1\n")
 

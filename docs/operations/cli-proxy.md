@@ -2,13 +2,18 @@
 
 The Mac profile enables upstream CLIProxyAPI with **CPA Manager Plus Full**.
 Both are native Darwin packages supervised by Home Manager launch agents.
-Release versions and SHA-256 archive hashes live in
+Release versions, source archive hashes, and dependency hashes live in
 `modules/home/cli-proxy-pin.json`; there are no runtime binary or panel updates.
-`nixup cli-proxy` advances both releases through the existing checked rebuild
-workflow; a full `nixup` includes them. GitHub release asset digests are pinned,
-and Nix verifies downloaded archive bytes against those hashes at build time.
-The Manager binary embeds the dashboard. Docker, a public domain, and a reverse
-proxy are unnecessary for this local deployment.
+Nix builds the pinned upstream gateway, Manager backend, and dashboard with small
+local patches. These remove server authentication and open the dashboard directly.
+The builds refuse non-loopback listener addresses, reject foreign HTTP Host and
+browser Origin values, and accept local requests without credentials.
+`nixup cli-proxy` advances the releases through the existing checked rebuild
+workflow; a full `nixup` includes them. Patch or build failures stop the update.
+Dependency hashes are refreshed only for source versions advanced by that run.
+Changes to the local lock-completion workflow require reviewing and repinning
+its output hash through the normal development build.
+Docker, a public domain, and a reverse proxy are unnecessary for this deployment.
 
 ## Access
 
@@ -16,16 +21,16 @@ proxy are unnecessary for this local deployment.
 - OpenAI-compatible client base URL: <http://127.0.0.1:8317/v1>
 - CPA management API: `http://127.0.0.1:8317/v0/management`
 
-Run `cli-proxy-dashboard` to copy the dashboard admin key to the clipboard and
-open the dashboard. Paste it into the login field. The gateway connection and
-its separate management key are already configured; no registration is needed.
-Run `cli-proxy-client-key` to copy the inference client key, then paste that key
-into the coding client's API-key field alongside the base URL above.
+Run `cli-proxy-dashboard` to open the dashboard. There is no login or local
+access key. The inference and WebSocket endpoints also accept requests without an API key.
+If a coding client requires a non-empty API-key field, use `local`; it is a
+non-secret placeholder, and the server does not validate it.
 
-These are three separate keys: the dashboard admin key, CPA management key, and
-inference client key. They are generated privately on first activation and are
-never printed by the helper commands. Do not use a management key as a client
-key. Clear the clipboard after pasting if desired.
+Manager and panel use that same placeholder internally because upstream
+components expect a non-empty connection marker. Requests without any
+Authorization header are also accepted. Old access-key files and the old
+SQLite admin record are preserved as inactive application state; they are
+neither loaded nor checked by this deployment.
 
 ## Add provider accounts
 
@@ -56,7 +61,7 @@ Default state directory:
 
 | Path | Owner and purpose |
 | --- | --- |
-| `keys/{admin,management,client}` | Private application-generated keys, mode 0600 |
+| `keys/` (older installations only) | Inactive legacy keys; untouched |
 | `gateway/config.yaml` | Writable CPA config; provider entries remain application-owned |
 | `auth/` | Provider OAuth credentials; application-owned |
 | `manager/usage.sqlite*` | Manager settings and persistent history; application-owned |
@@ -64,17 +69,20 @@ Default state directory:
 | `logs/` and `gateway/logs/` | Private application logs |
 | `.nix-managed` | Deployment ownership marker |
 
-Nix owns versions, supervision, listener addresses, key-file paths, disabled
+Nix owns versions, supervision, listener addresses, no-key local access, disabled
 discovery/plugins/profiling, bounded CPA file logging, and usage collection.
 Activation reasserts those fields while preserving provider configurations and
-additional client keys. Repeating activation leaves keys unchanged and does
-not rewrite unchanged configuration or restart unchanged launch agents.
-Missing keys/configuration on an initialized deployment fail closed. Restore
-the missing state rather than deleting the marker or silently rotating keys.
+application history. Activation removes local server/client access keys from
+the gateway configuration. Repeating activation does not rewrite unchanged configuration or restart unchanged launch agents.
+A scoped activation check compares launchd’s loaded command with each declared
+command, correcting stale registrations on macOS versions that reject Home
+Manager’s `bootout --wait` command.
+Missing configuration on an initialized deployment fails closed. Restore
+the missing state rather than deleting the marker.
 An existing unmanaged deployment or symlink collision is rejected.
 
 Both listeners bind only to `127.0.0.1`; CPA remote management is disabled and
-all management calls require authentication. The standalone CPA panel is
+local management calls require no authentication. The standalone CPA panel is
 disabled in favor of Manager Full. No LAN announcement, public tunnel, or
 firewall exception is configured. OAuth may temporarily start a provider
 callback listener while the user signs in.
@@ -84,8 +92,8 @@ tunnel to these loopback ports. Do not enable CPA remote management or publish
 the dashboard to the Internet. A future server deployment should have its own
 host module and private-network policy.
 
-Back up the whole private state directory, including `data.key` and the three
-keys. Stop both services for a consistent SQLite copy; include SQLite companion
+Back up the whole private state directory, including `data.key`. Stop both services
+for a consistent SQLite copy; include SQLite companion
 files when present. Nix/Git can reconstruct software but cannot reconstruct
 OAuth sessions or request history. History is retained until explicitly managed
 through the application; there is no automatic data deletion policy here.

@@ -1,28 +1,16 @@
 {
   "gateway": {
     "version": "8.0.10",
-    "hashes": {
-      "aarch64-darwin": "e2080f54ee4d7940c77345440956ce592eef34da2910bd865d4928b75accd122",
-      "x86_64-darwin": "2d5af1cf19cc0d887b96fde809f78a999438a65564ce19de5966b7d5b6c451ca"
-    },
     "repository": "router-for-me/CLIProxyAPI",
-    "assetPrefix": "CLIProxyAPI_",
-    "assetSuffixes": {
-      "aarch64-darwin": "darwin_aarch64.tar.gz",
-      "x86_64-darwin": "darwin_amd64.tar.gz"
-    }
+    "sourceHash": "5ea7813be0c1c12265a1f459979045c6df6e09c4a73a3389a005701c1b2c2426",
+    "vendorHash": "sha256-r3yWkdMcM40G9jV7MxW/qNv3E9WrHavFilW24quEf+8="
   },
   "manager": {
     "version": "1.14.2",
-    "hashes": {
-      "aarch64-darwin": "2eb7dc0f2a93722d02fdb9c5e3efc9206859f3ab37cd9ba08706635ad451df83",
-      "x86_64-darwin": "337d894d85e4e92e6a0d45d74feaa673742a34a7db399e99f8e4791ee1e73bb6"
-    },
     "repository": "seakee/CPA-Manager-Plus",
-    "assetPrefix": "cpa-manager-plus_v",
-    "assetSuffixes": {
-      "aarch64-darwin": "darwin_arm64.tar.gz",
-      "x86_64-darwin": "darwin_amd64.tar.gz"
-    }
+    "sourceHash": "f0fb0ea73cbf821960acc8ca84199ce8f8140e6263a3983ebc1c979e3101c7e9",
+    "vendorHash": "sha256-+KeivbPYmHJPbnCfjC0LWkK2gRikUXOI2HsqSd3kLpU=",
+    "npmDepsHash": "sha256-PVg3Pqr5DSz6KCZs15e41mkJm1BhUHgjtHjdfn6UIxU=",
+    "lockHash": "sha256-e4bQGhlnlfLDdlkYIH+Kn4gFg9kFJdKg9pp1l8v6SsI="
   }
 }

@@ -60,8 +60,8 @@ reusable user choices belong in `profiles/`. Future NixOS servers should add
   Rust; Home Manager installs the rustup executable and proxies from nixpkgs.
 - **Applications/providers** own mutable histories, auth sessions, and databases.
 - **CLIProxyAPI / CPA Manager Plus Full** run as local native launch agents.
-  Nix pins their release archives and owns their loopback listeners and key-file
-  paths; the applications own private credentials, provider configuration, and
+  Nix pins their source releases, applies local access patches, and owns their
+  loopback listeners; the applications own private credentials, provider configuration, and
   SQLite history. See [local gateway operations](operations/cli-proxy.md).
 - **1Password** owns secret values and its optional SSH-agent runtime; Nix owns
   only references, mappings, and launchers.

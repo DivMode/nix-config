@@ -196,7 +196,6 @@
                 pkgs = nixpkgs.legacyPackages.${system};
                 python = pkgs.python3.withPackages (p: [
                   p.pyyaml
-                  p.bcrypt
                 ]);
               in
               pkgs.runCommand "cli-proxy-state-tests" { } ''

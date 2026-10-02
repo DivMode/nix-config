@@ -1,0 +1,158 @@
+--- a/apps/web/src/router/ProtectedRoute.tsx
++++ b/apps/web/src/router/ProtectedRoute.tsx
+@@ -1,22 +1,21 @@
+ import { useEffect, useState, type ReactElement } from 'react';
+-import { Navigate, useLocation, useNavigate } from 'react-router-dom';
++import { useNavigate } from 'react-router-dom';
+ import { useAuthStore } from '@/stores';
+ import { LoadingSpinner } from '@/components/ui/LoadingSpinner';
+ import { isUsageServiceId, usageServiceApi } from '@/services/api/usageService';
+ import { detectApiBaseFromLocation } from '@/utils/connection';
+ 
+ export function ProtectedRoute({ children }: { children: ReactElement }) {
+-  const location = useLocation();
+   const navigate = useNavigate();
+   const isAuthenticated = useAuthStore((state) => state.isAuthenticated);
+   const managementKey = useAuthStore((state) => state.managementKey);
+   const apiBase = useAuthStore((state) => state.apiBase);
+-  const restoreSession = useAuthStore((state) => state.restoreSession);
+-  const [checking, setChecking] = useState(false);
++  const login = useAuthStore((state) => state.login);
++  const [checking, setChecking] = useState(true);
+ 
+   useEffect(() => {
+     const tryRestore = async () => {
+-      if (!isAuthenticated && managementKey && apiBase) {
++      if (!isAuthenticated) {
+         setChecking(true);
+         try {
+           const detectedBase = detectApiBaseFromLocation();
+@@ -30,22 +29,28 @@
+           const hostedManagementPage =
+             typeof window !== 'undefined' &&
+             /\/management\.html$/i.test(window.location.pathname);
+-          const result = await restoreSession({
+-            expectedMode: detectedUsageService ? 'manager_embedded' : 'external_panel',
+-            expectedPanelBase:
++          const result = await login({
++            apiBase: detectedBase,
++            managementKey: 'local', // Non-secret upstream compatibility marker.
++            rememberPassword: false,
++            sessionMode: 'manager_embedded',
++            sessionPanelBase:
+               detectedUsageService || hostedManagementPage ? detectedBase : undefined,
+           });
+           if (result && result.recoveryMode === 'manager_config') {
+             localStorage.setItem('config-management:tab', 'manager');
+             navigate('/config', { replace: true });
+           }
++        } catch {
++          // login records the connection failure; allow a manual refresh.
+         } finally {
+           setChecking(false);
+         }
+       }
+     };
+-    tryRestore();
+-  }, [apiBase, isAuthenticated, managementKey, navigate, restoreSession]);
++    if (isAuthenticated) setChecking(false);
++    else void tryRestore();
++  }, [apiBase, isAuthenticated, managementKey, navigate, login]);
+ 
+   if (checking) {
+     return (
+@@ -56,7 +61,7 @@
+   }
+ 
+   if (!isAuthenticated) {
+-    return <Navigate to="/login" replace state={{ from: location }} />;
++    return <div className="main-content">Local gateway connection failed. Refresh to retry.</div>;
+   }
+ 
+   return children;
+--- a/apps/web/src/app/appRoutes.tsx
++++ b/apps/web/src/app/appRoutes.tsx
+@@ -1,7 +1,6 @@
+ import { Navigate, type RouteObject } from 'react-router-dom';
+ import { MainLayout } from '@/components/layout/MainLayout';
+ import { DemoPage } from '@/pages/DemoPage';
+-import { LoginPage } from '@/pages/LoginPage';
+ import { ProtectedRoute } from '@/router/ProtectedRoute';
+ import { RootShell } from './RootShell';
+ 
+@@ -15,7 +14,7 @@
+           { path: '*', element: <Navigate to="/demo" replace /> },
+         ]
+       : [
+-          { path: '/login', element: <LoginPage /> },
++          { path: '/login', element: <Navigate to="/" replace /> },
+           {
+             path: '/*',
+             element: (
+--- a/apps/web/src/components/layout/MainLayout.tsx
++++ b/apps/web/src/components/layout/MainLayout.tsx
+@@ -7,7 +7,7 @@
+   useRef,
+   useState,
+ } from 'react';
+-import { NavLink, useLocation, useNavigate } from 'react-router-dom';
++import { NavLink, useLocation } from 'react-router-dom';
+ import { useTranslation } from 'react-i18next';
+ import { Button } from '@/components/ui/Button';
+ import { PageTransition } from '@/components/common/PageTransition';
+@@ -51,7 +51,7 @@
+ } from '@/features/plugins/pluginResources';
+ import { triggerHeaderRefresh } from '@/hooks/useHeaderRefresh';
+ import { usePanelFeatureAvailability } from '@/hooks/usePanelFeatureAvailability';
+-import { getDemoLogoutPath, prefixRouteBase, stripRouteBase } from '@/features/demo/demoMode';
++import { prefixRouteBase, stripRouteBase } from '@/features/demo/demoMode';
+ import { LANGUAGE_LABEL_KEYS, LANGUAGE_ORDER, STORAGE_KEY_SIDEBAR } from '@/utils/constants';
+ import { isSupportedLanguage } from '@/utils/language';
+ import type { Theme, VisualEffectsMode } from '@/types';
+@@ -229,14 +229,12 @@
+   demoMode?: boolean;
+ }
+ 
+-function MainLayoutContent({ routeBase = '', demoMode = false }: MainLayoutProps = {}) {
++function MainLayoutContent({ routeBase = '' }: MainLayoutProps = {}) {
+   const { t } = useTranslation();
+   const { showNotification } = useNotificationStore();
+   const location = useLocation();
+-  const navigate = useNavigate();
+   const routePathname = stripRouteBase(location.pathname, routeBase);
+ 
+-  const logout = useAuthStore((state) => state.logout);
+   const connectionStatus = useAuthStore((state) => state.connectionStatus);
+   const apiBase = useAuthStore((state) => state.apiBase);
+   const supportsPlugin = useAuthStore((state) => state.supportsPlugin);
+@@ -686,13 +684,6 @@
+     }
+     showNotification(t('notification.data_refreshed'), 'success');
+   };
+-  const handleLogout = () => {
+-    if (demoMode) {
+-      navigate(getDemoLogoutPath(routeBase), { replace: true });
+-      return;
+-    }
+-    logout();
+-  };
+   const mobileSidebarToggleLabel = sidebarOpen
+     ? t('sidebar.toggle_collapse', { defaultValue: 'Close navigation' })
+     : t('sidebar.toggle_expand', { defaultValue: 'Open navigation' });
+@@ -907,15 +898,7 @@
+               )}
+             </div>
+ 
+-            <Button
+-              variant="ghost"
+-              size="sm"
+-              onClick={handleLogout}
+-              title={t('header.logout')}
+-              aria-label={t('header.logout')}
+-            >
+-              {headerIcons.logout}
+-            </Button>
++
+           </div>
+         </div>
+       </header>

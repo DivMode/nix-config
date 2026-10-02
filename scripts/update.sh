@@ -18,7 +18,7 @@
 #   nixup                    # every input and every pin
 #   nixup codex              # ChatGPT/Codex: the cask definition, plus where the app stands
 #   nixup gcx                # gcx: the release tag in flake.nix and the Go vendor hash
-#   nixup cli-proxy          # upstream gateway and Manager Full native releases
+#   nixup cli-proxy          # upstream gateway and Manager Full source releases
 #   nixup herdr              # Herdr: the llm-agents input that packages it
 #   nixup homebrew-cask      # any flake input by its name in flake.nix
 #   nixup --dry-run          # move the versions and build, do not activate
@@ -32,8 +32,8 @@
 # on a full run or by name: any input whose URL in flake.nix names a release
 # TAG, which `nix flake update` alone never moves — the tag is rewritten to the
 # latest GitHub release and the input re-locked (`gcx`, currently the only one).
-# Native gateway/dashboard releases in cli-proxy-pin.json move on a full run
-# or `nixup cli-proxy`, using GitHub's release asset SHA-256 digests.
+# Gateway/dashboard source releases in cli-proxy-pin.json move on a full run
+# or `nixup cli-proxy`; local patches and dependency hashes are checked by Nix.
 # "Every input" means every input: nothing declared here waits for a hand edit.
 #
 # Most declared casks carry Homebrew's `auto_updates` flag and update themselves,
@@ -306,9 +306,9 @@ for move in "${tagMoves[@]}"; do
   tagMoveLines+=("    ${name}: ${ref} -> ${latest}")
 done
 
-nativeMoveLines=()
+sourceMoveLines=()
 if [[ "$fullUpdate" == true || "$cliProxyUpdate" == true ]]; then
-  echo "==> Updating CLIProxyAPI and CPA Manager Plus native pins"
+  echo "==> Updating CLIProxyAPI and CPA Manager Plus source pins"
   for component in gateway manager; do
     repo=$(jq -er --arg component "$component" '.[$component].repository' "$cliProxyPin")
     release=$(curl -fsSL --max-time 30 "https://api.github.com/repos/$repo/releases/latest")
@@ -319,23 +319,17 @@ if [[ "$fullUpdate" == true || "$cliProxyUpdate" == true ]]; then
     fi
     version=${tag#v}
     oldVersion=$(jq -er --arg component "$component" '.[$component].version' "$cliProxyPin")
-    prefix=$(jq -er --arg component "$component" '.[$component].assetPrefix' "$cliProxyPin")
-    hashes='{}'
-    for platform in aarch64-darwin x86_64-darwin; do
-      suffix=$(jq -er --arg component "$component" --arg platform "$platform" '.[$component].assetSuffixes[$platform]' "$cliProxyPin")
-      asset="${prefix}${version}_${suffix}"
-      digest=$(jq -er --arg asset "$asset" '.assets[] | select(.name == $asset) | .digest' <<<"$release")
-      if [[ ! "$digest" =~ ^sha256:[a-f0-9]{64}$ ]]; then
-        echo "error: missing SHA-256 digest for $repo/$asset" >&2
-        exit 1
-      fi
-      hashes=$(jq -c --arg platform "$platform" --arg hash "${digest#sha256:}" '. + {($platform): $hash}' <<<"$hashes")
-    done
-    jq --arg component "$component" --arg version "$version" --argjson hashes "$hashes" \
-      '.[$component].version = $version | .[$component].hashes = $hashes' "$cliProxyPin" > "$before/native-pin.json"
-    cat "$before/native-pin.json" > "$cliProxyPin"
+    if [[ "$oldVersion" == "$version" ]]; then
+      continue
+    fi
+    sourceHash=$(nix store prefetch-file --json \
+      "https://codeload.github.com/$repo/tar.gz/refs/tags/$tag" | jq -er '.hash')
+    jq --arg component "$component" --arg version "$version" --arg hash "$sourceHash" \
+      '.[$component].version = $version | .[$component].sourceHash = $hash' \
+      "$cliProxyPin" > "$before/source-pin.json"
+    cat "$before/source-pin.json" > "$cliProxyPin"
     if [[ "$oldVersion" != "$version" ]]; then
-      nativeMoveLines+=("    ${repo}: ${oldVersion} -> ${version}")
+      sourceMoveLines+=("    ${repo}: ${oldVersion} -> ${version}")
     fi
   done
 fi
@@ -354,7 +348,7 @@ echo "==> What moved"
 if command -v jq >/dev/null 2>&1; then
   describeLockMoves "$before/flake.lock"
   (( ${#tagMoveLines[@]} > 0 )) && printf '%s\n' "${tagMoveLines[@]}"
-  (( ${#nativeMoveLines[@]} > 0 )) && printf '%s\n' "${nativeMoveLines[@]}"
+  (( ${#sourceMoveLines[@]} > 0 )) && printf '%s\n' "${sourceMoveLines[@]}"
 else
   git --no-pager diff --stat -- "${versionFiles[@]}" || true
 fi
@@ -366,34 +360,55 @@ echo
 echo "==> Checking"
 nix flake check --impure
 
-# gcx is a Go program, and a release that changed its Go dependencies changes
-# the hash of its vendored modules — a fixed-output derivation whose hash has
-# to be declared (modules/home/gcx-pin.json) before it can be known. Nix
-# reports the real one in the failure, so when the gcx tag moved and the build
-# stops on exactly that mismatch, the reported hash is written to the pin and
-# the build runs once more. Any other failure, or a second one, is fatal as
-# before. The hash is of content fetched from the Go module proxy against
-# go.sum, which is the same trust the hand-copied hash always had.
+# Source release updates may change fixed-output dependency hashes. Refresh
+# only known dependency derivations for pins moved by this run, using Nix's
+# verified go.sum/package-lock downloads. Four bounded attempts cover the
+# panel dependency, Manager's dependent Go fetch, and a final checked build.
+# Patch failures and all other build errors remain fatal.
 buildSystem() {
-  nix build --no-link --impure ".#darwinConfigurations.${host}.system" 2>&1 | tee "$before/build.log"
+  nix build --no-link --keep-going --impure ".#darwinConfigurations.${host}.system" 2>&1 | tee "$before/build.log"
   return "${PIPESTATUS[0]}"
 }
 
 echo "==> Building $host"
-if ! buildSystem; then
+for attempt in 1 2 3 4; do
+  if buildSystem; then
+    break
+  fi
+  movedHash=false
   gcxVendorHash=""
   if printf '%s\n' "${tagMoveLines[@]}" | grep -q '^    gcx-src:'; then
     gcxVendorHash="$(/usr/bin/awk '
       /hash mismatch in fixed-output derivation .*-gcx-[^ ]*-go-modules\.drv/ { found = 1 }
       found && $1 == "got:" { print $2; exit }' "$before/build.log")"
   fi
-  if [[ ! "$gcxVendorHash" =~ ^sha256-[A-Za-z0-9+/]{43}=$ ]]; then
+  if [[ "$gcxVendorHash" =~ ^sha256-[A-Za-z0-9+/]{43}=$ ]]; then
+    jq -n --arg vendorHash "$gcxVendorHash" '{ vendorHash: $vendorHash }' > "$gcxPin"
+    movedHash=true
+  fi
+  if (( ${#sourceMoveLines[@]} > 0 )); then
+    for spec in 'gateway:vendorHash:cli-proxy-api-local:go-modules' \
+                'manager:vendorHash:cpa-manager-plus-local:go-modules' \
+                'manager:npmDepsHash:cpa-manager-plus-local-panel:npm-deps' \
+                'manager:lockHash:cpa-manager-plus-local:npm-lock'; do
+      IFS=: read -r component field package suffix <<<"$spec"
+      version=$(jq -er --arg component "$component" '.[$component].version' "$cliProxyPin")
+      dependencyHash=$(/usr/bin/awk -v pattern="-${package}-${version}-${suffix}.drv" '
+        /hash mismatch in fixed-output derivation/ { found = index($0, pattern) > 0 }
+        found && $1 == "got:" { print $2; exit }' "$before/build.log")
+      if [[ "$dependencyHash" =~ ^sha256-[A-Za-z0-9+/]{43}=$ ]]; then
+        jq --arg component "$component" --arg field "$field" --arg hash "$dependencyHash" \
+          '.[$component][$field] = $hash' "$cliProxyPin" > "$before/dependency-pin.json"
+        cat "$before/dependency-pin.json" > "$cliProxyPin"
+        movedHash=true
+      fi
+    done
+  fi
+  if [[ "$movedHash" != true || "$attempt" == 4 ]]; then
     exit 1
   fi
-  echo "==> gcx's Go dependencies changed; vendor hash -> ${gcxVendorHash}"
-  jq -n --arg vendorHash "$gcxVendorHash" '{ vendorHash: $vendorHash }' > "$gcxPin"
-  buildSystem
-fi
+  echo "==> Pinned dependency hashes refreshed; checking the build again"
+done
 
 if [[ "$dryRun" == true ]]; then
   echo
@@ -459,7 +474,7 @@ if command -v jq >/dev/null 2>&1; then
   git show HEAD:flake.lock > "$headLock"
   moved="$(
     (( ${#tagMoveLines[@]} > 0 )) && printf '%s\n' "${tagMoveLines[@]}"
-    (( ${#nativeMoveLines[@]} > 0 )) && printf '%s\n' "${nativeMoveLines[@]}"
+    (( ${#sourceMoveLines[@]} > 0 )) && printf '%s\n' "${sourceMoveLines[@]}"
     describeLockMoves "$headLock" || echo "    (listing failed)"
   )"
   rm -f "$headLock"

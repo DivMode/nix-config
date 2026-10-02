@@ -6,42 +6,13 @@
 }:
 let
   cfg = config.nixConfig.cliProxy;
-  pins = builtins.fromJSON (builtins.readFile ./cli-proxy-pin.json);
-  system = pkgs.stdenv.hostPlatform.system;
-  nativePackage =
-    name: pin: description:
-    pkgs.stdenvNoCC.mkDerivation {
-      pname = name;
-      inherit (pin) version;
-      src = pkgs.fetchurl {
-        url = "https://github.com/${pin.repository}/releases/download/v${pin.version}/${pin.assetPrefix}${pin.version}_${pin.assetSuffixes.${system}}";
-        sha256 = pin.hashes.${system};
-      };
-      # CPA's archive is flat; Manager's archive has a single top directory.
-      sourceRoot = if name == "cli-proxy-api" then "." else null;
-      dontBuild = true;
-      dontFixup = true;
-      installPhase = ''
-        mkdir -p "$out/bin" "$out/share/licenses/${name}"
-        install -m755 ${name} "$out/bin/${name}"
-        install -m644 LICENSE "$out/share/licenses/${name}/LICENSE"
-      '';
-      meta = {
-        inherit description;
-        license = lib.licenses.mit;
-        platforms = lib.platforms.darwin;
-      };
-    };
-  gateway = nativePackage "cli-proxy-api" pins.gateway "Upstream CLIProxyAPI native gateway";
-  manager =
-    nativePackage "cpa-manager-plus" pins.manager
-      "CPA Manager Plus Full with its embedded dashboard";
+  packages = import ./cli-proxy-packages.nix { inherit lib pkgs; };
+  inherit (packages) gateway manager;
   state = cfg.stateDirectory;
   dashboardURL = "http://127.0.0.1:${toString cfg.dashboardPort}";
   gatewayURL = "http://127.0.0.1:${toString cfg.gatewayPort}";
   python = pkgs.python3.withPackages (p: [
     p.pyyaml
-    p.bcrypt
   ]);
   desired = pkgs.writeText "cli-proxy-boundary.json" (
     builtins.toJSON {
@@ -55,10 +26,15 @@ let
       };
       management = {
         allow-remote = false;
+        secret-key = "";
         disable-control-panel = true;
         disable-auto-update-panel = true;
       };
-      oauth.auth-dir = "${state}/auth";
+      access.api-keys = [ ];
+      oauth = {
+        auth-dir = "${state}/auth";
+        providers.aistudio.ws-auth = false;
+      };
       observability = {
         logs = {
           debug = false;
@@ -84,8 +60,7 @@ let
       httpAddr = "127.0.0.1:${toString cfg.dashboardPort}";
       dataDir = "${state}/manager";
       cpaUpstreamUrl = gatewayURL;
-      managementKeyFile = "${state}/keys/management";
-      adminKeyFile = "${state}/keys/admin";
+
       collectorMode = "http";
       corsOrigins = [
         dashboardURL
@@ -94,6 +69,7 @@ let
     }
   );
   gatewayStart = pkgs.writeShellScript "cli-proxy-start" ''
+    # Declared listener/configuration boundary: ${desired}
     set -eu
     umask 077
     if [ -n "''${MANAGEMENT_PASSWORD:-}" ]; then
@@ -108,18 +84,13 @@ let
     umask 077
     cd ${lib.escapeShellArg "${state}/manager"}
     export CPA_MANAGER_CONFIG=${managerConfig}
+    # Non-secret compatibility marker; this local gateway accepts no-key requests.
+    export CPA_MANAGEMENT_KEY=local
     exec ${manager}/bin/cpa-manager-plus
   '';
   dashboard = pkgs.writeShellScriptBin "cli-proxy-dashboard" ''
     set -eu
-    /usr/bin/pbcopy < ${lib.escapeShellArg "${state}/keys/admin"}
     /usr/bin/open ${lib.escapeShellArg "${dashboardURL}/management.html"}
-    printf '%s\n' 'Dashboard admin key copied. Paste it into the login field.'
-  '';
-  clientKey = pkgs.writeShellScriptBin "cli-proxy-client-key" ''
-    set -eu
-    /usr/bin/pbcopy < ${lib.escapeShellArg "${state}/keys/client"}
-    printf '%s\n' 'Client API key copied.'
   '';
   login = pkgs.writeShellScriptBin "cli-proxy-login" ''
     set -eu
@@ -182,7 +153,6 @@ in
       gateway
       manager
       dashboard
-      clientKey
       login
     ];
     home.activation.cliProxyState =
@@ -190,6 +160,48 @@ in
         ''
           run ${python}/bin/python3 ${./cli-proxy-state.py} ${lib.escapeShellArg state} ${desired}
         '';
+    # The pinned Home Manager modules/launchd/default.nix uses bootout --wait.
+    # This macOS launchctl rejects it with "Unrecognized target specifier", leaving
+    # the old arguments loaded after installing the new plist. Reconcile only
+    # these two services against launchd's actual arguments; unchanged jobs stay up.
+    home.activation.cliProxyRunning = lib.hm.dag.entryAfter [ "setupLaunchAgents" ] (
+      lib.concatMapStringsSep "\n"
+        ({ name, start }: ''
+          cliProxyTarget="gui/$UID/org.nix-community.home.${name}"
+          if ! /bin/launchctl print "$cliProxyTarget" 2>/dev/null | \
+              ${pkgs.gnugrep}/bin/grep -F "exec ${start}" >/dev/null; then
+            if /bin/launchctl print "$cliProxyTarget" >/dev/null 2>&1; then
+              run /bin/launchctl bootout "$cliProxyTarget"
+              if [[ ! -v DRY_RUN ]]; then
+                # bootout returns before launchd finishes removing the job.
+                # The first activation's bootstrap preceded removal by 17 ms.
+                for cliProxyAttempt in {1..100}; do
+                  if ! /bin/launchctl print "$cliProxyTarget" >/dev/null 2>&1; then
+                    break
+                  fi
+                  /bin/sleep 0.1
+                done
+                if /bin/launchctl print "$cliProxyTarget" >/dev/null 2>&1; then
+                  printf '%s\n' "Timed out stopping $cliProxyTarget" >&2
+                  exit 1
+                fi
+              fi
+            fi
+            run /bin/launchctl bootstrap "gui/$UID" \
+              ${lib.escapeShellArg "${config.home.homeDirectory}/Library/LaunchAgents/org.nix-community.home.${name}.plist"}
+          fi
+        '')
+        [
+          {
+            name = "cli-proxy-api";
+            start = gatewayStart;
+          }
+          {
+            name = "cpa-manager-plus";
+            start = managerStart;
+          }
+        ]
+    );
     launchd.agents = {
       cli-proxy-api = agent gatewayStart "gateway";
       cpa-manager-plus = agent managerStart "manager";

@@ -191,6 +191,20 @@
               (import ./modules/home/command-governor-settings.nix {
                 pkgs = nixpkgs.legacyPackages.${system};
               }).tests;
+            cli-proxy-state =
+              let
+                pkgs = nixpkgs.legacyPackages.${system};
+                python = pkgs.python3.withPackages (p: [
+                  p.pyyaml
+                  p.bcrypt
+                ]);
+              in
+              pkgs.runCommand "cli-proxy-state-tests" { } ''
+                cp ${./modules/home/cli-proxy-state.py} cli-proxy-state.py
+                cp ${./modules/home/cli-proxy-state-test.py} cli-proxy-state-test.py
+                ${python}/bin/python3 cli-proxy-state-test.py
+                touch "$out"
+              '';
           });
 
       # `nixfmt-tree`, not bare `nixfmt`. `nix fmt` invokes the formatter with

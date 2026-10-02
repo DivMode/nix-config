@@ -86,6 +86,7 @@ both.
 nixup                  # every input and every pin, then build and activate
 nixup codex            # ChatGPT/Codex: the cask definition, plus where the installed app stands
 nixup gcx              # gcx: the release tag in flake.nix and the Go vendor hash
+nixup cli-proxy        # CLIProxyAPI and CPA Manager Plus: native releases and archive hashes
 nixup homebrew-cask    # any flake input, by its name in flake.nix
 nixup --dry-run        # move the versions and build, do not activate
 ```

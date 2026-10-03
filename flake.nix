@@ -62,6 +62,18 @@
       flake = false;
     };
 
+    # Claude Code plugin that dispatches scoped work to the Codex CLI and keeps
+    # each execution's prompt, raw events, and handoff. Pinned to the v0.5.1
+    # tag (a pre-release on upstream's release/0.5.1 branch, never merged to
+    # main): it adds the background runner the skills launch Codex through,
+    # which v0.5.0 lacks. modules/home/ai loads it as a plugin and layers the
+    # local delegation policy onto it. MIT; referenced, not vendored. A tag
+    # pin does not move with `nix flake update`; edit the tag to upgrade.
+    codex-orchestrator = {
+      url = "github:alexzh3/codex-orchestrator/v0.5.1";
+      flake = false;
+    };
+
     nix-homebrew.url = "github:zhaofengli/nix-homebrew";
 
     homebrew-core = {

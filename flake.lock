@@ -67,6 +67,23 @@
         "type": "github"
       }
     },
+    "codex-orchestrator": {
+      "flake": false,
+      "locked": {
+        "lastModified": 1784048549,
+        "narHash": "sha256-XHHdrIs8wMjWTRvYQPCyg5xWBCm7WatDXwnNi6Z6eCg=",
+        "owner": "alexzh3",
+        "repo": "codex-orchestrator",
+        "rev": "eaee221860b77817aad0f9740636d28e4d17fd00",
+        "type": "github"
+      },
+      "original": {
+        "owner": "alexzh3",
+        "ref": "v0.5.1",
+        "repo": "codex-orchestrator",
+        "type": "github"
+      }
+    },
     "flake-parts": {
       "inputs": {
         "nixpkgs-lib": [
@@ -270,6 +287,7 @@
     "root": {
       "inputs": {
         "anthropic-skills": "anthropic-skills",
+        "codex-orchestrator": "codex-orchestrator",
         "gcx-src": "gcx-src",
         "home-manager": "home-manager",
         "homebrew-cask": "homebrew-cask",

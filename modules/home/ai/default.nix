@@ -102,6 +102,31 @@ let
     ${concatMapStringsSep "\n" (name: "rm -rf $out/skills/${name}") gcxSkillsExcluded}
   '';
 
+  # codex-orchestrator: Claude Code supervises Codex CLI workers through it.
+  # Upstream ships only a Claude Code manifest, and its skills drive the Codex
+  # CLI rather than run inside it, so Codex gets nothing from this.
+  #
+  # Upstream's files are used verbatim. Its skills run bare `python3`, and its
+  # tools need 3.10+: macOS's /usr/bin/python3 (3.9.6) fails 27 of its 138
+  # tests (`Counter.total`). The uv-backed `python3` launcher in
+  # ../development.nix is what that name resolves to.
+  #
+  # The local delegation policy (skills/delegate) and its scope check
+  # (local/codex-scope) are added to the tree, so the skill can reach both
+  # through ${CLAUDE_PLUGIN_ROOT} and disappears with the plugin.
+  codexScope = pkgs.writeShellApplication {
+    name = "codex-scope";
+    runtimeInputs = [ pkgs.git ];
+    text = builtins.readFile ai.codexOrchestrator.scopeCheck;
+  };
+
+  codexOrchestratorPlugin = pkgs.runCommand "codex-orchestrator-claude-plugin" { } ''
+    cp -r ${inputs.codex-orchestrator} $out
+    chmod -R u+w $out
+    cp -r ${ai.codexOrchestrator.delegateSkill} $out/skills/delegate
+    install -Dm755 ${lib.getExe codexScope} $out/local/codex-scope
+  '';
+
   # The same gcx skills for Codex. Upstream's official cross-agent path is
   # `gcx agent skills install --all`, which copies this identical bundle (the
   # binary embeds claude-plugin/skills/, its canonical source) into
@@ -384,6 +409,7 @@ in
       plugins = [
         mattPocockSkills
         gcxClaudePlugin
+        codexOrchestratorPlugin
       ];
 
       context = instructions.text;

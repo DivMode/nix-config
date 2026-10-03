@@ -41,7 +41,13 @@ Runtime ownership is deliberately single-purpose:
 - `mise` installs and selects Node. The machine fallback is Node 24; projects
   should commit exact versions and locks.
 - `uv` installs Python interpreters and owns Python environments, dependencies,
-  tools, and lockfiles. Python is not also selected by mise.
+  tools, and lockfiles. Python is not also selected by mise. The machine
+  fallback is CPython 3.14 (`pythonDefault`, written to
+  `~/.config/uv/.python-version`); `python3` and `python` on PATH are a launcher
+  that runs the interpreter uv picks for the current directory, installing it
+  on first use. uv is set to `only-managed`, so macOS's `/usr/bin/python3`
+  (3.9) is never chosen. uv's downloaded CPython builds run on macOS as-is; a
+  future NixOS host would need `programs.nix-ld` for them.
 - `rustup` owns Rust toolchains, targets, and components. Rust projects should
   commit `rust-toolchain.toml` when a specific toolchain is required.
 

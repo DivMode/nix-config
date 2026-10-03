@@ -118,6 +118,19 @@ The PreToolUse guard is referenced by absolute store path and run with an
 explicit interpreter, so nothing under `~/.claude` is involved in enforcing it.
 Deleting that directory cannot disarm the rule.
 
+### Codex delegation (codex-orchestrator)
+
+`codex-orchestrator` (flake input, pinned to the v0.5.1 tag) is loaded as a
+Claude Code plugin so Claude can hand precisely scoped implementation work to
+the real Codex CLI and keep supervising it. Its tools need Python 3.10+, which
+the uv-backed `python3` launcher in `modules/home/development.nix` provides.
+`codex-orchestrator/` here adds the local policy skill
+(`/codex-orchestrator:delegate`) and its `codex-scope` post-run check. The
+policy fixes the worker to `gpt-6.1-sol` at `high` effort with explicit flags,
+not a Codex profile: Codex 0.159.2 started a session with a missing `-p`
+profile instead of failing. Remove the plugin from `programs.claude-code.plugins`
+to disable all of it.
+
 ### Plugins and marketplaces are deliberately not declared
 
 Checked on 2026-08-13, and the answer is that there is nothing at risk:

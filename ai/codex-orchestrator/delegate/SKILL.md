@@ -1,6 +1,6 @@
 ---
 name: delegate
-description: Hand a coding job to a Codex CLI worker (gpt-6.1-sol, high effort) while Claude plans, supervises, and accepts. Invoke this yourself whenever the user mentions Codex for doing work — "use Codex", "have Codex do it", "let Codex implement", "delegate to Codex". The user never types this command.
+description: Hand a large, mechanical coding job to a Codex CLI worker (gpt-6.1-sol, high effort, Fast tier) while Claude plans, supervises, and accepts. Invoke this yourself, without being asked, when a planned change is large and mechanical with its decisions already made (many files, repetitive edits, long edit-test-fix loops), and whenever the user mentions Codex for doing work ("use Codex", "have Codex do it"). Never for small fixes; do those directly. The user never types this command.
 ---
 
 # Delegate an implementation to Codex
@@ -25,6 +25,29 @@ hooks may forbid writes in its main checkout (the work monorepo's do), worktree 
 records kept inside a worktree, and the sandboxed worker cannot write there to alter them. Skip
 upstream's `info/exclude` step, which only exists to hide the in-repo directory; still record the
 repository baseline in `run_started` as upstream describes.
+
+## Codex or Claude: decide per piece of work
+
+Upstream says to prefer Codex as the first mover for bounded coding tasks. Here that is narrowed:
+Codex gets only work where delegating saves Claude more than writing and checking the assignment
+costs. Decide for each piece, even inside a project the user said to "use Codex" for.
+
+Send to Codex when all of these hold:
+- The decisions are made. What remains is execution, not product, architecture, or design choices.
+- It is implementation-heavy: many files, the same transformation repeated across a codebase, or
+  a long edit-test-fix loop. As a rough guide, more than about 5 files or 150 changed lines.
+- It can be checked by commands, either inside Codex's sandbox or by Claude afterwards.
+
+Do it in Claude directly when any of these hold:
+- It is a small fix: a few files, roughly under 50 lines, or the exact edit is already known.
+  Writing and verifying the assignment would cost as much as doing it.
+- It still needs investigation, debugging of a live system, or a decision.
+- It needs the network, cloud access, credentials, deploys, or production data. Codex's sandbox
+  has no network, and secrets stay out of it.
+
+If the user explicitly asks for Codex on a specific change, use Codex for it. When a large job
+contains small follow-ups, such as a one-line fix after review, do those in Claude rather than
+starting another Codex execution. Say in one line which way each piece went and why.
 
 ## Who owns what
 
@@ -58,7 +81,12 @@ session:
 codex debug models | jq -e '.models[] | select(.slug=="gpt-6.1-sol") | .supported_reasoning_levels[].effort | select(.=="high")'
 ```
 
-The service tier and authentication come from the user's Codex configuration unchanged.
+Fast tier: `-c service_tier="fast"`, about 2x faster at roughly 2x the Codex usage. The user
+chose Fast as the default on 2026-10-03. It was measured working in `codex exec` 0.159.2 at
+14.5–15 tok/s standard versus 29–30 tok/s fast on the same prompt. Do not judge it from the
+server's `service_tier` field: `response.completed` reports "default" either way, and rollouts do
+not record the tier. To run at standard speed, drop the flag. Authentication comes from the user's
+Codex login unchanged.
 
 ## Before dispatch
 
@@ -143,11 +171,11 @@ gtimeout --foreground --signal=TERM --kill-after=60s 45m \
     --label codex-impl-01 --repo "$REPO" --role implementation \
     --events "$EXECUTION_DIR/events.jsonl" --prompt "$EXECUTION_DIR/prompt.md" \
   -- codex exec --json --output-last-message "$EXECUTION_DIR/handoff.md" \
-     -m gpt-6.1-sol -c model_reasoning_effort="high" -c agents.max_threads=1 \
+     -m gpt-6.1-sol -c model_reasoning_effort="high" -c service_tier="fast" -c agents.max_threads=1 \
      -s workspace-write -c approval_policy=never -C "$WORKTREE" -
 ```
 
-Record `model` and `effort` as requested values in the `execution` entry. The session id is the
+Record `model`, `effort`, and `service_tier` as requested values in the `execution` entry. The session id is the
 `thread_id` of the stream's `thread.started` event:
 
 ```bash
@@ -161,7 +189,7 @@ jq -r 'select(.type=="thread.started") | .thread_id' "$EXECUTION_DIR/events.json
   `events.jsonl` out of context unless diagnosing a specific failure.
 - Close: `validate "$RUN_DIR"`, then `run_closed`.
 - Correction: the one allowed correction is upstream's resume command as `execution-02` under the
-  same agent, with that session id, the same `-C "$WORKTREE"`, and the same `-m`, effort,
+  same agent, with that session id, the same `-C "$WORKTREE"`, and the same `-m`, effort, `service_tier`,
   `agents.max_threads`, sandbox, approval, and `gtimeout` settings. Never `--last`.
 - Cancel: stop the background task. The runner exits 143 after stopping Codex. A timeout exits 124.
 - A timeout stops Codex but not the command Codex was running: its shell commands run in their

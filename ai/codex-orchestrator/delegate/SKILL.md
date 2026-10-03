@@ -1,6 +1,6 @@
 ---
 name: delegate
-description: Hand a large, mechanical coding job to a Codex CLI worker (gpt-6.1-sol, high effort; Fast tier only when the user asks for fast mode) while Claude plans, supervises, and accepts. Invoke this yourself, without being asked, when a planned change is large and mechanical with its decisions already made (many files, repetitive edits, long edit-test-fix loops), and whenever the user mentions Codex for doing work ("use Codex", "have Codex do it"). Never for small fixes; do those directly. The user never types this command.
+description: Hand a large, mechanical coding job to a Codex CLI worker (gpt-6.1-sol, high effort; Fast tier only when the user asks for fast mode) while Claude plans, splits big jobs into up to 4 parallel pieces, supervises, and accepts. Invoke this yourself, without being asked, when a planned change is large and mechanical with its decisions already made (many files, repetitive edits, long edit-test-fix loops), and whenever the user mentions Codex for doing work ("use Codex", "have Codex do it"). Never for small fixes; do those directly. The user never types this command.
 ---
 
 # Delegate an implementation to Codex
@@ -60,11 +60,11 @@ widens product scope, introduces architecture, or decides unrelated improvements
 
 ## Defaults that narrow upstream
 
-- One writing worker. Run parallel workers only for genuinely independent assignments, each in its
-  own worktree with disjoint `files`, and state the ownership before launch.
+- Split a big job into independent pieces yourself and run them together, up to 4 Codex jobs at
+  once (the user's choice, 2026-10-03). See "Running several jobs at once" below.
 - No `planning` or `planning_review` agents. No Codex reviewer unless material risk or a specific
   unresolved question justifies one; say which.
-- One implementation execution, then Claude's verification. At most one targeted correction, by
+- For each piece: one implementation execution, then Claude's verification. At most one targeted correction, by
   resuming the same session. If it still fails, stop and bring the unresolved issue back for a fresh
   decision. Never loop.
 - Do not run `config init` or create `.codex-orchestrator/config.ini`: its generated policy is
@@ -192,6 +192,31 @@ Record `model`, `effort`, and `service_tier` (when Fast is on) as requested valu
 ```bash
 jq -r 'select(.type=="thread.started") | .thread_id' "$EXECUTION_DIR/events.jsonl"
 ```
+
+## Running several jobs at once
+
+Codex is slow, so a big job finishes fastest as independent pieces running side by side. Do this
+by default for any job that splits cleanly; the user should not have to ask.
+
+1. **Split.** Break the job into pieces that touch disjoint files and do not need each other's
+   results. A piece that needs another piece's code waits until that piece is accepted. Size each
+   piece to finish well inside Codex's context. `gpt-6.1-sol` has a 272k-token window (catalog,
+   2026-10-03), compacted at about 95%, and Codex's own instructions use part of it. A piece that
+   needs most of a package read, or dozens of files changed, is too big; split it again. Pieces
+   that are small fixes stay with Claude, per the routing rule above.
+2. **Limit.** Run at most 4 Codex jobs at once. On this 16 GB machine, at most 2 of them may run
+   heavy work at the same time: Rust builds, full test suites, bundlers. Hold the rest until one
+   finishes. Parallel Rust pieces need separate cargo target dirs, which some repositories' worktree
+   recipes create per worktree. Without separate dirs they queue on cargo's build lock.
+3. **Isolate.** Give each piece its own worktree from the repository's mechanism, its own agent name
+   in the same run (`codex-impl-01` … `codex-impl-04`), its own task and `files`, its own scope
+   baseline, and its own background task. The one-correction limit applies per piece.
+4. **Announce.** Before launching, tell the user in one line per piece what it does and which files
+   it owns.
+5. **Collect.** Verify each piece as it finishes, exactly as in Accept; a blocked piece does not stop
+   the others. Integrate each accepted piece through the repository's workflow as its own slice.
+   When pieces must ship together, combine them in one worktree after review and rerun the checks
+   there.
 
 ## Observe, resume, cancel
 

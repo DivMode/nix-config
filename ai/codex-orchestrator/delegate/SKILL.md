@@ -97,14 +97,24 @@ Codex login unchanged.
    `git worktree add`. Never let a worker write in the user's main checkout.
 3. Create the run directory under `$HOME/.claude/codex-runs/`, append `run_started` with the
    repository baseline, and record the task with its allowed `files`.
-4. Take the scope baseline after the worktree is ready and before launch, and record it as
+4. Install the guard rules that stop the worker from committing, pushing, shipping, or
+   deploying. Codex reads them only from a trusted project's `.codex/rules/`, and dispatch marks
+   the worktree trusted. Stop if the check does not print `forbidden`:
+
+   ```bash
+   mkdir -p "$WORKTREE/.codex/rules"
+   cp "${CLAUDE_PLUGIN_ROOT}/local/delegate.rules" "$WORKTREE/.codex/rules/delegate.rules"
+   codex execpolicy check --rules "$WORKTREE/.codex/rules/delegate.rules" codex-guard-canary | jq -r .decision
+   ```
+
+5. Take the scope baseline after the worktree is ready and before launch, and record it as
    `baseline_tree` in the `execution` entry:
 
    ```bash
    BASE_TREE="$("${CLAUDE_PLUGIN_ROOT}/local/codex-scope" snapshot "$WORKTREE")"
    ```
 
-5. Write `prompt.md` from the template below. Do not dispatch while any section is empty or vague.
+6. Write `prompt.md` from the template below. Do not dispatch while any section is empty or vague.
    Point at source with paths and symbols; do not paste whole files, long logs, or this
    conversation.
 
@@ -174,7 +184,8 @@ gtimeout --foreground --signal=TERM --kill-after=60s 45m \
     --events "$EXECUTION_DIR/events.jsonl" --prompt "$EXECUTION_DIR/prompt.md" \
   -- codex exec --json --output-last-message "$EXECUTION_DIR/handoff.md" \
      -m gpt-6.1-sol -c model_reasoning_effort="high" -c agents.max_threads=1 \
-     -s danger-full-access -c approval_policy=never -C "$WORKTREE" -
+     -s danger-full-access -c approval_policy=never \
+     -c "projects.\"$WORKTREE\".trust_level=\"trusted\"" -C "$WORKTREE" -
 ```
 
 Record `model`, `effort`, and `service_tier` (when Fast is on) as requested values in the `execution` entry. The session id is the
@@ -192,7 +203,7 @@ jq -r 'select(.type=="thread.started") | .thread_id' "$EXECUTION_DIR/events.json
 - Close: `validate "$RUN_DIR"`, then `run_closed`.
 - Correction: the one allowed correction is upstream's resume command as `execution-02` under the
   same agent, with that session id, the same `-C "$WORKTREE"`, and the same `-m`, effort, `service_tier`,
-  `agents.max_threads`, sandbox, approval, and `gtimeout` settings. Never `--last`.
+  `agents.max_threads`, sandbox, approval, trust, and `gtimeout` settings. Never `--last`.
 - Cancel: stop the background task. The runner exits 143 after stopping Codex. A timeout exits 124.
 - A timeout stops Codex but not the command Codex was running: its shell commands run in their
   own process group, and a `sleep` outlived a timeout as an orphan (observed 2026-10-03; stopping
@@ -220,7 +231,11 @@ jq -r 'select(.type=="thread.started") | .thread_id' "$EXECUTION_DIR/events.json
 3. Confirm `git -C "$WORKTREE" rev-parse HEAD` still equals the recorded `head`.
 4. Read the actual diff. Evaluate every acceptance criterion by observation, and run the
    verification commands yourself. Record each as `verification`.
-5. Integrate through the repository's own workflow. The worker never commits or ships.
+5. Remove the guard rules before integrating, so they are never committed:
+   `rm "$WORKTREE/.codex/rules/delegate.rules"`, then remove `.codex/rules` and `.codex` if they
+   are now empty. The worker's changes are uncommitted edits in the worktree, and the handoff
+   says what it did.
+6. Integrate through the repository's own workflow. The worker never commits or ships.
 
 ## What actually constrains the worker
 
@@ -229,11 +244,18 @@ jq -r 'select(.type=="thread.started") | .thread_id' "$EXECUTION_DIR/events.json
   shared cargo home outside the worktree. Codex can therefore write anywhere the user can and use
   the network. `approval_policy=never` means it is never stopped to ask. `agents.max_threads=1` caps
   sub-agents at one concurrent child; Codex 0.159.2 offers no setting verified to remove them.
+- Enforced by Codex's command rules (`local/delegate.rules`): `git commit`, `git push`, `just pr`,
+  `just ship`, `gh pr`/`api`/`release`, and common deploy and cluster-write commands are rejected
+  before they run. These are prefix matches only, so `git -C <dir> push`, `bunx sst deploy`, or a
+  script that runs them internally gets through. That path is covered only by RULES and review.
+  Codex also records the worktree as trusted in `~/.codex/config.toml`. It does that itself for
+  any directory run with full access.
 - Enforced by the launcher: the `gtimeout` limit, for Codex itself. Commands Codex started can
   outlive it; see the orphan check above.
 - Detected after the run: `codex-scope` (content changes outside scope, including untracked,
   staged, and unstaged), HEAD movement, and Claude's diff review.
 - Prompt instructions only: everything under RULES, including no sub-agents.
 - Not covered: anything outside the worktree (other repositories, the main checkout, home
-  directory files, pushes or other network actions), ignored files, and temp dirs. `codex-scope`
-  sees only the worktree, so the RULES against those are prompt instructions, not enforcement.
+  directory files, network actions other than the blocked commands), ignored files, and temp
+  dirs. `codex-scope` sees only the worktree, so the RULES against those are prompt
+  instructions, not enforcement.

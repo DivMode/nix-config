@@ -272,6 +272,14 @@ identity, and sign the Git payload. It must fail closed on missing credentials,
 conflicting authentication, or a failed read. This does not authorize general
 CLI secret access, a personal-session fallback, or unsigned commits.
 
+The declarative `onepassword-sa` command is the approved interface for
+1Password **writes** — creating vaults, creating items, copying an item between
+vaults. It authenticates only with the existing service-account token, takes
+secret values on stdin, and has no command that prints a secret. Use it when a
+task needs a credential stored; do not reach for `op` or write another client.
+It is not a read path: runtime secrets still come only through the
+repository's loader.
+
 The declarative Git service-account transport may use that same configured,
 verified key for GitHub Git fetches and pushes. It must enforce host-key
 verification, disable SSH-agent and password authentication, and reject other

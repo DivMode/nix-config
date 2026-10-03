@@ -1,6 +1,6 @@
 ---
 name: delegate
-description: Hand a large, mechanical coding job to a Codex CLI worker (gpt-6.1-sol, high effort, Fast tier) while Claude plans, supervises, and accepts. Invoke this yourself, without being asked, when a planned change is large and mechanical with its decisions already made (many files, repetitive edits, long edit-test-fix loops), and whenever the user mentions Codex for doing work ("use Codex", "have Codex do it"). Never for small fixes; do those directly. The user never types this command.
+description: Hand a large, mechanical coding job to a Codex CLI worker (gpt-6.1-sol, high effort; Fast tier only when the user asks for fast mode) while Claude plans, supervises, and accepts. Invoke this yourself, without being asked, when a planned change is large and mechanical with its decisions already made (many files, repetitive edits, long edit-test-fix loops), and whenever the user mentions Codex for doing work ("use Codex", "have Codex do it"). Never for small fixes; do those directly. The user never types this command.
 ---
 
 # Delegate an implementation to Codex
@@ -81,11 +81,12 @@ session:
 codex debug models | jq -e '.models[] | select(.slug=="gpt-6.1-sol") | .supported_reasoning_levels[].effort | select(.=="high")'
 ```
 
-Fast tier: `-c service_tier="fast"`, about 2x faster at roughly 2x the Codex usage. The user
-chose Fast as the default on 2026-10-03. It was measured working in `codex exec` 0.159.2 at
-14.5–15 tok/s standard versus 29–30 tok/s fast on the same prompt. Do not judge it from the
-server's `service_tier` field: `response.completed` reports "default" either way, and rollouts do
-not record the tier. To run at standard speed, drop the flag. Authentication comes from the user's
+Speed: standard by default. Add `-c service_tier="fast"` to dispatch and resume only when the user
+asks for fast mode ("use fast mode", "run Codex fast"). Keep it on for the rest of the session
+until they say otherwise. Fast is about 2x faster at roughly 2x the Codex usage; it was measured
+working in `codex exec` 0.159.2 at 14.5–15 tok/s standard versus 29–30 tok/s fast on the same
+prompt. Do not judge it from the server's `service_tier` field: `response.completed` reports
+"default" either way, and rollouts do not record the tier. Authentication comes from the user's
 Codex login unchanged.
 
 ## Before dispatch
@@ -171,11 +172,11 @@ gtimeout --foreground --signal=TERM --kill-after=60s 45m \
     --label codex-impl-01 --repo "$REPO" --role implementation \
     --events "$EXECUTION_DIR/events.jsonl" --prompt "$EXECUTION_DIR/prompt.md" \
   -- codex exec --json --output-last-message "$EXECUTION_DIR/handoff.md" \
-     -m gpt-6.1-sol -c model_reasoning_effort="high" -c service_tier="fast" -c agents.max_threads=1 \
+     -m gpt-6.1-sol -c model_reasoning_effort="high" -c agents.max_threads=1 \
      -s workspace-write -c approval_policy=never -C "$WORKTREE" -
 ```
 
-Record `model`, `effort`, and `service_tier` as requested values in the `execution` entry. The session id is the
+Record `model`, `effort`, and `service_tier` (when Fast is on) as requested values in the `execution` entry. The session id is the
 `thread_id` of the stream's `thread.started` event:
 
 ```bash

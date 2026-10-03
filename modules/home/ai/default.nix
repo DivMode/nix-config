@@ -106,14 +106,16 @@ let
   # Upstream ships only a Claude Code manifest, and its skills drive the Codex
   # CLI rather than run inside it, so Codex gets nothing from this.
   #
-  # Upstream's files are used verbatim. Its skills run bare `python3`, and its
-  # tools need 3.10+: macOS's /usr/bin/python3 (3.9.6) fails 27 of its 138
-  # tests (`Counter.total`). The uv-backed `python3` launcher in
-  # ../development.nix is what that name resolves to.
+  # Upstream's content is unchanged apart from one frontmatter line per skill
+  # (see below). Its skills run bare `python3`, and its tools need 3.10+:
+  # macOS's /usr/bin/python3 (3.9.6) fails 27 of its 138 tests
+  # (`Counter.total`). The uv-backed `python3` launcher in ../development.nix is
+  # what that name resolves to.
   #
-  # The local delegation policy (skills/delegate) and its scope check
-  # (local/codex-scope) are added to the tree, so the skill can reach both
-  # through ${CLAUDE_PLUGIN_ROOT} and disappears with the plugin.
+  # Local additions are the delegation policy (skills/delegate), its scope check
+  # (local/codex-scope), and its guard hook (local/codex-guard). The skill
+  # reaches all of them through ${CLAUDE_PLUGIN_ROOT}, and they go away with the
+  # plugin.
   codexScope = pkgs.writeShellApplication {
     name = "codex-scope";
     runtimeInputs = [ pkgs.git ];
@@ -131,6 +133,14 @@ let
   codexOrchestratorPlugin = pkgs.runCommand "codex-orchestrator-claude-plugin" { } ''
     cp -r ${inputs.codex-orchestrator} $out
     chmod -R u+w $out
+    # Upstream's own skills stay readable, because delegate cites them, but Claude may not start
+    # them on its own. Each launches Codex without the guard hook, with in-repo run records and
+    # upstream's "prefer Codex first" rule, so delegate must be the only way in. Found in
+    # independent review 2026-10-03.
+    for skill in orchestrate workflow report; do
+      sed -i '1a disable-model-invocation: true' $out/skills/$skill/SKILL.md
+      grep -qx 'disable-model-invocation: true' $out/skills/$skill/SKILL.md
+    done
     cp -r ${ai.codexOrchestrator.delegateSkill} $out/skills/delegate
     install -Dm755 ${lib.getExe codexScope} $out/local/codex-scope
     install -Dm755 ${lib.getExe codexGuard} $out/local/codex-guard

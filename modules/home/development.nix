@@ -122,12 +122,28 @@ let
   # one is already ahead of this on PATH, and an unactivated `.venv` should not
   # be entered implicitly. uv is called by store path so the interpreter's
   # environment is not changed.
+  #
+  # `--managed-python` is required, not belt and braces. uv lists this launcher
+  # itself as a system interpreter, and `only-managed` is only a user-level
+  # default: a project's `[tool.uv] python-preference = "system"` or
+  # UV_PYTHON_PREFERENCE overrides it. uv then picks or queries the launcher,
+  # which runs uv, which runs the launcher. Found in independent review
+  # 2026-10-03. A bounded repro never printed and was killed at 4 s (rc 137),
+  # and an unbounded run exhausted the per-user process limit. The flag holds
+  # whatever a project prefers. uv refuses the flag alongside
+  # UV_PYTHON_PREFERENCE or UV_NO_MANAGED_PYTHON (exit 2, measured), so those
+  # are cleared for the launcher's own lookups only. The interpreter it execs
+  # keeps the caller's environment.
   pythonLauncher = pkgs.writeShellApplication {
     name = "python3";
     text = ''
-      if ! interpreter="$(${lib.getExe config.programs.uv.package} python find --system 2>/dev/null)"; then
-        ${lib.getExe config.programs.uv.package} python install >&2
-        interpreter="$(${lib.getExe config.programs.uv.package} python find --system)"
+      uv() {
+        env -u UV_PYTHON_PREFERENCE -u UV_NO_MANAGED_PYTHON \
+          ${lib.getExe config.programs.uv.package} "$@"
+      }
+      if ! interpreter="$(uv python find --managed-python --system 2>/dev/null)"; then
+        uv python install --managed-python >&2
+        interpreter="$(uv python find --managed-python --system)"
       fi
       exec "$interpreter" "$@"
     '';

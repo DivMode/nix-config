@@ -22,7 +22,7 @@ Run records live outside every repository, at `$HOME/.claude/codex-runs/<repo-na
 in upstream's layout (`journal.jsonl`, `<agent>/execution-NN/{prompt.md,events.jsonl,handoff.md}`).
 This replaces upstream's `<repo>/.codex-orchestrator/runs/` for three reasons: a repository's
 hooks may forbid writes in its main checkout (the work monorepo's do), worktree cleanup would delete
-records kept inside a worktree, and the sandboxed worker cannot write there to alter them. Skip
+records kept inside a worktree, and they stay out of the worker's own working tree. Skip
 upstream's `info/exclude` step, which only exists to hide the in-repo directory; still record the
 repository baseline in `run_started` as upstream describes.
 
@@ -36,14 +36,15 @@ Send to Codex when all of these hold:
 - The decisions are made. What remains is execution, not product, architecture, or design choices.
 - It is implementation-heavy: many files, the same transformation repeated across a codebase, or
   a long edit-test-fix loop. As a rough guide, more than about 5 files or 150 changed lines.
-- It can be checked by commands, either inside Codex's sandbox or by Claude afterwards.
+- It can be checked by commands, run by Codex or by Claude afterwards.
 
 Do it in Claude directly when any of these hold:
 - It is a small fix: a few files, roughly under 50 lines, or the exact edit is already known.
   Writing and verifying the assignment would cost as much as doing it.
 - It still needs investigation, debugging of a live system, or a decision.
-- It needs the network, cloud access, credentials, deploys, or production data. Codex's sandbox
-  has no network, and secrets stay out of it.
+- It needs cloud access, credentials, deploys, or production data. Codex has network access for
+  builds and package downloads, but secrets and anything that changes live systems stay with
+  Claude.
 
 If the user explicitly asks for Codex on a specific change, use Codex for it. When a large job
 contains small follow-ups, such as a one-line fix after review, do those in Claude rather than
@@ -173,7 +174,7 @@ gtimeout --foreground --signal=TERM --kill-after=60s 45m \
     --events "$EXECUTION_DIR/events.jsonl" --prompt "$EXECUTION_DIR/prompt.md" \
   -- codex exec --json --output-last-message "$EXECUTION_DIR/handoff.md" \
      -m gpt-6.1-sol -c model_reasoning_effort="high" -c agents.max_threads=1 \
-     -s workspace-write -c approval_policy=never -C "$WORKTREE" -
+     -s danger-full-access -c approval_policy=never -C "$WORKTREE" -
 ```
 
 Record `model`, `effort`, and `service_tier` (when Fast is on) as requested values in the `execution` entry. The session id is the
@@ -223,14 +224,16 @@ jq -r 'select(.type=="thread.started") | .thread_id' "$EXECUTION_DIR/events.json
 
 ## What actually constrains the worker
 
-- Enforced by Codex at runtime: `workspace-write` limits writes to the worktree and temp dirs and
-  leaves network off; `approval_policy=never` makes anything needing more fail instead of
-  prompting; `agents.max_threads=1` caps sub-agents at one concurrent child (Codex 0.159.2 offers
-  no setting verified to remove sub-agents entirely).
+- No sandbox. The user chose `danger-full-access` on 2026-10-03, matching their everyday Codex
+  config. `workspace-write` blocked Rust: crate downloads need the network, and cargo writes to the
+  shared cargo home outside the worktree. Codex can therefore write anywhere the user can and use
+  the network. `approval_policy=never` means it is never stopped to ask. `agents.max_threads=1` caps
+  sub-agents at one concurrent child; Codex 0.159.2 offers no setting verified to remove them.
 - Enforced by the launcher: the `gtimeout` limit, for Codex itself. Commands Codex started can
   outlive it; see the orphan check above.
 - Detected after the run: `codex-scope` (content changes outside scope, including untracked,
   staged, and unstaged), HEAD movement, and Claude's diff review.
 - Prompt instructions only: everything under RULES, including no sub-agents.
-- Not covered: reads anywhere on disk (the sandbox restricts writes, not reads), ignored files,
-  writes in temp dirs. A worktree is not a machine-security sandbox.
+- Not covered: anything outside the worktree (other repositories, the main checkout, home
+  directory files, pushes or other network actions), ignored files, and temp dirs. `codex-scope`
+  sees only the worktree, so the RULES against those are prompt instructions, not enforcement.

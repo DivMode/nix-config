@@ -59,6 +59,18 @@ let
   opExecutable = "${homebrewPrefix}/bin/op";
   setupBootstrap = cfg.setupBootstrap;
 
+  # Agent-facing vault/item WRITES through the service account. The `op` CLI is
+  # denied to agents (ai/hooks/nix-only-guard.py) because it falls back to the
+  # owner's desktop session; the SDK authenticates only with the token, so it
+  # cannot. The SDK comes from nixpkgs rather than a per-project install.
+  onePasswordServiceAccount = pkgs.writeShellApplication {
+    name = "onepassword-sa";
+    text = ''
+      exec ${pkgs.python3.withPackages (ps: [ ps.onepassword-sdk ])}/bin/python3 \
+        ${../../scripts/onepassword-sa.py} "$@"
+    '';
+  };
+
   # First-machine bootstrap is deliberately a separate, interactive command.
   # Routine activation never authenticates through the desktop application: it
   # requires the token this command stores and fails closed when that token is
@@ -469,7 +481,10 @@ in
       # The command is present for the explicit first-machine setup step. It
       # refuses non-interactive callers and accepts the reference/path at run
       # time so the first generation's placeholder local.nix is harmless.
-      home.packages = [ onePasswordBootstrap ];
+      home.packages = [
+        onePasswordBootstrap
+        onePasswordServiceAccount
+      ];
 
       # `.zshenv`, not `.zshrc`: zsh reads `.zshrc` only for INTERACTIVE shells,
       # and the processes that must never prompt — `just` recipes, Lefthook

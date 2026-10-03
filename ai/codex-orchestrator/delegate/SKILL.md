@@ -1,6 +1,6 @@
 ---
 name: delegate
-description: Hand a large, mechanical coding job to a Codex CLI worker (gpt-6.1-sol, high effort; Fast tier only when the user asks for fast mode) while Claude plans, splits big jobs into up to 4 parallel pieces, supervises, and accepts. Invoke this yourself, without being asked, when a planned change is large and mechanical with its decisions already made (many files, repetitive edits, long edit-test-fix loops), and whenever the user mentions Codex for doing work ("use Codex", "have Codex do it"). Never for small fixes; do those directly. The user never types this command.
+description: Hand a large, mechanical coding job to a Codex CLI worker (gpt-6.1-sol, high effort; Fast tier only when the user asks for fast mode) while Claude plans, splits big jobs into up to 4 parallel pieces, supervises, and accepts. Invoke this yourself, without being asked, when a planned change is large and mechanical with its decisions already made (many files, repetitive edits, long edit-test-fix loops), and whenever the user mentions Codex for doing work ("use Codex", "have Codex do it"). Small fixes are done directly unless the user explicitly hands that change to Codex. The user never types this command.
 ---
 
 # Delegate an implementation to Codex
@@ -148,7 +148,8 @@ Codex login unchanged.
 - Add tests only for the requested behavior and its material failure risks.
 - Never weaken assertions, skip checks, or replace real behavior with mocks to get a pass.
 - Never change orchestration policy, sandbox, or permissions to unblock yourself.
-- Do not spawn sub-agents. Do not commit, push, or touch files outside ALLOWED WRITE SCOPE.
+- Do not spawn sub-agents. Do not commit, push, ship, deploy, or change cluster or cloud state.
+  Leave your changes uncommitted. Do not touch files outside ALLOWED WRITE SCOPE.
 - When a required decision is missing, stop and report it rather than expanding the work.
 - Stop when the acceptance criteria are met.
 
@@ -180,9 +181,10 @@ gtimeout --foreground --signal=TERM --kill-after=60s 45m \
      -C "$WORKTREE" -
 ```
 
-The `hooks.PreToolUse` line attaches the guard to this job only. It refuses `git commit`, `git push`,
-`just pr`, `just ship`, GitHub PR, API, and release commands, and deploy and cluster-write commands
-before they run. `--dangerously-bypass-hook-trust` lets an inline hook run without Codex's one-time
+The `hooks.PreToolUse` line attaches the guard to this job only. Before they run, it refuses git
+commands that commit or push (commit, push, merge, rebase, cherry-pick, revert, am),
+`just pr`/`just ship`, GitHub PR, release, and API writes, and deploy and cluster-write commands.
+Reads such as `gh pr view`, `git stash push`, and `rg` searches stay allowed. `--dangerously-bypass-hook-trust` lets an inline hook run without Codex's one-time
 review. It also runs any hooks the repository ships in `.codex/` without that review, which in
 practice means the repository's own guardrails apply to Codex too.
 
@@ -234,8 +236,12 @@ by default for any job that splits cleanly; the user should not have to ask.
   it before inspecting anything:
 
   ```bash
-  lsof -d cwd -Fpn 2>/dev/null | awk -v w="$WORKTREE" '/^p/{p=substr($0,2)} /^n/ && index(substr($0,2), w)==1 {print p}'
+  lsof -d cwd -Fpn 2>/dev/null | awk -v w="$WORKTREE" '/^p/{p=substr($0,2)} /^n/ {d=substr($0,2); if (d==w || index(d, w "/")==1) print p}'
   ```
+
+  This matches the worktree and its subdirectories only, never a sibling worktree whose name
+  starts the same way. A leftover whose working directory is elsewhere is not listed, so check
+  the process list as well if a command was running when the job stopped.
 
 - After a cancel, timeout, or failure, keep the worktree exactly as it is. Do not reset, discard,
   or accept. Run the scope check, record `execution_result` as `blocked` or `failed` with what
@@ -265,12 +271,14 @@ by default for any job that splits cleanly; the user should not have to ask.
   the network. `approval_policy=never` means it is never stopped to ask. `agents.max_threads=1` caps
   sub-agents at one concurrent child; Codex 0.159.2 offers no setting verified to remove them.
 - Enforced by the guard hook (`local/codex-guard`, a Codex PreToolUse hook passed on the command
-  line): commit, push, ship, GitHub PR, API, and release, deploy, and cluster-write commands are
-  rejected before they run. It also catches them behind `git -C`/`-c`, `bash -c '...'`, `env`,
-  `$(...)`, and full paths. It stops ordinary mistakes, not a determined bypass: a Python
-  one-liner or a script that runs them internally gets through. A `codex-guard-canary` command is
-  always refused, which proves the hook is loaded. Codex records each worktree as trusted in
-  `~/.codex/config.toml`; it does that itself for any directory run with full access.
+  line): committing and pushing git commands, ship, GitHub PR, release, and API writes, deploy, and
+  cluster-write commands are rejected before they run. It reads each tool's real subcommand, so it
+  catches them behind `git -C`/`-c`, `bash -c '...'`, `env`, `$(...)`, redirections, and full
+  paths, while reads such as `gh pr view` or `git stash push` run. It stops ordinary mistakes, not
+  a determined bypass: a Python one-liner or a script that runs them internally gets through. A
+  command typed into an already-open interactive shell may not pass through the hook at all; that
+  is a hypothesis, untested. A `codex-guard-canary` command is always refused, which proves the
+  hook is loaded.
 - Enforced by the launcher: the `gtimeout` limit, for Codex itself. Commands Codex started can
   outlive it; see the orphan check above.
 - Detected after the run: `codex-scope` (content changes outside scope, including untracked,

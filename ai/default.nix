@@ -31,7 +31,7 @@
   };
 
   # Local additions to the codex-orchestrator Claude Code plugin: the
-  # delegation policy skill and the post-run scope check it calls. Claude
+  # delegation policy skill, the post-run scope check, and the guard hook it passes to Codex. Claude
   # Code only; modules/home/ai layers them into the plugin tree.
   codexOrchestrator = {
     delegateSkill = ./codex-orchestrator/delegate;

@@ -65,7 +65,7 @@ class MergeCodexConfigTests(unittest.TestCase):
 
     def test_preserves_comments_unknown_tables_and_order(self) -> None:
         original = '''# user-level comment
-model = "example-model"
+model_provider = "example-provider"
 approval_policy = "on-request" # approval comment
 
 [marketplaces.example]
@@ -93,7 +93,7 @@ enabled = false
         parsed = tomllib.loads(merged)
 
         self.assert_managed_values(parsed)
-        self.assertEqual(parsed["model"], "example-model")
+        self.assertEqual(parsed["model_provider"], "example-provider")
         self.assertEqual(parsed["plugins"]["example@marketplace"]["enabled"], True)
         self.assertEqual(parsed["projects"]["/example/source-checkout"]["trust_level"], "trusted")
         self.assertEqual(parsed["mcp_servers"]["example"]["command"], "/Applications/Example.app/Contents/MacOS/example")

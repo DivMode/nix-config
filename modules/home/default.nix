@@ -33,6 +33,7 @@ in
     ./ai
     ./archives.nix
     ./caches.nix
+    ./cli-proxy.nix
     ./command-governor.nix
     ./development.nix
     ./downloads.nix

@@ -120,12 +120,20 @@ let
     text = builtins.readFile ai.codexOrchestrator.scopeCheck;
   };
 
+  # Codex PreToolUse hook that stops a delegated job committing, pushing, shipping, or
+  # deploying; the skill passes it inline on each job's command line.
+  codexGuard = pkgs.writeShellApplication {
+    name = "codex-guard";
+    runtimeInputs = [ pkgs.jq ];
+    text = builtins.readFile ai.codexOrchestrator.guardHook;
+  };
+
   codexOrchestratorPlugin = pkgs.runCommand "codex-orchestrator-claude-plugin" { } ''
     cp -r ${inputs.codex-orchestrator} $out
     chmod -R u+w $out
     cp -r ${ai.codexOrchestrator.delegateSkill} $out/skills/delegate
     install -Dm755 ${lib.getExe codexScope} $out/local/codex-scope
-    install -Dm644 ${ai.codexOrchestrator.guardRules} $out/local/delegate.rules
+    install -Dm755 ${lib.getExe codexGuard} $out/local/codex-guard
   '';
 
   # The same gcx skills for Codex. Upstream's official cross-agent path is

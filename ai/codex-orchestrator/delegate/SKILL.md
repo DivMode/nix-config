@@ -1,6 +1,6 @@
 ---
 name: delegate
-description: Hand a large, mechanical coding job to a Codex CLI worker (gpt-6.1-sol, high effort; Fast tier only when the user asks for fast mode) while Claude plans, supervises, and accepts. Invoke this yourself, without being asked, when a planned change is large and mechanical with its decisions already made (many files, repetitive edits, long edit-test-fix loops), and whenever the user mentions Codex for doing work ("use Codex", "have Codex do it"). Never for small fixes; do those directly. The user never types this command.
+description: Hand a large, mechanical coding job to a Codex CLI worker (gpt-6.1-sol, high effort; Fast tier only when the user asks for fast mode) while Claude plans, splits big jobs into up to 4 parallel pieces, supervises, and accepts. Invoke this yourself, without being asked, when a planned change is large and mechanical with its decisions already made (many files, repetitive edits, long edit-test-fix loops), and whenever the user mentions Codex for doing work ("use Codex", "have Codex do it"). Small fixes are done directly unless the user explicitly hands that change to Codex. The user never types this command.
 ---
 
 # Delegate an implementation to Codex
@@ -60,11 +60,11 @@ widens product scope, introduces architecture, or decides unrelated improvements
 
 ## Defaults that narrow upstream
 
-- One writing worker. Run parallel workers only for genuinely independent assignments, each in its
-  own worktree with disjoint `files`, and state the ownership before launch.
+- Split a big job into independent pieces yourself and run them together, up to 4 Codex jobs at
+  once (the user's choice, 2026-10-03). See "Running several jobs at once" below.
 - No `planning` or `planning_review` agents. No Codex reviewer unless material risk or a specific
   unresolved question justifies one; say which.
-- One implementation execution, then Claude's verification. At most one targeted correction, by
+- For each piece: one implementation execution, then Claude's verification. At most one targeted correction, by
   resuming the same session. If it still fails, stop and bring the unresolved issue back for a fresh
   decision. Never loop.
 - Do not run `config init` or create `.codex-orchestrator/config.ini`: its generated policy is
@@ -148,7 +148,8 @@ Codex login unchanged.
 - Add tests only for the requested behavior and its material failure risks.
 - Never weaken assertions, skip checks, or replace real behavior with mocks to get a pass.
 - Never change orchestration policy, sandbox, or permissions to unblock yourself.
-- Do not spawn sub-agents. Do not commit, push, or touch files outside ALLOWED WRITE SCOPE.
+- Do not spawn sub-agents. Do not commit, push, ship, deploy, or change cluster or cloud state.
+  Leave your changes uncommitted. Do not touch files outside ALLOWED WRITE SCOPE.
 - When a required decision is missing, stop and report it rather than expanding the work.
 - Stop when the acceptance criteria are met.
 
@@ -180,9 +181,10 @@ gtimeout --foreground --signal=TERM --kill-after=60s 45m \
      -C "$WORKTREE" -
 ```
 
-The `hooks.PreToolUse` line attaches the guard to this job only. It refuses `git commit`, `git push`,
-`just pr`, `just ship`, GitHub PR, API, and release commands, and deploy and cluster-write commands
-before they run. `--dangerously-bypass-hook-trust` lets an inline hook run without Codex's one-time
+The `hooks.PreToolUse` line attaches the guard to this job only. Before they run, it refuses git
+commands that commit or push (commit, push, merge, rebase, cherry-pick, revert, am),
+`just pr`/`just ship`, GitHub PR, release, and API writes, and deploy and cluster-write commands.
+Reads such as `gh pr view`, `git stash push`, and `rg` searches stay allowed. `--dangerously-bypass-hook-trust` lets an inline hook run without Codex's one-time
 review. It also runs any hooks the repository ships in `.codex/` without that review, which in
 practice means the repository's own guardrails apply to Codex too.
 
@@ -192,6 +194,31 @@ Record `model`, `effort`, and `service_tier` (when Fast is on) as requested valu
 ```bash
 jq -r 'select(.type=="thread.started") | .thread_id' "$EXECUTION_DIR/events.jsonl"
 ```
+
+## Running several jobs at once
+
+Codex is slow, so a big job finishes fastest as independent pieces running side by side. Do this
+by default for any job that splits cleanly; the user should not have to ask.
+
+1. **Split.** Break the job into pieces that touch disjoint files and do not need each other's
+   results. A piece that needs another piece's code waits until that piece is accepted. Size each
+   piece to finish well inside Codex's context. `gpt-6.1-sol` has a 272k-token window (catalog,
+   2026-10-03), compacted at about 95%, and Codex's own instructions use part of it. A piece that
+   needs most of a package read, or dozens of files changed, is too big; split it again. Pieces
+   that are small fixes stay with Claude, per the routing rule above.
+2. **Limit.** Run at most 4 Codex jobs at once. On this 16 GB machine, at most 2 of them may run
+   heavy work at the same time: Rust builds, full test suites, bundlers. Hold the rest until one
+   finishes. Parallel Rust pieces need separate cargo target dirs, which some repositories' worktree
+   recipes create per worktree. Without separate dirs they queue on cargo's build lock.
+3. **Isolate.** Give each piece its own worktree from the repository's mechanism, its own agent name
+   in the same run (`codex-impl-01` … `codex-impl-04`), its own task and `files`, its own scope
+   baseline, and its own background task. The one-correction limit applies per piece.
+4. **Announce.** Before launching, tell the user in one line per piece what it does and which files
+   it owns.
+5. **Collect.** Verify each piece as it finishes, exactly as in Accept; a blocked piece does not stop
+   the others. Integrate each accepted piece through the repository's workflow as its own slice.
+   When pieces must ship together, combine them in one worktree after review and rerun the checks
+   there.
 
 ## Observe, resume, cancel
 
@@ -209,8 +236,12 @@ jq -r 'select(.type=="thread.started") | .thread_id' "$EXECUTION_DIR/events.json
   it before inspecting anything:
 
   ```bash
-  lsof -d cwd -Fpn 2>/dev/null | awk -v w="$WORKTREE" '/^p/{p=substr($0,2)} /^n/ && index(substr($0,2), w)==1 {print p}'
+  lsof -d cwd -Fpn 2>/dev/null | awk -v w="$WORKTREE" '/^p/{p=substr($0,2)} /^n/ {d=substr($0,2); if (d==w || index(d, w "/")==1) print p}'
   ```
+
+  This matches the worktree and its subdirectories only, never a sibling worktree whose name
+  starts the same way. A leftover whose working directory is elsewhere is not listed, so check
+  the process list as well if a command was running when the job stopped.
 
 - After a cancel, timeout, or failure, keep the worktree exactly as it is. Do not reset, discard,
   or accept. Run the scope check, record `execution_result` as `blocked` or `failed` with what
@@ -240,12 +271,14 @@ jq -r 'select(.type=="thread.started") | .thread_id' "$EXECUTION_DIR/events.json
   the network. `approval_policy=never` means it is never stopped to ask. `agents.max_threads=1` caps
   sub-agents at one concurrent child; Codex 0.159.2 offers no setting verified to remove them.
 - Enforced by the guard hook (`local/codex-guard`, a Codex PreToolUse hook passed on the command
-  line): commit, push, ship, GitHub PR, API, and release, deploy, and cluster-write commands are
-  rejected before they run. It also catches them behind `git -C`/`-c`, `bash -c '...'`, `env`,
-  `$(...)`, and full paths. It stops ordinary mistakes, not a determined bypass: a Python
-  one-liner or a script that runs them internally gets through. A `codex-guard-canary` command is
-  always refused, which proves the hook is loaded. Codex records each worktree as trusted in
-  `~/.codex/config.toml`; it does that itself for any directory run with full access.
+  line): committing and pushing git commands, ship, GitHub PR, release, and API writes, deploy, and
+  cluster-write commands are rejected before they run. It reads each tool's real subcommand, so it
+  catches them behind `git -C`/`-c`, `bash -c '...'`, `env`, `$(...)`, redirections, and full
+  paths, while reads such as `gh pr view` or `git stash push` run. It stops ordinary mistakes, not
+  a determined bypass: a Python one-liner or a script that runs them internally gets through. A
+  command typed into an already-open interactive shell may not pass through the hook at all; that
+  is a hypothesis, untested. A `codex-guard-canary` command is always refused, which proves the
+  hook is loaded.
 - Enforced by the launcher: the `gtimeout` limit, for Codex itself. Commands Codex started can
   outlive it; see the orphan check above.
 - Detected after the run: `codex-scope` (content changes outside scope, including untracked,

@@ -1,0 +1,41 @@
+# Codex execpolicy rules for jobs Claude delegates through /codex-orchestrator:delegate.
+#
+# Delegated jobs run without a sandbox, so these are the only runtime stop on
+# a worker committing, pushing, shipping, or deploying; that is Claude's job
+# after review. The delegate skill copies this file into the job's worktree as
+# .codex/rules/delegate.rules and marks that worktree trusted for the run,
+# which is the only per-job place Codex reads rules from (a `rules` -c
+# override is rejected as an unknown field in codex 0.159.2). The user's own
+# Codex sessions never load it.
+#
+# Verified 2026-10-03 with sandbox_mode=danger-full-access and
+# approval_policy=never: a matching command is rejected before it runs, with
+# the justification below in the error, while a non-matching command in the
+# same job runs normally.
+#
+# Prefix matching only. `git -C <dir> push`, a script that calls git itself,
+# or `bunx sst deploy` are not caught; this stops the ordinary path, not a
+# determined bypass.
+
+# Canary: a made-up command the skill checks before dispatch. It proves the file is in place and
+# parses without naming a real command. Repositories' Claude Code guard hooks match command text
+# and block a check that names `git push`, even a read-only one.
+prefix_rule(pattern = ["codex-guard-canary"], decision = "forbidden", justification = "canary: delegated-job rules are loaded")
+
+prefix_rule(pattern = ["git", "commit"], decision = "forbidden", justification = "delegated Codex job: leave changes uncommitted; Claude commits after review")
+prefix_rule(pattern = ["git", "push"], decision = "forbidden", justification = "delegated Codex job: Claude pushes after review")
+prefix_rule(pattern = ["just", "pr"], decision = "forbidden", justification = "delegated Codex job: Claude ships after review")
+prefix_rule(pattern = ["just", "ship"], decision = "forbidden", justification = "delegated Codex job: Claude ships after review")
+prefix_rule(pattern = ["gh", "pr"], decision = "forbidden", justification = "delegated Codex job: Claude handles pull requests")
+prefix_rule(pattern = ["gh", "api"], decision = "forbidden", justification = "delegated Codex job: no GitHub API writes")
+prefix_rule(pattern = ["gh", "release"], decision = "forbidden", justification = "delegated Codex job: no releases")
+prefix_rule(pattern = ["sst", "deploy"], decision = "forbidden", justification = "delegated Codex job: no deploys")
+prefix_rule(pattern = ["sst", "remove"], decision = "forbidden", justification = "delegated Codex job: no deploys")
+prefix_rule(pattern = ["pulumi", "up"], decision = "forbidden", justification = "delegated Codex job: no deploys")
+prefix_rule(pattern = ["pulumi", "destroy"], decision = "forbidden", justification = "delegated Codex job: no deploys")
+prefix_rule(pattern = ["alchemy", "deploy"], decision = "forbidden", justification = "delegated Codex job: no deploys")
+prefix_rule(pattern = ["alchemy", "destroy"], decision = "forbidden", justification = "delegated Codex job: no deploys")
+prefix_rule(pattern = ["wrangler", "deploy"], decision = "forbidden", justification = "delegated Codex job: no deploys")
+prefix_rule(pattern = ["kubectl", "apply"], decision = "forbidden", justification = "delegated Codex job: no cluster changes")
+prefix_rule(pattern = ["kubectl", "delete"], decision = "forbidden", justification = "delegated Codex job: no cluster changes")
+prefix_rule(pattern = ["kubectl", "patch"], decision = "forbidden", justification = "delegated Codex job: no cluster changes")

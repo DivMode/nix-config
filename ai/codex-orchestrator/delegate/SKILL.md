@@ -1,6 +1,6 @@
 ---
 name: delegate
-description: Delegate one precisely scoped implementation to a Codex CLI worker (gpt-6.1-sol, high effort) while Claude plans, supervises, and accepts. Use when the user asks to implement something through, with, or by Codex, or to delegate coding work to Codex.
+description: Hand a coding job to a Codex CLI worker (gpt-6.1-sol, high effort) while Claude plans, supervises, and accepts. Invoke this yourself whenever the user mentions Codex for doing work — "use Codex", "have Codex do it", "let Codex implement", "delegate to Codex". The user never types this command.
 ---
 
 # Delegate an implementation to Codex
@@ -15,8 +15,16 @@ monitoring, and handoff format are upstream's. Before the first dispatch in a se
 Repository rules outrank this skill on their own ground. Codex reads a repository's `AGENTS.md`
 itself but not `CLAUDE.md`, so copy every repository rule the assignment depends on (worktree
 mechanism, test runner, forbidden commands) into its IMPLEMENTATION DECISIONS, NON-GOALS, or
-VERIFICATION. A repository that needs different delegation defaults (run directory, timeout,
-checks) states them in its own instruction file.
+VERIFICATION. A repository that needs different delegation defaults (timeout, checks) states them
+in its own instruction file.
+
+Run records live outside every repository, at `$HOME/.claude/codex-runs/<repo-name>/<run-id>/`,
+in upstream's layout (`journal.jsonl`, `<agent>/execution-NN/{prompt.md,events.jsonl,handoff.md}`).
+This replaces upstream's `<repo>/.codex-orchestrator/runs/` for three reasons: a repository's
+hooks may forbid writes in its main checkout (the work monorepo's do), worktree cleanup would delete
+records kept inside a worktree, and the sandboxed worker cannot write there to alter them. Skip
+upstream's `info/exclude` step, which only exists to hide the in-repo directory; still record the
+repository baseline in `run_started` as upstream describes.
 
 ## Who owns what
 
@@ -57,8 +65,8 @@ The service tier and authentication come from the user's Codex configuration unc
 1. Establish the repository root from the checkout (`pwd`, `git rev-parse --show-toplevel`).
 2. Create a worktree for the worker with the repository's own mechanism when it has one, otherwise
    `git worktree add`. Never let a worker write in the user's main checkout.
-3. Initialize the run in the repository root exactly as the upstream workflow's Run
-   Initialization describes, and record the task with its allowed `files`.
+3. Create the run directory under `$HOME/.claude/codex-runs/`, append `run_started` with the
+   repository baseline, and record the task with its allowed `files`.
 4. Take the scope baseline after the worktree is ready and before launch, and record it as
    `baseline_tree` in the `execution` entry:
 
@@ -128,7 +136,8 @@ the runner then stops Codex's process group itself. Pick a finite limit for the 
 default.
 
 ```bash
-EXECUTION_DIR="$REPO/.codex-orchestrator/runs/<run-id>/codex-impl-01/execution-01"
+RUN_DIR="$HOME/.claude/codex-runs/<repo-name>/<run-id>"
+EXECUTION_DIR="$RUN_DIR/codex-impl-01/execution-01"
 gtimeout --foreground --signal=TERM --kill-after=60s 45m \
   python3 "${CLAUDE_PLUGIN_ROOT}/scripts/codex_orch_tools.py" run \
     --label codex-impl-01 --repo "$REPO" --role implementation \
@@ -147,8 +156,10 @@ jq -r 'select(.type=="thread.started") | .thread_id' "$EXECUTION_DIR/events.json
 
 ## Observe, resume, cancel
 
-- Progress: the background task in `/tasks`, and upstream's `state` / `monitor` commands. Keep raw
+- Progress: the background task in `/tasks`, and upstream's `state` command. Use `monitor --log
+  "$EXECUTION_DIR/events.jsonl"`; its `--repo --run-id` form looks inside the repository. Keep raw
   `events.jsonl` out of context unless diagnosing a specific failure.
+- Close: `validate "$RUN_DIR"`, then `run_closed`.
 - Correction: the one allowed correction is upstream's resume command as `execution-02` under the
   same agent, with that session id, the same `-C "$WORKTREE"`, and the same `-m`, effort,
   `agents.max_threads`, sandbox, approval, and `gtimeout` settings. Never `--last`.

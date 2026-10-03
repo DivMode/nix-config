@@ -125,6 +125,7 @@ let
     chmod -R u+w $out
     cp -r ${ai.codexOrchestrator.delegateSkill} $out/skills/delegate
     install -Dm755 ${lib.getExe codexScope} $out/local/codex-scope
+    install -Dm644 ${ai.codexOrchestrator.guardRules} $out/local/delegate.rules
   '';
 
   # The same gcx skills for Codex. Upstream's official cross-agent path is

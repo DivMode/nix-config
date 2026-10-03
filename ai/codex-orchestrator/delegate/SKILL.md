@@ -1,6 +1,6 @@
 ---
 name: delegate
-description: Hand a large, mechanical coding job to a Codex CLI worker (gpt-6.1-sol, high effort; Fast tier only when the user asks for fast mode) while Claude plans, splits big jobs into up to 4 parallel pieces, supervises, and accepts. Invoke this yourself, without being asked, when a planned change is large and mechanical with its decisions already made (many files, repetitive edits, long edit-test-fix loops), and whenever the user mentions Codex for doing work ("use Codex", "have Codex do it"). Small fixes are done directly unless the user explicitly hands that change to Codex. The user never types this command.
+description: Hand a large, mechanical coding job to a Codex CLI worker (gpt-6.1-sol at an effort Claude chooses per job; Fast tier only when the user asks for fast mode) while Claude plans, splits big jobs into up to 4 parallel pieces, supervises, and accepts. Invoke this yourself, without being asked, when a planned change is large and mechanical with its decisions already made (many files, repetitive edits, long edit-test-fix loops), and whenever the user mentions Codex for doing work ("use Codex", "have Codex do it"). Small fixes are done directly unless the user explicitly hands that change to Codex. The user never types this command.
 ---
 
 # Delegate an implementation to Codex
@@ -73,13 +73,27 @@ widens product scope, introduces architecture, or decides unrelated improvements
 
 ## Worker settings
 
-`-m gpt-6.1-sol -c model_reasoning_effort="high"`, both read from Codex's own model catalog
-(`gpt-6.1-sol` lists `high`). Not `ultra`: that level adds automatic task delegation. If Codex
-rejects the model or effort, stop and report it; never substitute another. Confirm once per
-session:
+Model: always `-m gpt-6.1-sol`. If Codex rejects it, stop and report it; never substitute another.
+
+Effort: Claude chooses it for each job, as `-c model_reasoning_effort="<effort>"`. The user does not
+pick it (2026-10-03). Choose the lowest level the piece needs, because higher levels are slower and
+use more of the Codex allowance:
+
+- `medium`: fully specified mechanical edits, such as renames, moves, or one known pattern applied
+  repeatedly.
+- `high`: the default for a normal bounded implementation with clear acceptance criteria.
+- `xhigh`: subtle logic, concurrency, tricky types, a change that cuts across the piece, or the
+  correction attempt after a failed execution.
+- `max`: rare; only when a wrong answer is expensive and the reasoning is genuinely hard.
+- Never `low` for implementation. Never `ultra`: it adds automatic task delegation, which starts
+  Codex helper agents in the same worktree.
+
+Record the chosen effort and a one-line reason in the `execution` entry, and say it in the
+one-line announcement for each piece. Choose again for a resume rather than copying the previous
+value. Confirm once per session that the model offers the level you chose:
 
 ```bash
-codex debug models | jq -e '.models[] | select(.slug=="gpt-6.1-sol") | .supported_reasoning_levels[].effort | select(.=="high")'
+codex debug models | jq -e --arg e "<effort>" '.models[] | select(.slug=="gpt-6.1-sol") | .supported_reasoning_levels[].effort | select(.==$e)'
 ```
 
 Speed: standard by default. Add `-c service_tier="fast"` to dispatch and resume only when the user
@@ -174,7 +188,7 @@ gtimeout --foreground --signal=TERM --kill-after=60s 45m \
     --label codex-impl-01 --repo "$REPO" --role implementation \
     --events "$EXECUTION_DIR/events.jsonl" --prompt "$EXECUTION_DIR/prompt.md" \
   -- codex exec --json --output-last-message "$EXECUTION_DIR/handoff.md" \
-     -m gpt-6.1-sol -c model_reasoning_effort="high" -c agents.max_threads=1 \
+     -m gpt-6.1-sol -c model_reasoning_effort="<effort>" -c agents.max_threads=1 \
      -s danger-full-access -c approval_policy=never \
      --dangerously-bypass-hook-trust \
      -c "hooks.PreToolUse=[{matcher=\"Bash\", hooks=[{type=\"command\", command=\"${CLAUDE_PLUGIN_ROOT}/local/codex-guard\"}]}]" \
@@ -188,7 +202,7 @@ Reads such as `gh pr view`, `git stash push`, and `rg` searches stay allowed. `-
 review. It also runs any hooks the repository ships in `.codex/` without that review, which in
 practice means the repository's own guardrails apply to Codex too.
 
-Record `model`, `effort`, and `service_tier` (when Fast is on) as requested values in the `execution` entry. The session id is the
+Record `model`, `effort` with its reason, and `service_tier` (when Fast is on) as requested values in the `execution` entry. The session id is the
 `thread_id` of the stream's `thread.started` event:
 
 ```bash
@@ -213,8 +227,8 @@ by default for any job that splits cleanly; the user should not have to ask.
 3. **Isolate.** Give each piece its own worktree from the repository's mechanism, its own agent name
    in the same run (`codex-impl-01` … `codex-impl-04`), its own task and `files`, its own scope
    baseline, and its own background task. The one-correction limit applies per piece.
-4. **Announce.** Before launching, tell the user in one line per piece what it does and which files
-   it owns.
+4. **Announce.** Before launching, tell the user in one line per piece what it does, which files it
+   owns, and the effort chosen with its reason.
 5. **Collect.** Verify each piece as it finishes, exactly as in Accept; a blocked piece does not stop
    the others. Integrate each accepted piece through the repository's workflow as its own slice.
    When pieces must ship together, combine them in one worktree after review and rerun the checks
@@ -227,8 +241,9 @@ by default for any job that splits cleanly; the user should not have to ask.
   `events.jsonl` out of context unless diagnosing a specific failure.
 - Close: `validate "$RUN_DIR"`, then `run_closed`.
 - Correction: the one allowed correction is upstream's resume command as `execution-02` under the
-  same agent, with that session id, the same `-C "$WORKTREE"`, and the same `-m`, effort, `service_tier`,
-  `agents.max_threads`, sandbox, approval, guard hook, and `gtimeout` settings. Never `--last`.
+  same agent, with that session id, the same `-C "$WORKTREE"`, and the same `-m`, `service_tier`,
+  `agents.max_threads`, sandbox, approval, guard hook, and `gtimeout` settings. Choose its effort
+  again; a correction after a failure usually warrants `xhigh`. Never `--last`.
 - Cancel: stop the background task. The runner exits 143 after stopping Codex. A timeout exits 124.
 - A timeout stops Codex but not the command Codex was running: its shell commands run in their
   own process group, and a `sleep` outlived a timeout as an orphan (observed 2026-10-03; stopping

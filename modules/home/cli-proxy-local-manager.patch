@@ -1,0 +1,105 @@
+--- a/apps/manager-server/internal/httpapi/server.go
++++ b/apps/manager-server/internal/httpapi/server.go
+@@ -3,6 +3,8 @@
+ import (
+ 	"embed"
+ 	"net/http"
++
++	"github.com/seakee/cpa-manager-plus/apps/manager-server/internal/nixlocal"
+ 	"time"
+ 
+ 	"github.com/seakee/cpa-manager-plus/apps/manager-server/internal/app"
+@@ -27,6 +29,7 @@
+ }
+ 
+ func New(cfg config.Config, store *store.Store, collector *collector.Manager, automationRuntimeService ...app.AutomationRuntimeService) *Server {
++	nixlocal.RequireAddress(cfg.HTTPAddr)
+ 	startedAt := time.Now().UnixMilli()
+ 	appCtx := app.FromExistingWithModelsDev(
+ 		cfg,
+@@ -41,7 +44,7 @@
+ 		automationRuntimeService...,
+ 	)
+ 	return &Server{
+-		handler: router.New(appCtx),
++		handler: nixlocal.Wrap(router.New(appCtx)),
+ 		appCtx:  appCtx,
+ 	}
+ }
+--- a/apps/manager-server/internal/service/adminauth/service.go
++++ b/apps/manager-server/internal/service/adminauth/service.go
+@@ -2,10 +2,8 @@
+ 
+ import (
+ 	"context"
+-	"errors"
+ 
+ 	"github.com/seakee/cpa-manager-plus/apps/manager-server/internal/config"
+-	"github.com/seakee/cpa-manager-plus/apps/manager-server/internal/security"
+ 	"github.com/seakee/cpa-manager-plus/apps/manager-server/internal/store"
+ )
+ 
+@@ -19,14 +17,8 @@
+ }
+ 
+ func (s *Service) VerifyHeader(ctx context.Context, authorizationHeader string) (bool, error) {
+-	credential, ok, err := s.store.LoadAdminCredential(ctx)
+-	if err != nil {
+-		return false, err
+-	}
+-	if !ok {
+-		return false, errors.New("admin credential is not initialized")
+-	}
+-	return security.VerifyAdminKey(credential, security.ExtractBearerToken(authorizationHeader)), nil
++	// HTTP entry points are restricted to loopback by nixlocal.Wrap.
++	return true, nil
+ }
+ 
+ func (s *Service) VerifyPanelHeader(ctx context.Context, authorizationHeader string) (bool, error) {
+--- a/apps/manager-server/internal/service/bootstrap/service.go
++++ b/apps/manager-server/internal/service/bootstrap/service.go
+@@ -86,18 +86,7 @@
+ 	state, _, _ = st.LoadBootstrapState(ctx)
+ 	result.State = state
+ 
+-	// Admin credential persistence is deliberately the last fallible write of
+-	// bootstrap: a randomly generated key must never be persisted unless every
+-	// earlier step succeeded, so its plaintext can always be disclosed by the
+-	// caller instead of locking the operator out with an unknown credential.
+-	// A crash between the state write and this write self-heals on the next
+-	// boot, which simply generates and discloses a fresh key.
+-	adminCreated, generatedAdminKey, err := ensureAdminCredential(ctx, cfg, st)
+-	if err != nil {
+-		return Result{}, err
+-	}
+-	result.AdminCreated = adminCreated
+-	result.GeneratedAdminKey = generatedAdminKey
++	// Local requests need no admin credential. Preserve existing records.
+ 	return result, nil
+ }
+ 
+--- a/apps/manager-server/internal/service/setup/service.go
++++ b/apps/manager-server/internal/service/setup/service.go
+@@ -71,10 +71,7 @@
+ 	if err != nil {
+ 		return InfoResult{}, err
+ 	}
+-	_, adminReady, err := s.store.LoadAdminCredential(ctx)
+-	if err != nil {
+-		return InfoResult{}, err
+-	}
++	adminReady := true
+ 	bootstrapState, bootstrapStateOK, err := s.store.LoadBootstrapState(ctx)
+ 	if err != nil {
+ 		return InfoResult{}, err
+--- a/apps/manager-server/cmd/cpa-manager-plus/main.go
++++ b/apps/manager-server/cmd/cpa-manager-plus/main.go
+@@ -155,7 +155,7 @@
+ 	if bootstrapResult.GeneratedAdminKey != "" {
+ 		log.Printf("CPA Manager Plus admin key generated: %s", bootstrapResult.GeneratedAdminKey)
+ 	} else {
+-		log.Printf("CPA Manager Plus admin credential initialized")
++		log.Printf("CPA Manager Plus local access requires no key")
+ 	}
+ 	if bootstrapResult.DataKeyCreated {
+ 		log.Printf("CPA Manager Plus data key created at %s", cfg.DataKeyPath)

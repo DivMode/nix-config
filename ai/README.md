@@ -126,7 +126,7 @@ the real Codex CLI and keep supervising it. Its tools need Python 3.10+, which
 the uv-backed `python3` launcher in `modules/home/development.nix` provides.
 `codex-orchestrator/` here adds the local policy skill
 (`/codex-orchestrator:delegate`) and its `codex-scope` post-run check. The
-policy fixes the worker to `gpt-6.1-sol` at `high` effort on the Fast tier with explicit flags,
+policy fixes the worker to `gpt-6.1-sol` at `high` effort with explicit flags (Fast only on request),
 not a Codex profile: Codex 0.159.2 started a session with a missing `-p`
 profile instead of failing. Remove the plugin from `programs.claude-code.plugins`
 to disable all of it.

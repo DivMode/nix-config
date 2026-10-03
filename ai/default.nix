@@ -30,6 +30,14 @@
     herdr = ./skills/herdr;
   };
 
+  # Local additions to the codex-orchestrator Claude Code plugin: the
+  # delegation policy skill and the post-run scope check it calls. Claude
+  # Code only; modules/home/ai layers them into the plugin tree.
+  codexOrchestrator = {
+    delegateSkill = ./codex-orchestrator/delegate;
+    scopeCheck = ./codex-orchestrator/codex-scope.sh;
+  };
+
   # Client hook programs. These are declared here, rather than written into a
   # client's own directory, so that losing or wiping that directory cannot
   # disarm them: the renderer points each client at the Nix store path.

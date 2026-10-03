@@ -111,6 +111,39 @@ let
     '';
   };
 
+  # `python3` and `python` on PATH. uv owns Python interpreters (see
+  # development.md), but nothing put one on PATH, so bare `python3` fell
+  # through to macOS's /usr/bin/python3 — 3.9.6, which broke a tool needing
+  # 3.10+ on 2026-10-03. This resolves the interpreter uv would choose here:
+  # the nearest project `.python-version`, else the global pin in
+  # `pythonDefault` below, never a system Python (`only-managed`). A version
+  # not yet installed is downloaded on first use, the way mise supplies Node,
+  # rather than during activation. `--system` skips virtualenvs: an activated
+  # one is already ahead of this on PATH, and an unactivated `.venv` should not
+  # be entered implicitly. uv is called by store path so the interpreter's
+  # environment is not changed.
+  pythonLauncher = pkgs.writeShellApplication {
+    name = "python3";
+    text = ''
+      if ! interpreter="$(${lib.getExe config.programs.uv.package} python find --system 2>/dev/null)"; then
+        ${lib.getExe config.programs.uv.package} python install >&2
+        interpreter="$(${lib.getExe config.programs.uv.package} python find --system)"
+      fi
+      exec "$interpreter" "$@"
+    '';
+  };
+
+  python = pkgs.runCommand "python-launcher" { } ''
+    mkdir -p $out/bin
+    ln -s ${lib.getExe pythonLauncher} $out/bin/python3
+    ln -s ${lib.getExe pythonLauncher} $out/bin/python
+  '';
+
+  # The machine-wide default minor version: the newest stable CPython uv
+  # offers (3.14.6 on 2026-10-03; uv 0.11.21 lists no 3.15 build). uv takes
+  # the latest patch of it. Projects pin their own in `.python-version`.
+  pythonDefault = "3.14";
+
   # Grafana's kubectl-style CLI for dashboards, alerts, metrics, logs and
   # traces, agent-optimized. Rebuilt from the flake-pinned release tag rather
   # than taken from nixpkgs as-is: nixpkgs trails upstream badly — nixos-26.05
@@ -171,7 +204,6 @@ in
         just
         ripgrep
         mise
-        uv
         rustup
         # Rust crates that vendor C/C++ (BoringSSL and friends, via *-sys build
         # scripts) shell out to cmake to compile it. Without it a from-scratch
@@ -309,6 +341,7 @@ in
         # Outside the `with pkgs;` list so the name unambiguously means the
         # let-bound override above, not pkgs.gcx.
         gcx
+        python
       ]
       # The launcher execs a macOS app bundle, so it exists only on darwin.
       ++ lib.optionals pkgs.stdenv.hostPlatform.isDarwin [ codex ];
@@ -323,5 +356,17 @@ in
       [tools]
       node = "24"
     '';
+
+    # uv itself, and ~/.config/uv/uv.toml. `only-managed` keeps uv from ever
+    # selecting macOS's Python 3.9 or another system interpreter. uv never
+    # writes uv.toml, so a store symlink is safe.
+    programs.uv = {
+      enable = true;
+      settings.python-preference = "only-managed";
+    };
+
+    # The global pin uv reads when no project pins a version. Read-only on
+    # purpose: `uv python pin --global` would fail here; change `pythonDefault`.
+    xdg.configFile."uv/.python-version".text = "${pythonDefault}\n";
   };
 }

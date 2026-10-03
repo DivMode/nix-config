@@ -115,7 +115,9 @@ that the recipient received or read them.
     you were about to re-derive. Record outcomes back there, commit and push
     completed work, and never leave an important finding only in a terminal
     transcript that closes with the session. Preserve unrelated worktrees and
-    files. Never commit secrets or private local state.
+    files. Never commit secrets or private local state. Exception: a delegated
+    worker, such as a Codex job dispatched by Claude, leaves its changes
+    uncommitted, and its supervisor reviews, commits, and pushes them.
 
 12. **This machine is declarative.** Environment, settings, and configuration
     changes belong in the Nix configuration repository — Home Manager or

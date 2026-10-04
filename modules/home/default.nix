@@ -30,6 +30,7 @@ in
     }
   ];
   imports = [
+    ./agent-reach
     ./ai
     ./archives.nix
     ./caches.nix

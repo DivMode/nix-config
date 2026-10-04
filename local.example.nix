@@ -93,6 +93,12 @@
   # set to null to keep every default.
   cacheDirectory = "/Volumes/ExampleDisk/Caches";
 
+  # Chrome profile DIRECTORY (Default, "Profile 3", ...) whose signed-in X and
+  # Reddit sessions Agent-Reach's backends read (modules/home/agent-reach).
+  # Names are under "profile.info_cache" in Chrome's Local State file. Null
+  # lets each backend take the first profile with cookies, Default first.
+  agentReach.chromeProfile = null;
+
   # SMB shares mounted at login by modules/home/network-shares.nix. Leave
   # `mounts` empty to disable the module entirely.
   #

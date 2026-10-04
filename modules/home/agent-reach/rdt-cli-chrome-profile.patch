@@ -1,0 +1,53 @@
+diff --git a/rdt_cli/auth.py b/rdt_cli/auth.py
+index 9573e95..f68761f 100644
+--- a/rdt_cli/auth.py
++++ b/rdt_cli/auth.py
+@@ -10,6 +10,7 @@ from __future__ import annotations
+ 
+ import json
+ import logging
++import os
+ import shutil
+ import subprocess
+ import time
+@@ -128,6 +129,9 @@ def extract_browser_credential() -> Credential | None:
+ 
+     Uses subprocess to avoid SQLite lock when browser is running.
+     """
++    profile = os.environ.get("RDT_CHROME_PROFILE", "").strip()
++    if profile:
++        return _extract_chrome_profile(profile)
+     if shutil.which("uv"):
+         cred = _extract_subprocess()
+         if cred:
+@@ -135,6 +139,30 @@ def extract_browser_credential() -> Credential | None:
+     return _extract_direct()
+ 
+ 
++def _extract_chrome_profile(profile: str) -> Credential | None:
++    """Extract from one named Chrome profile only; no other browser or profile."""
++    try:
++        import browser_cookie3
++    except ImportError:
++        logger.warning("browser-cookie3 not available for direct extraction")
++        return None
++    cookie_file = os.path.expanduser(
++        os.path.join("~/Library/Application Support/Google/Chrome", profile, "Cookies")
++    )
++    try:
++        jar = browser_cookie3.chrome(cookie_file=cookie_file, domain_name=".reddit.com")
++    except Exception as e:
++        logger.warning("Chrome profile %r extraction failed: %s", profile, e)
++        return None
++    cookies = {c.name: c.value for c in jar}
++    if any(k in cookies for k in REQUIRED_COOKIES):
++        cred = Credential(cookies=cookies, source=f"browser:chrome[{profile}]")
++        save_credential(cred)
++        return cred
++    logger.warning("Chrome profile %r has no Reddit session", profile)
++    return None
++
++
+ def _extract_subprocess() -> Credential | None:
+     """Extract via uv subprocess — avoids SQLite lock."""
+     script = '''

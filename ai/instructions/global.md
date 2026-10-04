@@ -274,7 +274,8 @@ CLI secret access, a personal-session fallback, or unsigned commits.
 
 The declarative `onepassword-sa` command is the approved interface for
 1Password **writes** — creating vaults, creating items, copying an item between
-vaults. It authenticates only with the existing service-account token, takes
+vaults, and giving a group (such as Owners) full access to a vault the service
+account created, so the owner can see it (`vault-access` lists who has it). It authenticates only with the existing service-account token, takes
 secret values on stdin, and has no command that prints a secret. Use it when a
 task needs a credential stored; do not reach for `op` or write another client.
 It is not a read path: runtime secrets still come only through the

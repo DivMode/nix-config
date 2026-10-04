@@ -193,8 +193,6 @@ let
     };
   });
 
-  twitterCli = pkgs.callPackage ./twitter-cli.nix { };
-
 in
 {
   options.nixConfig.claudeCode.package = lib.mkOption {
@@ -266,9 +264,6 @@ in
         # unauthenticated caption endpoint returns nothing, and the third-party
         # transcript mirrors answer 403.
         yt-dlp
-        # `twitter`: reads X posts, searches and profiles with the signed-in
-        # browser session. Packaged locally; see ./twitter-cli.nix.
-        twitterCli
         # macOS ships no `flock`; it is a util-linux tool. Deploy scripts that
         # serialise themselves with a lock file need it, and without it they do
         # not fail cleanly — the one here reported a two-hour lock timeout,

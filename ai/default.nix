@@ -26,8 +26,13 @@
   # teaches an agent to drive panes, tabs, and workspaces through the socket
   # API, and gates itself on HERDR_ENV=1 so it stays inert outside a Herdr
   # pane. Refresh it by re-running that command when Herdr updates.
+  #
+  # `twitter-cli` is local, not upstream's SKILL.md: that one tells agents to
+  # install and upgrade the CLI with `uv tool`, which would bypass the Nix
+  # package in modules/home/twitter-cli.nix, and invites write actions.
   skills = {
     herdr = ./skills/herdr;
+    twitter-cli = ./skills/twitter-cli;
   };
 
   # Local additions to the codex-orchestrator Claude Code plugin: the

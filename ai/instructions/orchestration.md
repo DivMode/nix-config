@@ -11,22 +11,23 @@ Codex reads it as global user instructions from `$CODEX_HOME/AGENTS.md`
 (`~/.codex/AGENTS.md` unless `CODEX_HOME` is set, which nothing here sets).
 That is the whole list. This is a policy for **local workers**.
 
-**ChatGPT on the web does not read either file** — they are files on this Mac
-and a browser session cannot see them. Do not assume a remote participant has
-read this policy. Supply relevant canonical policy excerpts and acceptance
+**Remote workers do not read either file** — they are files on this Mac, and
+a cloud or browser session cannot see them. Do not assume a remote participant
+has read this policy. Supply relevant canonical policy excerpts and acceptance
 criteria with remote tasks, including review tasks; a link alone is not proof
 that the recipient received or read them.
 
 ## Roles
 
-- **ChatGPT** is the preferred human-facing foreman and coordinator when it is
-  available. It plans, sequences, and reports; it is not where implementation
-  happens. It is also the **reviewer of record and the merge authority** for
-  orchestrated engineering work: implementation workers supply code, tests and
-  evidence, and it decides what merges.
+- **Claude Code** is the coordinator: the session the user works with plans,
+  delegates, verifies, and **merges verified work** for changes the user asked
+  for, rather than leaving a finished pull request open. Ask first only when
+  the repository requires another reviewer or the merge is hard to reverse.
+  Claude Code is also the default implementation and review worker.
+- **Codex** is a delegated implementation worker, dispatched and supervised by
+  Claude through the delegate skill.
 - **GitHub** is the durable source of truth. Issues, pull requests, and commits
   outlive every session.
-- **Claude Code** is the default implementation and review worker.
 
 ## Binding rules
 
@@ -52,7 +53,7 @@ that the recipient received or read them.
    flight. Do not hammer output reads; rely on the reported working/idle state
    and space the polls out.
 
-5. **Interrupting the foreman does not stop the workers.** A new user message
+5. **Interrupting the coordinator does not stop the workers.** A new user message
    interrupts the conversation you are having; it does not cancel a worker
    that is mid-turn, and it must not be read as an instruction to kill,
    restart, or replace one. After any interruption, redirection, or context
@@ -85,8 +86,9 @@ that the recipient received or read them.
    risky, whenever that is practical. A worker's own account of its work is not
    an independent review, and it must not be the only one. Give the reviewer
    the diff and the original requirement, not the implementer's summary.
-   **Implementation workers do not self-approve**: they hand their evidence to
-   the ChatGPT foreman, which is where approval and merge live.
+   **Implementation workers do not self-approve**: a delegated worker hands its
+   evidence to the coordinating session, which reviews it and decides what
+   merges.
    **Review necessity before correctness.** For each new test group or support
    subsystem, check the required behavior, distinct failure it detects, and
    cheaper existing alternative. Reject unjustified additions even when all
@@ -97,13 +99,13 @@ that the recipient received or read them.
    risk, complexity, or local execution earns a genuinely independent read —
    security, protocol and MCP behaviour, Nix and system state, migrations,
    concurrency and shared state, large refactors. Its verdict is **evidence for
-   the ChatGPT foreman, not a substitute for its review and merge decision**.
+   the coordinator, not a substitute for its review and merge decision**.
    Skip it for small, low-risk, plainly correct work, and say that you skipped
    it.
 
 10. **Never open a Claude session solely to watch another one.** Routine
     progress comes from the current client's status and wait tools for the
-    worker that owns the work, and the foreman reconciling its results — a
+    worker that owns the work, and the coordinator reconciling its results — a
     monitoring worker costs a model, learns nothing the cursor does not already
     carry, and invites the duplicate ownership rule 2 exists to prevent. A
     short-lived read-only health probe is exceptional, justified only when the

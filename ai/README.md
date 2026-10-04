@@ -29,7 +29,7 @@ one document both clients are given:
 
 - `global.md` — how the owner works, and what "done" means. Owner-edited prose.
 - `orchestration.md` — how agents on this machine coordinate with each other:
-  who is foreman, where durable state lives, how native workers are listed,
+  who coordinates and merges, where durable state lives, how native workers are listed,
   reused, and polled, what an interruption does and does not cancel, which
   model a worker may pick, and that user environment changes belong in this
   repository rather than in a shell. General by design; it names no project. It
@@ -75,7 +75,7 @@ Both destinations are loaded automatically and machine-wide: Claude Code reads
 `CODEX_HOME`, which nothing here does — as global user instructions.
 
 **Those two clients are the whole audience of these files.** This is policy
-for LOCAL workers. ChatGPT on the web reads neither — they are files on this
+for LOCAL workers. Remote workers read neither — they are files on this
 Mac and a browser session cannot see them.
 
 Coordination uses the active client's native tools. This repository does not

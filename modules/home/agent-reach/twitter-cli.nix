@@ -1,13 +1,20 @@
-# twitter-cli: reads X (Twitter) from a shell — search, timelines, users,
-# single posts — through the web client's GraphQL endpoints, authenticated by
-# the session cookies of a browser that is already signed in to x.com. It is
-# the X backend Agent-Reach wraps; this declares the CLI itself rather than
-# running Agent-Reach's installer, which installs tools imperatively.
+# twitter-cli: Agent-Reach's X backend. Reads search, timelines, users and
+# single posts through the web client's GraphQL endpoints, authenticated by
+# the session cookies of a Chrome profile already signed in to x.com.
 #
 # Neither package is in nixpkgs. Both are pinned to their PyPI releases.
 # Cookies go only to x.com; the one other request, to raw.githubusercontent.com,
 # fetches a public list of current GraphQL query IDs (twitter_cli/graphql.py).
-{ python3Packages }:
+#
+# Which X account it acts as is a choice of Chrome profile. Left to itself the
+# CLI takes the first profile with x.com cookies, Default first, which is not
+# necessarily the account meant for this. `chromeProfile` pins it; both
+# variables stay overridable per run.
+{
+  lib,
+  python3Packages,
+  chromeProfile ? null,
+}:
 let
   # Builds `X-Client-Transaction-Id` headers. Its 1.0.3 sdist cannot build:
   # setup.py reads a requirements.txt the archive does not contain. The wheel
@@ -57,6 +64,16 @@ python3Packages.buildPythonApplication rec {
     pyyaml
     rich
     xclienttransaction
+  ];
+  makeWrapperArgs = [
+    "--set-default"
+    "TWITTER_BROWSER"
+    "chrome"
+  ]
+  ++ lib.optionals (chromeProfile != null) [
+    "--set-default"
+    "TWITTER_CHROME_PROFILE"
+    (lib.escapeShellArg chromeProfile)
   ];
   pythonImportsCheck = [ "twitter_cli" ];
   meta.mainProgram = "twitter";

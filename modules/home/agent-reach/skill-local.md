@@ -14,8 +14,13 @@ module: report it instead.
   Check the account first with `twitter whoami --yaml` or `rdt whoami`; if it
   reports no session, ask the user to sign in to that site in that Chrome
   profile.
-- **Reddit:** use `rdt` (`rdt search "query" --limit 10`, `rdt read <id>`).
-  OpenCLI is not installed.
+- **Reddit:** use `rdt` (`rdt search "query" --limit 10`,
+  `rdt read <post-id> -n 40 -c --json`). OpenCLI is not installed. Never read
+  reddit.com through Jina Reader or curl; Reddit answers 403. `rdt read` takes
+  only the post ID, the segment after `/comments/` in a post URL. A share link
+  (`reddit.com/r/<sub>/s/<code>`) has no ID; resolve it first with
+  `curl -s -o /dev/null -w '%{redirect_url}' -A 'Mozilla/5.0' '<share-url>'`,
+  which returns the post URL from the 301 without fetching the page.
 - **YouTube:** `yt-dlp` with `deno` as its JavaScript runtime. Use the
   scratchpad or `/tmp` for output.
 - **RSS:** use `agent-reach-python` in place of `python3` in references/web.md;

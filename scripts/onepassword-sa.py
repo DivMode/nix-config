@@ -13,14 +13,23 @@ import os
 import sys
 
 from onepassword.client import Client
+from onepassword import types as op_types
 from onepassword.types import (
+    GroupGetParams,
+    GroupVaultAccess,
     ItemCategory,
     ItemCreateParams,
     ItemField,
     ItemFieldType,
     ItemSection,
+    VaultAccessorType,
     VaultCreateParams,
+    VaultGetParams,
 )
+
+# Permission bits exported by the SDK (READ_ITEMS, MANAGE_VAULT, ...), for display.
+PERMISSIONS = {name: value for name, value in vars(op_types).items()
+               if name.isupper() and isinstance(value, int) and value > 0}
 
 
 def fail(message):
@@ -67,6 +76,58 @@ async def vault_create(client, args):
         VaultCreateParams(title=args.title, description=args.description, allow_admins_access=True)
     )
     print(f"created vault {args.title!r} ({vault.id})")
+
+
+def permission_names(bits):
+    names = [name for name, value in sorted(PERMISSIONS.items(), key=lambda kv: kv[1]) if bits & value]
+    return ",".join(names) or "NO_ACCESS"
+
+
+async def accessors(client, vault):
+    detail = await client.vaults.get(vault.id, VaultGetParams(accessors=True))
+    return detail.access or []
+
+
+async def vault_access(client, args):
+    """Who can open a vault: metadata only, never items."""
+    vault = await vault_by_title(client, args.vault)
+    for access in await accessors(client, vault):
+        title = ""
+        if access.accessor_type == VaultAccessorType.GROUP:
+            group = await client.groups.get(access.accessor_uuid, GroupGetParams())
+            title = f"  {group.title}"
+        print(f"{access.accessor_type.value}  {access.accessor_uuid}{title}  {permission_names(access.permissions)}")
+
+
+# Everything a person needs to use a vault in the app (the SDK grants groups only).
+FULL_ACCESS = sum(PERMISSIONS[name] for name in (
+    "MANAGE_VAULT", "READ_ITEMS", "REVEAL_ITEM_PASSWORD", "UPDATE_ITEMS", "CREATE_ITEMS",
+    "ARCHIVE_ITEMS", "DELETE_ITEMS", "UPDATE_ITEM_HISTORY", "SEND_ITEMS", "IMPORT_ITEMS",
+    "EXPORT_ITEMS", "PRINT_ITEMS",
+))
+
+
+async def vault_grant(client, args):
+    """Give a group already listed on the vault full item access, then read it back."""
+    vault = await vault_by_title(client, args.vault)
+    groups = {}
+    for access in await accessors(client, vault):
+        if access.accessor_type == VaultAccessorType.GROUP:
+            group = await client.groups.get(access.accessor_uuid, GroupGetParams())
+            groups.setdefault(group.title, []).append(access)
+    matches = groups.get(args.group, [])
+    if len(matches) != 1:
+        fail(f"group {args.group!r} is not listed exactly once on {args.vault!r}")
+    access = matches[0]
+    wanted = access.permissions | FULL_ACCESS
+    if wanted != access.permissions:
+        await client.vaults.update_group_permissions(
+            [GroupVaultAccess(vault_id=vault.id, group_id=access.accessor_uuid, permissions=wanted)]
+        )
+    granted = {a.accessor_uuid: a.permissions for a in await accessors(client, vault)}
+    if granted.get(access.accessor_uuid, 0) & wanted != wanted:
+        fail(f"{args.group!r} did not receive full access on {args.vault!r}")
+    print(f"{args.group!r} on {args.vault!r}: {permission_names(granted[access.accessor_uuid])}")
 
 
 async def item_create(client, args):
@@ -157,6 +218,13 @@ def main():
     p.add_argument("title")
     p.add_argument("--description")
 
+    p = commands.add_parser("vault-access", help="list a vault's users and groups (metadata only)")
+    p.add_argument("vault")
+
+    p = commands.add_parser("vault-grant", help="give a group on the vault full item access")
+    p.add_argument("vault")
+    p.add_argument("group", help="group title already listed by vault-access, e.g. Owners")
+
     p = commands.add_parser("item-create", help="create an item; fields as JSON on stdin")
     p.add_argument("--vault", required=True)
     p.add_argument("--title", required=True)
@@ -171,6 +239,7 @@ def main():
 
     args = parser.parse_args()
     handler = {"vaults": vaults, "vault-create": vault_create,
+               "vault-access": vault_access, "vault-grant": vault_grant,
                "item-create": item_create, "item-copy": item_copy}[args.command]
 
     async def run():

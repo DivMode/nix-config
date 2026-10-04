@@ -9,7 +9,7 @@
 #
 # Both clients load their file automatically for every project — Claude Code as
 # user memory, Codex as global user instructions under $CODEX_HOME. Neither is
-# read by ChatGPT on the web, which is why the policy says so itself.
+# read by remote workers, which is why the policy says so itself.
 #
 # The document is composed at EVALUATION time with `readFile` rather than built
 # as a derivation and handed to both consumers. That is not a stylistic choice:
@@ -77,12 +77,12 @@ let
   # matches the text wherever it appears. These phrases must additionally be
   # found inside a named section of orchestration.md.
   #
-  # The reviewer of record belongs in Roles because it is a standing fact about
-  # who ChatGPT is, not a step to follow. The five under Binding rules are
+  # Who merges belongs in Roles because it is a standing fact about the
+  # coordinator, not a step to follow. The five under Binding rules are
   # obligations, and an obligation that is not a binding rule is a suggestion.
   sectionPhrases = {
     "## Roles" = [
-      "It is also the **reviewer of record and the merge authority** for"
+      "delegates, verifies, and **merges verified work** for changes the user asked"
     ];
     "## Binding rules" = [
       "**Reconcile before you open.**"
@@ -103,7 +103,7 @@ let
     # Where this document is loaded — and, just as binding, where it is not.
     "Codex reads it as global user instructions from `$CODEX_HOME/AGENTS.md`"
     "Claude Code reads it as user memory from `~/.claude/CLAUDE.md`"
-    "**ChatGPT on the web does not read either file**"
+    "**Remote workers do not read either file**"
 
     # Roles.
     "**GitHub** is the durable source of truth."
@@ -112,7 +112,7 @@ let
     "**Use the current client's native tools.**"
     "**List, then reuse, then create.**"
     "**Protect personal terminal sessions.**"
-    "**Interrupting the foreman does not stop the workers.**"
+    "**Interrupting the coordinator does not stop the workers.**"
     "re-list the sessions and resume polling the"
     "same named worker**"
     "authority. Resume the worker that owns the task before creating another."
@@ -130,9 +130,9 @@ let
     # itself so long as somebody else also looked. "A separate Claude reviewer
     # is optional" without "not a substitute" turns an optional second opinion
     # into the merge decision. And a ban on monitoring sessions without the
-    # mechanism that replaces them leaves a foreman no way to see progress at
+    # mechanism that replaces them leaves a coordinator no way to see progress at
     # all, which is how the banned session gets opened again.
-    "the ChatGPT foreman, not a substitute for its review and merge decision**."
+    "the coordinator, not a substitute for its review and merge decision**."
     "progress comes from the current client's status and wait tools for the"
     "**closed immediately afterwards**."
 

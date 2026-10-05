@@ -3,7 +3,10 @@
 The approved write interface for agents: it authenticates only with the cached
 service-account token (never Connect, the desktop app, or a signed-in session),
 takes secret values on stdin (never argv), and has no command that prints a
-secret. Reads happen only inside `item-copy`, to verify the copy.
+secret. Item values are read only inside `item-copy`/`item-move`, to verify a
+copy; `items` lists titles and ids only. Deletion is limited to an item whose
+verified copy exists in the target vault (`item-move`) and to an EMPTY vault
+(`vault-delete`).
 """
 
 import argparse
@@ -166,45 +169,83 @@ async def item_create(client, args):
     print(f"created {args.title!r} in {args.vault!r} ({item.id}, {len(item.fields)} fields)")
 
 
-async def item_copy(client, args):
-    source_vault = await vault_by_title(client, args.source_vault)
-    target_vault = await vault_by_title(client, args.target_vault)
-    overview = await item_by_title(client, source_vault, args.title)
-    if overview is None:
-        fail(f"no item {args.title!r} in {args.source_vault!r}")
-    if await item_by_title(client, target_vault, args.title):
-        print(f"{args.title!r} already in {args.target_vault!r}; not overwriting")
-        return
-    source = await client.items.get(source_vault.id, overview.id)
-    copy = await client.items.create(
-        ItemCreateParams(
-            category=source.category,
-            vault_id=target_vault.id,
-            title=source.title,
-            fields=[
-                ItemField(
-                    id=f.id,
-                    title=f.title,
-                    section_id=f.section_id,
-                    field_type=f.field_type,
-                    value=f.value,
-                    details=f.details,
-                )
-                for f in source.fields
-            ],
-            sections=source.sections,
-            notes=source.notes,
-            tags=source.tags,
-            websites=source.websites,
-        )
-    )
-    written = await client.items.get(target_vault.id, copy.id)
+def differing_fields(source, copy):
+    """Titles of source fields whose value the copy does not carry, by (section, title)."""
     key = lambda f: (f.section_id or "", f.title)
-    copied = {key(f): f.value for f in written.fields}
-    differing = [f.title for f in source.fields if copied.get(key(f)) != f.value]
+    copied = {key(f): f.value for f in copy.fields}
+    return [f.title for f in source.fields if copied.get(key(f)) != f.value]
+
+
+async def copy_verified(client, source_title, title, target_title):
+    """Copy `title` unless the target already has it, then verify every field.
+
+    Returns (source_vault, source_overview). Fails, leaving the source untouched,
+    if the target copy does not carry every source value.
+    """
+    source_vault = await vault_by_title(client, source_title)
+    target_vault = await vault_by_title(client, target_title)
+    overview = await item_by_title(client, source_vault, title)
+    if overview is None:
+        fail(f"no item {title!r} in {source_title!r}")
+    source = await client.items.get(source_vault.id, overview.id)
+    existing = await item_by_title(client, target_vault, title)
+    if existing is None:
+        copy = await client.items.create(
+            ItemCreateParams(
+                category=source.category,
+                vault_id=target_vault.id,
+                title=source.title,
+                fields=[
+                    ItemField(
+                        id=f.id,
+                        title=f.title,
+                        section_id=f.section_id,
+                        field_type=f.field_type,
+                        value=f.value,
+                        details=f.details,
+                    )
+                    for f in source.fields
+                ],
+                sections=source.sections,
+                notes=source.notes,
+                tags=source.tags,
+                websites=source.websites,
+            )
+        )
+        action, target_id = "copied", copy.id
+    else:
+        action, target_id = "already present", existing.id
+    written = await client.items.get(target_vault.id, target_id)
+    differing = differing_fields(source, written)
     if differing:
-        fail(f"copied {args.title!r} but fields differ: {', '.join(differing)}")
-    print(f"copied {args.title!r} to {args.target_vault!r} ({copy.id}), {len(source.fields)} fields verified")
+        fail(f"{title!r} in {target_title!r} ({action}) differs from the source: {', '.join(differing)}")
+    print(f"{title!r} {action} in {target_title!r} ({target_id}), {len(source.fields)} fields verified")
+    return source_vault, overview
+
+
+async def item_copy(client, args):
+    await copy_verified(client, args.source_vault, args.title, args.target_vault)
+
+
+async def item_move(client, args):
+    source_vault, overview = await copy_verified(client, args.source_vault, args.title, args.target_vault)
+    await client.items.delete(source_vault.id, overview.id)
+    print(f"deleted {args.title!r} from {args.source_vault!r}")
+
+
+async def items(client, args):
+    vault = await vault_by_title(client, args.vault)
+    for i in sorted(await client.items.list(vault.id), key=lambda i: i.title):
+        print(f"{i.id}  {i.category}  {i.title}")
+
+
+async def vault_delete(client, args):
+    vault = await vault_by_title(client, args.vault)
+    remaining = await client.items.list(vault.id)
+    if remaining:
+        fail(f"vault {args.vault!r} still holds {len(remaining)} item(s); move them first")
+    await client.vaults.delete(vault.id)
+    print(f"deleted empty vault {args.vault!r} ({vault.id})")
 
 
 def main():
@@ -236,10 +277,24 @@ def main():
     p.add_argument("title")
     p.add_argument("target_vault")
 
+    p = commands.add_parser("item-move",
+                            help="copy an item, verify every field, then delete the source")
+    p.add_argument("source_vault")
+    p.add_argument("title")
+    p.add_argument("target_vault")
+
+    p = commands.add_parser("items", help="list a vault's item ids, categories and titles")
+    p.add_argument("vault")
+
+    p = commands.add_parser("vault-delete", help="delete a vault that holds no items")
+    p.add_argument("vault")
+
     args = parser.parse_args()
     handler = {"vaults": vaults, "vault-create": vault_create,
                "vault-access": vault_access, "vault-grant": vault_grant,
-               "item-create": item_create, "item-copy": item_copy}[args.command]
+               "item-create": item_create, "item-copy": item_copy,
+               "item-move": item_move, "items": items,
+               "vault-delete": vault_delete}[args.command]
 
     async def run():
         await handler(await connect(), args)

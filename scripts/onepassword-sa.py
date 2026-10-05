@@ -3,8 +3,9 @@
 The approved write interface for agents: it authenticates only with the cached
 service-account token (never Connect, the desktop app, or a signed-in session),
 takes secret values on stdin (never argv), and has no command that prints a
-secret. Item values are read only inside `item-copy`/`item-move`, to verify a
-copy; `items` lists titles and ids only. Deletion is limited to an item whose
+secret. `item-edit` adds or replaces fields and verifies the submitted values;
+`item-copy`/`item-move` read values to verify a copy; `items` lists titles and
+ids only. Deletion is limited to an item whose
 verified copy exists in the target vault (`item-move`) and to an EMPTY vault
 (`vault-delete`).
 """
@@ -14,6 +15,7 @@ import asyncio
 import json
 import os
 import sys
+from uuid import uuid4
 
 from onepassword.client import Client
 from onepassword import types as op_types
@@ -133,18 +135,32 @@ async def vault_grant(client, args):
     print(f"{args.group!r} on {args.vault!r}: {permission_names(granted[access.accessor_uuid])}")
 
 
-async def item_create(client, args):
+def fields_from_stdin():
     """Fields arrive on stdin as a JSON list of {title, type, value[, section]}."""
-    vault = await vault_by_title(client, args.vault)
-    if await item_by_title(client, vault, args.title):
-        fail(f"item {args.title!r} already exists in {args.vault!r}; not overwriting")
     try:
         specs = json.load(sys.stdin)
     except json.JSONDecodeError as error:
         fail(f"stdin is not JSON: {error.msg}")
+    if not isinstance(specs, list):
+        fail("stdin must be a JSON list of fields")
     sections, fields = {}, []
+    seen = set()
     for spec in specs:
+        if not isinstance(spec, dict):
+            fail("each field must be a JSON object")
+        if not isinstance(spec.get("title"), str) or not isinstance(spec.get("value"), str):
+            fail("each field must have a string title and value")
         section = spec.get("section")
+        if section is not None and not isinstance(section, str):
+            fail("each field's section must be a string or null")
+        try:
+            field_type = ItemFieldType(spec.get("type", "Concealed"))
+        except (TypeError, ValueError):
+            fail(f"invalid type for field {spec['title']!r}")
+        key = (section or "", spec["title"])
+        if key in seen:
+            fail(f"duplicate field {spec['title']!r} in stdin")
+        seen.add(key)
         if section:
             sections.setdefault(section, ItemSection(id=section, title=section))
         fields.append(
@@ -152,17 +168,25 @@ async def item_create(client, args):
                 id=spec["title"],
                 title=spec["title"],
                 section_id=section,
-                field_type=ItemFieldType(spec.get("type", "Concealed")),
+                field_type=field_type,
                 value=spec["value"],
             )
         )
+    return fields, list(sections.values())
+
+
+async def item_create(client, args):
+    vault = await vault_by_title(client, args.vault)
+    if await item_by_title(client, vault, args.title):
+        fail(f"item {args.title!r} already exists in {args.vault!r}; not overwriting")
+    fields, sections = fields_from_stdin()
     item = await client.items.create(
         ItemCreateParams(
             category=ItemCategory(args.category),
             vault_id=vault.id,
             title=args.title,
             fields=fields,
-            sections=list(sections.values()) or None,
+            sections=sections or None,
             notes=args.notes,
         )
     )
@@ -174,6 +198,54 @@ def differing_fields(source, copy):
     key = lambda f: (f.section_id or "", f.title)
     copied = {key(f): f.value for f in copy.fields}
     return [f.title for f in source.fields if copied.get(key(f)) != f.value]
+
+
+async def item_edit(client, args):
+    vault = await vault_by_title(client, args.vault)
+    overview = await item_by_title(client, vault, args.title)
+    if overview is None:
+        fail(f"no item {args.title!r} in {args.vault!r}")
+    item = await client.items.get(vault.id, overview.id)
+    fields, sections = fields_from_stdin()
+    section_ids = {s.title: s.id for s in item.sections}
+    used_section_ids = {s.id for s in item.sections}
+    new_sections = []
+    for section in sections:
+        if section.title not in section_ids:
+            while section.id in used_section_ids:
+                section.id = uuid4().hex
+            used_section_ids.add(section.id)
+            section_ids[section.title] = section.id
+            new_sections.append(section)
+    for field in fields:
+        if field.section_id:
+            field.section_id = section_ids[field.section_id]
+    existing = {(f.section_id or "", f.title): f for f in item.fields}
+    conflicts = [f.title for f in fields if (f.section_id or "", f.title) in existing]
+    if conflicts and not args.replace:
+        fail(f"fields already exist: {', '.join(conflicts)}; use --replace")
+    used_field_ids = {f.id for f in item.fields}
+    added, replaced = 0, 0
+    for field in fields:
+        previous = existing.get((field.section_id or "", field.title))
+        if previous is not None:
+            previous.value = field.value
+            previous.field_type = field.field_type
+            replaced += 1
+        else:
+            while field.id in used_field_ids:
+                field.id = uuid4().hex
+            used_field_ids.add(field.id)
+            item.fields.append(field)
+            added += 1
+    item.sections.extend(new_sections)
+    submitted = item.model_copy(update={"fields": [f.model_copy() for f in fields]})
+    await client.items.put(item)
+    written = await client.items.get(vault.id, item.id)
+    differing = differing_fields(submitted, written)
+    if differing:
+        fail(f"{args.title!r} in {args.vault!r} differs from the submitted fields: {', '.join(differing)}")
+    print(f"edited {args.title!r} in {args.vault!r}: {added} added, {replaced} replaced, verified")
 
 
 async def copy_verified(client, source_title, title, target_title):
@@ -272,6 +344,11 @@ def main():
                    choices=[c.value for c in ItemCategory])
     p.add_argument("--notes")
 
+    p = commands.add_parser("item-edit", help="add or replace item fields as JSON on stdin, then verify")
+    p.add_argument("--vault", required=True)
+    p.add_argument("--title", required=True)
+    p.add_argument("--replace", action="store_true")
+
     p = commands.add_parser("item-copy", help="copy an item between vaults and verify it")
     p.add_argument("source_vault")
     p.add_argument("title")
@@ -292,7 +369,7 @@ def main():
     args = parser.parse_args()
     handler = {"vaults": vaults, "vault-create": vault_create,
                "vault-access": vault_access, "vault-grant": vault_grant,
-               "item-create": item_create, "item-copy": item_copy,
+               "item-create": item_create, "item-edit": item_edit, "item-copy": item_copy,
                "item-move": item_move, "items": items,
                "vault-delete": vault_delete}[args.command]
 

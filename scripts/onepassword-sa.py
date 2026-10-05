@@ -201,8 +201,7 @@ async def item_copy(client, args):
     written = await client.items.get(target_vault.id, copy.id)
     key = lambda f: (f.section_id or "", f.title)
     copied = {key(f): f.value for f in written.fields}
-    differing = [title for (_, title), value in ((key(f), f.value) for f in source.fields)
-                 if copied.get(key(f)) != value]
+    differing = [f.title for f in source.fields if copied.get(key(f)) != f.value]
     if differing:
         fail(f"copied {args.title!r} but fields differ: {', '.join(differing)}")
     print(f"copied {args.title!r} to {args.target_vault!r} ({copy.id}), {len(source.fields)} fields verified")

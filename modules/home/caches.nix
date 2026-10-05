@@ -48,6 +48,20 @@ in
       HOMEBREW_CACHE = cacheDir "homebrew";
       CARGO_HOME = cacheDir "cargo";
       RUSTUP_HOME = cacheDir "rustup";
+
+      # macOS gives each user a TMPDIR under /private/var/folders, on the
+      # internal volume. On 2026-10-04 one release-publish script's mktemp work
+      # directory put 8.1 GB there and left the volume with 1.1 GiB free. Node's
+      # os.tmpdir(), Python's tempfile and `mktemp "$TMPDIR/x.XXXXXX"` follow
+      # TMPDIR (verified in a fresh login shell). /usr/bin/mktemp with no template
+      # or with -t does NOT: it still returns a path under /private/var/folders
+      # (same check), and GNU mktemp is no substitute because it parses -t
+      # differently. Claude Code does not follow TMPDIR either: it
+      # reads CLAUDE_CODE_TMPDIR and otherwise uses /tmp (`JS()` in its 2.1.289
+      # bundle), and it refuses a temp root that is a symlink or owned by another
+      # uid, so both point at the same real 0700 directory created below.
+      TMPDIR = cacheDir "tmp";
+      CLAUDE_CODE_TMPDIR = cacheDir "tmp";
     };
 
     home.sessionPath = [ (cacheDir "cargo/bin") ];
@@ -84,6 +98,7 @@ in
           (cacheDir "rustup")
         ]
       }
+      run mkdir -p -m 700 ${lib.escapeShellArg (cacheDir "tmp")}
     '';
   };
 }

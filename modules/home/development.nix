@@ -384,5 +384,10 @@ in
     # The global pin uv reads when no project pins a version. Read-only on
     # purpose: `uv python pin --global` would fail here; change `pythonDefault`.
     xdg.configFile."uv/.python-version".text = "${pythonDefault}\n";
+
+    # Codex computer use: allow the targets it otherwise refuses, so it stops
+    # asking the owner for permission every time (owner request 2026-10-05).
+    # Equivalent to `defaults write -g ComputerUseAllowForbiddenTargets -bool YES`.
+    targets.darwin.defaults.NSGlobalDomain.ComputerUseAllowForbiddenTargets = true;
   };
 }

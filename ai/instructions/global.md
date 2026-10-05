@@ -273,7 +273,8 @@ conflicting authentication, or a failed read. This does not authorize general
 CLI secret access, a personal-session fallback, or unsigned commits.
 
 The declarative `onepassword-sa` command is the approved interface for
-1Password **writes** — creating vaults, creating items, copying an item between
+1Password **writes** — creating vaults, creating items, adding or replacing
+fields on an existing item (`item-edit`, verified), copying an item between
 vaults, moving one (`item-move`: copy, verify every field, then delete the
 source), deleting a vault only once it is empty, and giving a group (such as
 Owners) full access to a vault the service account created, so the owner can

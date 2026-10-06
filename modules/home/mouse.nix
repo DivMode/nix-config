@@ -1,4 +1,9 @@
-{ lib, pkgs, ... }:
+{
+  config,
+  lib,
+  pkgs,
+  ...
+}:
 let
   # LinearMouse's documented configuration interface. One scheme, matched on
   # the device category rather than a particular model, so it covers the
@@ -79,23 +84,33 @@ in
   # read `whenAttentionNeeded`. Depending on `setDarwinDefaults` by name is what
   # makes the restart observe both sources.
   #
-  # Unlike the Karabiner restart, this one is deliberately NOT gated on a
-  # detected change. The JSON above can be compared on disk, but the other
-  # source — the Defaults domain — is written through cfprefsd, which flushes to
-  # ~/Library/Preferences asynchronously. Comparing that file before and after
-  # activation would therefore miss real changes, and a missed restart leaves
-  # the application running stale settings, which is exactly the failure this
-  # entry exists to prevent. A redundant restart of a mouse driver is cheap; a
-  # missed one is a day of debugging. Karabiner's is gated because its trigger
-  # is purely a file this module owns.
+  # Gated on a real change, like Karabiner's: the owner's rule (2026-10-06) is
+  # that a rebuild restarts nothing whose settings did not change. The JSON is
+  # compared on disk above. The Defaults domain cannot be compared on disk —
+  # cfprefsd flushes to ~/Library/Preferences asynchronously — so
+  # `checkLinearMouseDefaults` compares it through `defaults export` instead,
+  # BEFORE setDarwinDefaults writes, which sees what cfprefsd holds.
+  home.activation.checkLinearMouseDefaults =
+    lib.hm.dag.entryBetween [ "setDarwinDefaults" ] [ "writeBoundary" ]
+      ''
+        linearMouseDefaultsChanged=$(${pkgs.python3}/bin/python3 -I ${./defaults-changed.py} \
+          com.lujjjh.LinearMouse ${
+            pkgs.writeText "linearmouse-defaults.json" (
+              builtins.toJSON config.targets.darwin.defaults."com.lujjjh.LinearMouse"
+            )
+          })
+      '';
+
   home.activation.restartLinearMouse =
     lib.hm.dag.entryAfter
       [
         "writeBoundary"
         "installLinearMouseConfiguration"
         "setDarwinDefaults"
+        "checkLinearMouseDefaults"
       ]
       ''
+        if [[ $linearMouseConfigurationChanged == true || $linearMouseDefaultsChanged == changed ]]; then
         # Terminate EVERY running instance, then start exactly one.
         #
         # Relaunched with `open` against the .app rather than by exec'ing
@@ -144,6 +159,9 @@ in
             run /usr/bin/open -gj /Applications/LinearMouse.app \
               || warnEcho "LinearMouse could not be relaunched; start it by hand, or rebuild again"
           fi
+        fi
+        else
+          verboseEcho "LinearMouse settings unchanged; not restarting it"
         fi
       '';
 

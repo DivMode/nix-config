@@ -1,4 +1,9 @@
-{ lib, ... }:
+{
+  config,
+  lib,
+  pkgs,
+  ...
+}:
 {
   # What sits in the menu bar, declaratively: Apple's own removable status
   # items are hidden here, and Thaw (declared in modules/darwin/homebrew.nix)
@@ -51,6 +56,14 @@
     SiriPrefStashedStatusMenuVisible = false;
   };
 
+  # On macOS 27 the item is a Control Center module, and hiding it takes a
+  # second value beside StatusMenuVisible: ByHost com.apple.controlcenter
+  # `Siri` = 8 (2 shows it). That pair, and that ControlCenter is the process
+  # to restart, is what nix-plist-manager's `menuBar.siri` writes, checked
+  # against System Settings → Menu Bar on macOS 27
+  # (lib/options/applications/systemSettings/menu-bar.nix, commit 4ef635b).
+  targets.darwin.currentHostDefaults."com.apple.controlcenter".Siri = 8;
+
   # ── Thaw: seed behaviour, leave layout to the GUI ─────────────────────────
   #
   # Key names verified against Thaw's own source at tag 1.2.0
@@ -72,43 +85,47 @@
     EnableAlwaysHiddenSection = true;
   };
 
-  # Poke the processes that draw the two Apple status items so the change is
-  # visible now rather than at next login. Spotlight.app reads MenuItemHidden
-  # at launch; killall is safe — launchd owns it and relaunches on demand, and
-  # mds indexing is a different daemon entirely. SystemUIServer is restarted
-  # for the Siri item for the same reason. Both exit 0 via `|| true` when not
-  # running.
+  # Make a changed Siri visibility take effect now rather than at next login:
+  # ControlCenter draws that item on macOS 27 and reads its values at launch.
   #
-  # Deliberately NOT gated on a detected change, same doctrine as the
-  # LinearMouse restart in mouse.nix: these domains are written through
-  # cfprefsd, whose flush to disk is asynchronous, so a before/after file
-  # comparison can miss a real change — and a missed restart leaves a stale
-  # icon, which is the one failure this module exists to remove. Both
-  # processes redraw in well under a second and hold no user state.
+  # Only when a value actually changed — the owner's rule (2026-10-06) is that
+  # a rebuild restarts nothing whose settings did not change. The comparison
+  # goes through `defaults export` before setDarwinDefaults writes
+  # (./defaults-changed.py), which sees what cfprefsd holds, so the
+  # asynchronous flush to disk cannot hide a change.
+  #
+  # Spotlight's item needs nothing here: on macOS 27 there is no `Spotlight`
+  # process to restart (2026-10-06: `pgrep -x Spotlight` found none; search is
+  # served by corespotlightd and friends).
+  home.activation.checkMenuBarDefaults =
+    lib.hm.dag.entryBetween
+      [ "setDarwinDefaults" ]
+      [
+        "writeBoundary"
+      ]
+      ''
+        menuBarChanged=$(
+          ${pkgs.python3}/bin/python3 -I ${./defaults-changed.py} com.apple.Siri ${
+            pkgs.writeText "siri.json" (builtins.toJSON config.targets.darwin.defaults."com.apple.Siri")
+          }
+          ${pkgs.python3}/bin/python3 -I ${./defaults-changed.py} -currentHost com.apple.controlcenter ${
+            pkgs.writeText "controlcenter.json" (
+              builtins.toJSON config.targets.darwin.currentHostDefaults."com.apple.controlcenter"
+            )
+          }
+        )
+      '';
+
   home.activation.refreshMenuBar =
     lib.hm.dag.entryAfter
       [
         "writeBoundary"
         "setDarwinDefaults"
+        "checkMenuBarDefaults"
       ]
       ''
-        run /usr/bin/killall Spotlight 2>/dev/null || true
-        run /usr/bin/killall SystemUIServer 2>/dev/null || true
+        if [[ -n $menuBarChanged ]]; then
+          run /usr/bin/killall ControlCenter 2>/dev/null || true
+        fi
       '';
-
-  # Clean up after the retired launchctl approach (launchers.nix, removed
-  # 2026-09-01): activations from 2026-08-13 onward wrote a persistent
-  # gui-domain disable for the com.apple.Spotlight agent. Measured before
-  # removal: the flag was recorded (`launchctl print-disabled` listed the
-  # agent as disabled) AND the agent was running with a live pid across
-  # multiple reboots — macOS does not honour the disable for this
-  # SIP-protected system agent, so the flag did nothing except misstate
-  # intent. It is cleared rather than kept because an ignored flag is a
-  # landmine: a future macOS that starts honouring it would silently disable
-  # the Spotlight UI, while this module's whole design keeps that UI enabled
-  # and merely hides its status item. `enable` on an already-enabled agent is
-  # a no-op, so this is idempotent and cheap on every later activation.
-  home.activation.clearLegacySpotlightAgentDisable = lib.hm.dag.entryAfter [ "writeBoundary" ] ''
-    run /bin/launchctl enable "gui/$(/usr/bin/id -u)/com.apple.Spotlight" 2>/dev/null || true
-  '';
 }

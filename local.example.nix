@@ -45,10 +45,10 @@
   # publishing private item or vault names in this reusable repository.
   onePassword.sshAgentKeyIds = [ "aaaaaaaaaaaaaaaaaaaaaaaaaa" ];
 
-  # The vault holding this host's local.nix Document backup. scripts/rebuild.sh
-  # reads it from here rather than hard-coding it, which is what keeps a private
-  # vault name out of the tracked scripts; scripts/setup-mac.sh asks for it once
-  # on a wiped machine, because local.nix is the file it is restoring.
+  # The vault holding the "nix-config local.nix" Secure Note that
+  # scripts/rebuild.sh saves through Connect. Read from here rather than
+  # hard-coded, which keeps a private vault name out of the tracked scripts;
+  # scripts/setup-mac.sh finds the note by title in any vault it can see.
   onePassword.vault = "ExampleVault";
 
   # Where the service-account token is read from, as an op:// reference. This

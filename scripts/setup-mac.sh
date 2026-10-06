@@ -267,13 +267,12 @@ stage "Detect this Mac" 1
 [[ "$(uname -s)" == "Darwin" ]] || { warn "This wizard supports macOS only."; exit 1; }
 MAC_USER=$(id -un)
 MAC_HOME="$HOME"
-MAC_HOST=$(/usr/sbin/scutil --get LocalHostName)
 case "$(uname -m)" in
   arm64) MAC_SYSTEM="aarch64-darwin" ;;
   x86_64) MAC_SYSTEM="x86_64-darwin" ;;
   *) warn "Unsupported Mac architecture: $(uname -m)"; exit 1 ;;
 esac
-say "Detected $MAC_USER on $MAC_HOST ($MAC_SYSTEM)."
+say "Detected $MAC_USER ($MAC_SYSTEM)."
 
 stage "Connect to 1Password Connect" 2
 # The one credential this Mac is given by hand. Everything that reads or writes
@@ -392,7 +391,7 @@ fi
 
 stage "Apply the final configuration" 3
 # The routine rebuild: final switch, then the local.nix backup saved to
-# 1Password through Connect under this Mac's name.
+# 1Password through Connect.
 "$REPO_ROOT/scripts/rebuild.sh"
 # GitHub pushes go through the declared Connect-backed SSH transport.
 git -C "$REPO_ROOT" remote set-url origin git@github.com:DivMode/nix-config.git

@@ -34,6 +34,34 @@ PROTECTED_PATH_RE = re.compile(
 PATH_WRITERS = {"rm", "mv", "cp", "install", "mkdir", "touch", "tee", "ln",
                 "chmod", "chown", "rsync", "truncate", "unlink", "rmdir"}
 
+# macOS interface agents that launchd relaunches within a second and that hold
+# no user work: restarting one only redraws the Dock, Finder windows, or the
+# menu bar. The owner allowed these on 2026-10-06 so a refresh (a stale Dock
+# icon) does not need them to type the command themselves. Applications and
+# daemons stay blocked: their restarts belong in an activation entry that
+# compares before and after.
+SELF_RESTARTING_UI_AGENTS = {"Dock", "Finder", "SystemUIServer", "ControlCenter"}
+
+
+def restarts_only_ui_agents(args):
+    """True for `killall [-q] [-u USER] NAME...` where every NAME is one of
+    SELF_RESTARTING_UI_AGENTS. Any other flag — a signal, -m pattern matching,
+    -c, -t — or any other name keeps the command blocked."""
+    names = []
+    i = 0
+    while i < len(args):
+        arg = args[i]
+        if arg == "-q":
+            i += 1
+        elif arg == "-u" and i + 1 < len(args):
+            i += 2
+        elif arg.startswith("-"):
+            return False
+        else:
+            names.append(arg)
+            i += 1
+    return bool(names) and all(name in SELF_RESTARTING_UI_AGENTS for name in names)
+
 
 def deny(reason):
     print(json.dumps({
@@ -190,6 +218,8 @@ def check(segment):
                                        "bootout", "enable", "disable", "start",
                                        "stop", "remove", "submit", "setenv", "unsetenv"}:
         return blocked(f"`launchctl {sub}`")
+    if prog == "killall" and restarts_only_ui_agents(args):
+        return None
     if prog in {"killall", "pkill"}:
         return blocked(f"`{prog}`")
     if prog == "brew" and sub in {"install", "uninstall", "remove", "rm", "upgrade",

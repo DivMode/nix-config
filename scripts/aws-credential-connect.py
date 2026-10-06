@@ -14,13 +14,9 @@ from onepassword_connect import Connect, ConnectError, run  # noqa: E402
 def main():
     if len(sys.argv) != 4:
         raise ConnectError("usage: aws-credential-connect CONNECT_ENV VAULT ITEM")
-    connect = Connect(sys.argv[1])
-    vault, item = sys.argv[2:]
-    print(json.dumps({
-        "Version": 1,
-        "AccessKeyId": connect.field(vault, item, "access key id"),
-        "SecretAccessKey": connect.field(vault, item, "secret access key"),
-    }))
+    access_key_id, secret_access_key = Connect(sys.argv[1]).fields(
+        sys.argv[2], sys.argv[3], "access key id", "secret access key")
+    print(json.dumps({"Version": 1, "AccessKeyId": access_key_id, "SecretAccessKey": secret_access_key}))
 
 
 run(main)

@@ -15,8 +15,9 @@ contains no personal or machine identity.
    curl -fsSL https://raw.githubusercontent.com/DivMode/nix-config/main/scripts/bootstrap.sh | bash
    ```
 
-4. When asked, paste the Connect URL (`onePassword.connectHost` in the old
-   Mac's `local.nix`) and the Connect token (the `access-token` field of the
+4. When asked, paste the Connect URL (`onePassword.connectHost`, in the old
+   Mac's `local.nix` and in its 1Password Secure Note `nix-config local.nix
+   <old Mac's name>`) and the Connect token (the `access-token` field of the
    Connect server's credentials item in 1Password; copy it on a phone or the
    web, then Cmd-V on the Mac via Universal Clipboard; the desktop application
    is not needed). Type your Mac password once when asked.

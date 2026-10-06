@@ -22,7 +22,10 @@
   nix-homebrew = {
     enable = true;
     user = local.user;
-    enableRosetta = local.system == "aarch64-darwin";
+    # No Intel prefix. Nothing declared here is an x86_64-only formula or cask:
+    # on 2026-10-06 /usr/local/bin/brew listed 0 packages, and every rebuild
+    # warned that the prefix was set up while Rosetta was not installed.
+    enableRosetta = false;
     autoMigrate = true;
     mutableTaps = false;
     taps = {

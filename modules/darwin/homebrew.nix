@@ -168,17 +168,6 @@
       # No declared workload requires tailscale-app or tmux. Add either only
       # when a workload in this repository needs it, with that reason recorded.
 
-      # Menu bar manager (an actively maintained fork of Ice). Upstream's cask
-      # carries the 2.x line, which needs macOS 26 (`depends_on macos:
-      # :tahoe`); this Mac runs macOS 27. Until 2026-10-06 an in-repo cask held
-      # 1.2.0 for macOS 15 — the only reason this repository had a pinned tap.
-      # Sparkle keeps it current (../home/sparkle.nix).
-      #
-      # modules/home/menu-bar.nix seeds its behavioural defaults. Two things
-      # stay manual, documented there: the one-time permission grants Thaw asks
-      # for, and which icons live in which section (⌘-drag in the menu bar).
-      "thaw"
-
       # The desktop app provides authentication and the CLI is a separate
       # vendor bundle; installing it does not enable secret injection.
       "1password"

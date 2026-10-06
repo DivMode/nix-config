@@ -104,7 +104,6 @@
           import (builtins.toPath localPath);
       requiredLocalFields = [
         "user"
-        "hostName"
         "system"
         "homeDirectory"
         "git"
@@ -140,7 +139,6 @@
         else if
           !(builtins.all (value: builtins.isString value && value != "") [
             rawLocal.user
-            rawLocal.hostName
             rawLocal.system
             rawLocal.homeDirectory
             rawLocal.git.name

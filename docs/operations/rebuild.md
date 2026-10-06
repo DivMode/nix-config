@@ -29,7 +29,7 @@ Routine rebuilding never uses the `op` CLI, a service account or the desktop
 application. Activation checks that the Connect environment
 (`~/.config/op/connect.env`, mode 600) exists and fails loudly when it does not.
 After a successful activation the script saves `local.nix` to 1Password through
-Connect, as the Secure Note `nix-config local.nix <LocalHostName>` in the vault
+Connect, as the Secure Note `nix-config local.nix` in the vault
 named by `onePassword.vault`: created when missing, updated when it differs,
 then read back (waiting up to 60 s for Connect to catch up) to verify the exact
 text. Connect cannot write Document items, hence a Secure Note. A failure says

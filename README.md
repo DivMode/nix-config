@@ -50,7 +50,7 @@ The repeatable setup wizard handles the two-pass bootstrap:
 ### New Mac
 
 1. In Setup Assistant, create the account with the same short name as the old
-   Mac (the computer name can be anything; it is kept).
+   Mac (the computer name can be anything; the configuration never uses it).
 2. Plug in the external `Data` drive and join the network the 1Password Connect
    server is on.
 3. In Terminal, run:
@@ -61,23 +61,21 @@ The repeatable setup wizard handles the two-pass bootstrap:
 
 4. Type your Mac password once. When asked, paste the two Connect values, both
    in 1Password (on a phone is fine; copy there, then Cmd-V on the Mac):
-   - **Connect URL:** open the Secure Note `nix-config local.nix <old Mac's name>`
+   - **Connect URL:** open the Secure Note `nix-config local.nix`
      and copy the value of `onePassword.connectHost` (an `http://…:8091` address).
    - **Connect token:** search 1Password for "Connect", open the Connect
      server's credentials item, and copy its `access-token` field.
 5. Grant the Karabiner and LinearMouse permissions it lists at the end.
 
 It installs the Command Line Tools and Nix, clones this repository, and runs the
-setup wizard, which asks for the 1Password Connect URL and token (and, when
-1Password holds several Macs, which one this Mac replaces), restores
-`local.nix` from its 1Password Secure Note (keeping this Mac's own name), and
-applies everything. Details: [`docs/setup/new-mac.md`](docs/setup/new-mac.md).
+setup wizard, which asks only for the 1Password Connect URL and token, restores
+`local.nix` from its 1Password Secure Note, and applies everything. Details: [`docs/setup/new-mac.md`](docs/setup/new-mac.md).
 
 The manual short path is:
 
 1. Install Nix and clone the repository. Do not install 1Password manually.
 2. Create the ignored host input. For the first pass, replace only the Mac
-   account, hostname, architecture, and home-directory placeholders; leave the
+   account, architecture, and home-directory placeholders; leave the
    public Git/1Password bootstrap placeholders until Nix installs 1Password:
 
    ```sh

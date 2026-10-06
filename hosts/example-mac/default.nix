@@ -20,7 +20,7 @@
     ../../modules/darwin
   ];
 
-  networking.hostName = local.hostName;
+  # No hostname here: macOS owns the computer's name, which can change at any time.
   nixpkgs.hostPlatform = local.system;
   system.primaryUser = local.user;
 

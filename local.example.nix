@@ -1,7 +1,6 @@
 {
   # Copy this file to the ignored local.nix and replace every placeholder.
   user = "replace-me";
-  hostName = "example-mac";
   system = "aarch64-darwin";
   homeDirectory = "/Users/replace-me";
 

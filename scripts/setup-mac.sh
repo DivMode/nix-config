@@ -396,5 +396,10 @@ stage "Apply the final configuration" 3
 # GitHub pushes go through the declared Connect-backed SSH transport.
 git -C "$REPO_ROOT" remote set-url origin git@github.com:DivMode/nix-config.git
 
+stage "Restore cluster kubeconfigs" 1
+# Each kubeconfig local.nix declares is written by its owning project's recipe; a
+# project not cloned yet is reported with the command to run afterwards.
+"$REPO_ROOT/scripts/kubeconfigs.sh" --restore || warn "A kubeconfig could not be restored (see above)."
+
 finish
 note "Nothing on this Mac uses the 1Password app or CLI; Git, AWS and the network share read through Connect."

@@ -88,3 +88,6 @@ if ! outcome=$("$note_bin" save "$vault" "nix-config local.nix" "$repository/loc
   exit 1
 fi
 echo "==> local.nix backup in 1Password: $outcome and verified"
+
+# Warn, never fail, about a declared kubeconfig this Mac lacks; setup-mac.sh restores them.
+"$repository/scripts/kubeconfigs.sh" --check || true

@@ -5,8 +5,8 @@
 #
 # This is the same command documented in docs/operations/rebuild.md, wrapped so
 # it can be started from a shell with no controlling terminal. It never calls
-# the 1Password CLI or the desktop application: everything that reads 1Password
-# goes through Connect. First-time setup belongs to setup-mac.sh.
+# the 1Password CLI or the desktop application: the local.nix backup is saved
+# through Connect. First-time setup belongs to setup-mac.sh.
 
 set -euo pipefail
 
@@ -66,3 +66,23 @@ echo "==> Activating $host (password dialog will appear)"
   /run/current-system/sw/bin/darwin-rebuild switch --impure \
   --flake "path:${repository}#${host}"
 
+# ── Keep the 1Password copy of local.nix current, through Connect ───────────
+# The host's local.nix (Connect host, item IDs, AWS profiles: everything a new
+# Mac needs) is stored as the Secure Note "nix-config local.nix <LocalHostName>"
+# in the vault named by local.nix's onePassword.vault. It is created or updated
+# after every successful activation and read back to verify the exact text.
+# Connect cannot write Document items, hence a Secure Note. A failure is loud:
+# activation has already succeeded, but the backup is not current.
+vault=$(nix eval --impure --raw --expr \
+  '(import (builtins.toPath (builtins.getEnv "NIX_CONFIG_LOCAL"))).onePassword.vault or ""')
+if [[ -z "$vault" ]]; then
+  echo "error: local.nix sets no onePassword.vault, so the local.nix backup has nowhere to go." >&2
+  exit 1
+fi
+note_bin="/etc/profiles/per-user/$(id -un)/bin/nix-config-connect-note"
+host_name=$(/usr/sbin/scutil --get LocalHostName)
+if ! outcome=$("$note_bin" save "$vault" "nix-config local.nix $host_name" "$repository/local.nix"); then
+  echo "ERROR: activation succeeded, but the local.nix backup in 1Password could not be saved through Connect (see above)." >&2
+  exit 1
+fi
+echo "==> local.nix backup in 1Password: $outcome and verified"

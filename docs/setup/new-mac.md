@@ -39,13 +39,13 @@ Then run:
 The wizard detects the Mac, runs an install-only first switch, writes the
 Connect URL and token to `~/.config/op/connect.env` (mode 600; the token is
 never written to `.setup-mac.env`), checks that Connect answers, restores
-`local.nix` from the Document item `nix-config local.nix <LocalHostName>`
+`local.nix` from the Secure Note `nix-config local.nix <LocalHostName>`
 through Connect (unless a complete matching `local.nix` is already present),
 seeds the network-share password from Connect, and applies the final switch.
 Every routine rebuild then fails loudly if `connect.env` is missing.
 
-`scripts/rebuild.sh` no longer uploads `local.nix` to 1Password. Keep the
-stored Document current by hand after editing `local.nix`.
+`scripts/rebuild.sh` saves `local.nix` to that Secure Note after every
+activation and verifies it, so the stored copy is always current.
 
 ## Manual fallback
 
@@ -110,8 +110,8 @@ public signing key.
 Older host inputs and restored backups must have `git.signingKeyReference`
 added before rebuilding. Preserve every existing field; do not replace the
 host input with bootstrap placeholders. The reference contains only item
-metadata, never the token or private key. Update the stored `local.nix`
-Document in 1Password by hand after editing; rebuilds no longer upload it.
+metadata, never the token or private key. Every rebuild saves it to the
+1Password Secure Note automatically.
 
 GitHub SSH fetches and pushes use the same key, read from Connect, through the
 declarative Git transport. Register its public key for authentication on the
@@ -171,9 +171,9 @@ the routine switch in the operations guide to apply the final identity. This dis
 Nothing uses the 1Password desktop application, its SSH agent, the `op` CLI, or
 a service account. Every read goes through the Connect server, and its token's
 vault scope decides what this Mac can reach. Give the Connect token read access
-to every vault this configuration reads: the vault holding the Git signing key,
-the vault holding the AWS profiles, and the homelab vault (network-share
-password and the `local.nix` Document). A vault outside the token's scope fails
+to the vault holding the Git signing key and the vault holding the AWS profiles,
+and **read and write** access to the homelab vault: it holds the network-share
+password and the `local.nix` Secure Note that every rebuild creates or updates. A vault outside the token's scope fails
 loudly with an HTTP error from Connect; there is no fallback.
 
 ### Network shares

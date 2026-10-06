@@ -25,11 +25,15 @@ collected in a native dialog rather than from a controlling terminal — which i
 why it works from an editor-hosted or automated shell that has no TTY. It also
 installs the repository's Git hooks before building.
 
-Routine rebuilding never touches 1Password: no `op` CLI, no service account,
-no desktop application, and no backup upload. Activation only checks that the
-Connect environment (`~/.config/op/connect.env`, mode 600) exists and fails
-loudly when it does not; everything that reads 1Password at run time uses
-Connect. Creating that file is a step in the human setup wizard.
+Routine rebuilding never uses the `op` CLI, a service account or the desktop
+application. Activation checks that the Connect environment
+(`~/.config/op/connect.env`, mode 600) exists and fails loudly when it does not.
+After a successful activation the script saves `local.nix` to 1Password through
+Connect, as the Secure Note `nix-config local.nix <LocalHostName>` in the vault
+named by `onePassword.vault`: created when missing, updated when it differs,
+then read back (waiting up to 60 s for Connect to catch up) to verify the exact
+text. Connect cannot write Document items, hence a Secure Note. A failure says
+that activation succeeded but the backup is not current, and exits non-zero.
 
 Do not hand-assemble the underlying command. It is recorded here only so the
 script's final step is reviewable:

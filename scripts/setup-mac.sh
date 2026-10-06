@@ -383,7 +383,7 @@ stage "Connect to 1Password Connect" 2
 # restore below) goes through Connect with this token: never the `op` CLI, a
 # service account, or the desktop application, and never a fallback.
 CONNECT_ENV="$MAC_HOME/.config/op/connect.env"
-CONNECT_PY=(/usr/bin/python3 "$REPO_ROOT/scripts/onepassword-connect-document.py")
+CONNECT_NOTE=(/usr/bin/python3 "$REPO_ROOT/scripts/onepassword-connect-note.py")
 if [[ -s "$CONNECT_ENV" ]] && confirm "Keep the existing Connect environment at $CONNECT_ENV?"; then
   say "Keeping $CONNECT_ENV."
 else
@@ -412,8 +412,8 @@ fi
 say "Connect at $connect_host answers."
 
 stage "Restore local.nix through Connect" 1
-# Each host's local.nix is stored in 1Password as a Document titled
-# "nix-config local.nix <LocalHostName>". Restoring it is what brings back the
+# Each host's local.nix is stored in 1Password as a Secure Note titled
+# "nix-config local.nix <LocalHostName>", saved by every rebuild. Restoring it is what brings back the
 # Git identity, item IDs, Connect host and AWS profiles without retyping.
 IDENTITY_RESTORED=0
 if [[ -s "$LOCAL_FILE" ]] && read_local_optional_attr "git.signingKeyReference" 2>/dev/null | grep -q '^op://' \
@@ -433,8 +433,8 @@ else
   restore_dir=$(mktemp -d "$REPO_ROOT/.local.nix.restore.XXXXXX")
   trap 'rm -rf "$restore_dir"' EXIT
   restored="$restore_dir/local.nix"
-  if ! "${CONNECT_PY[@]}" "$CONNECT_ENV" "$OP_VAULT" "$LOCAL_DOC_TITLE" "$restored"; then
-    warn "ERROR: no document titled '$LOCAL_DOC_TITLE' could be read through Connect (see above)."
+  if ! "${CONNECT_NOTE[@]}" "$CONNECT_ENV" get "$OP_VAULT" "$LOCAL_DOC_TITLE" "$restored"; then
+    warn "ERROR: no secure note titled '$LOCAL_DOC_TITLE' could be read through Connect (see above)."
     say "Fix: copy local.nix from your old Mac into $REPO_ROOT, set its hostName to \"$MAC_HOST\","
     say "or rename this Mac to the old hostName (System Settings → General → Sharing → Local hostname), then rerun."
     exit 1

@@ -1,41 +1,16 @@
 { lib, pkgs, ... }:
 let
-  # LinearMouse's documented configuration interface. Match the device category
-  # instead of a particular receiver so this works with Bluetooth and future MX
-  # mice while leaving trackpad natural scrolling untouched.
+  # LinearMouse's documented configuration interface. One scheme, matched on
+  # the device category rather than a particular model, so it covers the
+  # Logitech G502 X (and any other mouse) while trackpads keep natural scrolling.
+  # The G502 X keeps its DPI levels and button assignments in onboard memory, so
+  # nothing here configures them.
   linearMouseConfiguration = pkgs.writeText "linearmouse.json" (
     builtins.toJSON {
       "$schema" = "https://schema.linearmouse.app/0.11.4";
       schemes = [
-        # ONE scheme, matched on the device category rather than a particular
-        # receiver, so this survives Bluetooth and a future MX mouse.
-        #
-        # There were TWO schemes here between 2026-08-13 and 2026-08-21: this
-        # one, plus a receiver-specific override carrying high-resolution
-        # scrolling and a tuned smoothed-scrolling engine. Both are gone. The
-        # history is worth keeping, because it went round in a circle:
-        #
-        #   2026-08-13  highResolutionWheel enabled alone -> rejected same day,
-        #               the wheel just felt loose.
-        #   2026-08-13  re-enabled, this time paired with the smoothed engine,
-        #               and recorded as "what was actually wanted".
-        #   2026-08-21  rejected again, and this time the reason is the one
-        #               that was already written down before any of it: the
-        #               smooth, sub-detent feel is the thing that is disliked,
-        #               not a tuning problem inside it. No value of inertia,
-        #               response or speed fixes "I want discrete clicks",
-        #               because the smoothed engine's whole job is to remove
-        #               them.
-        #
-        # So do not reach for the tuning knobs next time this comes up. The
-        # setting below is the knob. Do not re-enable without asking.
         {
           "if".device.category = "mouse";
-
-          # OFF restores the wheel's discrete, notched steps. ON produces the
-          # fine-grained smooth-scrolling feel — twice tried, twice rejected.
-          logitech.highResolutionWheel = false;
-
           scrolling.reverse.vertical = true;
         }
       ];

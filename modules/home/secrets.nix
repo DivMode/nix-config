@@ -434,13 +434,14 @@ in
       # Connect is the only 1Password path. Activation never calls `op` and
       # never refreshes the token: the human setup writes this 0600 file once
       # (scripts/setup-mac.sh). A missing or incomplete file fails loudly.
-      # The local.nix restore used by scripts/setup-mac.sh, as a declared
-      # command so nothing outside it handles the Connect environment path.
+      # The local.nix backup in 1Password (a Secure Note, written and read
+      # through Connect): scripts/rebuild.sh saves it after every activation.
+      # A declared command, so nothing outside it handles the Connect path.
       home.packages = [
         (pkgs.writeShellApplication {
-          name = "nix-config-connect-document";
+          name = "nix-config-connect-note";
           text = ''
-            exec ${pkgs.python3}/bin/python3 ${../../scripts}/onepassword-connect-document.py \
+            exec ${pkgs.python3}/bin/python3 ${../../scripts}/onepassword-connect-note.py \
               ${escapeShellArg cfg.connect.envPath} "$@"
           '';
         })

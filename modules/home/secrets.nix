@@ -150,7 +150,7 @@ let
   awsCredentialProcess = pkgs.writeShellApplication {
     name = "aws-credential-connect";
     text = ''
-      exec ${pkgs.python3}/bin/python3 ${../../scripts/aws-credential-connect.py} \
+      exec ${pkgs.python3}/bin/python3 ${../../scripts}/aws-credential-connect.py \
         ${escapeShellArg cfg.connect.envPath} "$@"
     '';
   };
@@ -434,6 +434,18 @@ in
       # Connect is the only 1Password path. Activation never calls `op` and
       # never refreshes the token: the human setup writes this 0600 file once
       # (scripts/setup-mac.sh). A missing or incomplete file fails loudly.
+      # The local.nix restore used by scripts/setup-mac.sh, as a declared
+      # command so nothing outside it handles the Connect environment path.
+      home.packages = [
+        (pkgs.writeShellApplication {
+          name = "nix-config-connect-document";
+          text = ''
+            exec ${pkgs.python3}/bin/python3 ${../../scripts}/onepassword-connect-document.py \
+              ${escapeShellArg cfg.connect.envPath} "$@"
+          '';
+        })
+      ];
+
       home.activation.onePasswordConnectEnv = lib.hm.dag.entryAfter [ "writeBoundary" ] ''
         envPath=${escapeShellArg cfg.connect.envPath}
         if ${if setupBootstrap then "true" else "false"}; then

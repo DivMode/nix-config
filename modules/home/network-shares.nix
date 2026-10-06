@@ -189,7 +189,7 @@ let
         exit 0
       fi
 
-      if ! password="$(${pkgs.python3}/bin/python3 ${../../scripts/onepassword-connect-read.py} ${escapeShellArg connectEnv} "$reference")" \
+      if ! password="$(${pkgs.python3}/bin/python3 ${../../scripts}/onepassword-connect-read.py ${escapeShellArg connectEnv} "$reference")" \
         || [ -z "$password" ]; then
         printf '%s\n' 'ERROR: could not read the network-share password from 1Password Connect (see the message above).' >&2
         exit 1

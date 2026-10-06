@@ -9,13 +9,13 @@ let
   signingReference = local.git.signingKeyReference or "";
   signingPublicKey = pkgs.writeText "git-service-account-public-key" local.git.signingKey;
   serviceAccountSigner = pkgs.writeShellScript "git-service-account-sign" ''
-    exec ${pkgs.python3}/bin/python3 ${../../scripts/git-service-account-sign.py} \
+    exec ${pkgs.python3}/bin/python3 ${../../scripts}/git-service-account-sign.py \
       sign ${lib.escapeShellArg config.nixConfig.secrets.onePassword.connect.envPath} \
       ${pkgs.openssh}/bin/ssh-keygen ${pkgs.openssh}/bin/ssh \
       ${lib.escapeShellArg signingReference} ${signingPublicKey} "$@"
   '';
   serviceAccountTransport = pkgs.writeShellScript "git-service-account-ssh" ''
-    exec ${pkgs.python3}/bin/python3 ${../../scripts/git-service-account-sign.py} \
+    exec ${pkgs.python3}/bin/python3 ${../../scripts}/git-service-account-sign.py \
       transport ${lib.escapeShellArg config.nixConfig.secrets.onePassword.connect.envPath} \
       ${pkgs.openssh}/bin/ssh-keygen ${pkgs.openssh}/bin/ssh \
       ${lib.escapeShellArg signingReference} ${signingPublicKey} "$@"

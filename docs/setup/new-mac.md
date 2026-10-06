@@ -15,39 +15,37 @@ Full Xcode is not required unless an Apple-platform project needs it.
 
 ## Setup wizard
 
-The wizard currently requires a complete, matching `local.nix` before its
-first build. Its placeholder writer omits required fields, so an empty or
-mismatched input fails evaluation before 1Password can be installed and before
-a saved document can be restored. Use the full-template manual preparation
-below first. This existing limitation is not fixed by the install-only mode.
+Nothing in setup or routine use touches the 1Password desktop application, the
+`op` CLI or a service account. The one credential a new Mac receives by hand is
+the **1Password Connect URL and token**; everything that reads 1Password
+afterwards (Git signing and push, AWS, the network share, the `local.nix`
+restore) uses Connect, and a Connect failure stops with the reason instead of
+falling back.
 
-With that complete input in place, run:
+Before running the wizard, have ready:
+
+- this Mac on the same network as the Connect server (or a VPN to it);
+- the Connect URL and access token (from 1Password on the web or a phone);
+- either the old Mac's `local.nix` (copy it into the clone, with `hostName`
+  changed to the new Mac's `scutil --get LocalHostName`), or the new Mac
+  renamed to the old Mac's local hostname so the stored copy matches.
+
+Then run:
 
 ```sh
 ./scripts/setup-mac.sh
 ```
 
-The wizard preserves the matching input, runs an install-only first switch
-without credential maintenance, and pauses for 1Password sign-in. It can then
-**restore the ignored `local.nix` from 1Password**: each host's canonical copy lives as
-a Document item titled `nix-config local.nix <LocalHostName>`, validated
-against the detected account/hostname/architecture before it is trusted. After a complete bootstrap input has allowed that first switch, the Connect
-host, 1Password item IDs, and AWS profiles come back with the restore. The wizard explicitly bootstraps the cached service
-account and network-share Keychain entry before the final, ordinary switch.
-Personal-account access belongs to these interactive setup steps, not routine
-activation. Stopping after the first switch leaves setup incomplete.
+The wizard detects the Mac, runs an install-only first switch, writes the
+Connect URL and token to `~/.config/op/connect.env` (mode 600; the token is
+never written to `.setup-mac.env`), checks that Connect answers, restores
+`local.nix` from the Document item `nix-config local.nix <LocalHostName>`
+through Connect (unless a complete matching `local.nix` is already present),
+seeds the network-share password from Connect, and applies the final switch.
+Every routine rebuild then fails loudly if `connect.env` is missing.
 
-If no matching stored copy is available, the identity writer collects Git/SSH
-metadata but still omits required configuration fields. That path cannot finish
-unattended; complete and validate the input manually before proceeding. Private
-keys never leave 1Password.
-
-`scripts/rebuild.sh` keeps the stored copy current: after every successful
-activation it compares `local.nix` against the Document item and re-uploads it
-when they differ, then downloads the result to verify exact bytes. Routine
-rebuilds require the configured service account and never fall back to personal
-sign-in. The setup wizard creates the initial document; a failed routine read
-does not automatically create a replacement.
+`scripts/rebuild.sh` no longer uploads `local.nix` to 1Password. Keep the
+stored Document current by hand after editing `local.nix`.
 
 ## Manual fallback
 

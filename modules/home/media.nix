@@ -6,10 +6,10 @@
 # when a media file is double-clicked.
 #
 # macOS has no "default media player" setting. The mechanism is the
-# LaunchServices document-type handler, one binding per UTI, and `duti` is the
-# supported CLI for writing it — the same arrangement ./terminal.nix uses to
-# claim shell scripts for Ghostty.
-{ lib, pkgs, ... }:
+# LaunchServices document-type handler, one binding per UTI, declared in
+# `nixConfig.defaultHandlers` and applied by ./default-handlers.nix — the same
+# arrangement ./terminal.nix uses to claim shell scripts for Ghostty.
+{ lib, ... }:
 let
   # Bound by UTI, not by extension: `duti -s` takes a UTI or a URL scheme, and
   # its `-x` flag is a query rather than a setter.
@@ -115,12 +115,9 @@ in
   #     extension and are not stable across systems. Binding one would write a
   #     handler entry that means nothing on the next machine.
   #
-  # Unconditional, matching ./terminal.nix: `duti -s` is idempotent, writes
-  # only the handler database, and restarts nothing, so the "gate activation on
-  # a real change" rule in AGENTS.md has nothing to protect here.
-  home.activation.setDefaultMediaHandlers = lib.hm.dag.entryAfter [ "writeBoundary" ] (
-    lib.concatMapStringsSep "\n" (
-      uti: "run ${pkgs.duti}/bin/duti -s com.colliderli.iina ${uti} viewer"
-    ) (videoTypes ++ audioTypes ++ playlistTypes)
-  );
+  # Applied by ./default-handlers.nix, which explains why not with `duti -s`.
+  nixConfig.defaultHandlers = lib.genAttrs (videoTypes ++ audioTypes ++ playlistTypes) (_: {
+    bundleId = "com.colliderli.iina";
+    role = "viewer";
+  });
 }

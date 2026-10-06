@@ -29,14 +29,11 @@
     # offered — installing them stays a deliberate act.
     SoftwareUpdate.AutomaticallyInstallMacOSUpdates = false;
 
-    screensaver = {
-      # Lock behind the screen saver rather than trusting physical presence.
-      askForPassword = true;
-      # One minute of grace, so briefly nudging the mouse does not demand a
-      # password, but walking away does. Pairs with the 20-minute idle timer in
-      # modules/home/screensaver.nix.
-      askForPasswordDelay = 60;
-    };
+    # No `screensaver` block. askForPassword/askForPasswordDelay are not what
+    # macOS 27 reads: on 2026-10-06 the domain held askForPasswordDelay = 60
+    # while `sysadminctl -screenLock status` reported "screenLock delay is 300
+    # seconds". The real setting lives behind sysadminctl and needs the
+    # user's password, so it cannot be declared here.
 
     screencapture = {
       location = "${local.homeDirectory}/Documents/Screenshots";

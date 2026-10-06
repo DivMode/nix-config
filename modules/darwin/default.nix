@@ -28,7 +28,6 @@
     "8b5e3466922d1ae34bc145e21c7e53e7329a7a7b58b148b436bd954d5e651ac3"
   ];
   environment.etc."zshrc".knownSha256Hashes = [
-    "af60f7af4a5b4c1b0efe950e3e3f3ee8b136834ecb46fd7dba76f4b66adbc3e1" # pre-macOS 26
     "cf0f7b7775b4c058d6085d9e7e57d58c307ca43730f8e4d921a9ef4e530e7e16" # macOS 26+
   ];
 

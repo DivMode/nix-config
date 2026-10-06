@@ -402,7 +402,6 @@ let
   claudeSettingsJson = pkgs.writeText "claude-settings.json" (builtins.toJSON claudeSettings);
 in
 {
-  imports = [ ./retired-tandem.nix ];
 
   options.nixConfig.ai.enable = mkEnableOption "shared Codex and Claude Code configuration";
 
@@ -605,43 +604,6 @@ in
 
         run rm -f "$codexInstructions"
       fi
-    '';
-
-    # Before this configuration existed, the guard was a loose file at
-    # ~/.claude/hooks/nix-only-guard.py and settings.json referenced it there.
-    # It is now committed and referenced by store path, leaving that copy
-    # orphaned — unreferenced, unmanaged, and misleading to anyone who finds it,
-    # since editing it would change nothing. Remove it, but only on evidence
-    # that it is byte-identical to the committed script; if it differs, someone
-    # made local changes that are not in this repository and should not be
-    # silently discarded.
-    home.activation.removeLegacyClaudeGuardHook = lib.hm.dag.entryAfter [ "writeBoundary" ] ''
-      # Each pair is a loose copy under ~/.claude/hooks and the committed file
-      # that now replaces it. The guard was orphaned when it moved into this
-      # repository; the Herdr hook was written by `herdr integration install
-      # claude` and is orphaned by declaring the same registration against the
-      # store path in claudeSettings above.
-      removeOrphanedHook() {
-        local loose="$1" committed="$2" source="$3"
-
-        [[ -f "$loose" && ! -L "$loose" ]] || return 0
-
-        if /usr/bin/cmp -s "$committed" "$loose"; then
-          run rm -f "$loose"
-        else
-          warnEcho "Leaving modified legacy hook in place: $loose"
-          warnEcho "It is no longer referenced. Fold any changes into $source."
-        fi
-      }
-
-      removeOrphanedHook "$HOME/.claude/hooks/nix-only-guard.py" \
-        ${ai.hooks.nixOnlyGuard} "ai/hooks/nix-only-guard.py"
-      removeOrphanedHook "$HOME/.claude/hooks/herdr-agent-state.sh" \
-        ${ai.hooks.herdrAgentState} "ai/hooks/herdr-agent-state.sh"
-
-      # Only if nothing else lives there; rmdir refuses a non-empty directory,
-      # which is exactly the check wanted.
-      rmdir "$HOME/.claude/hooks" 2>/dev/null || true
     '';
 
     # settings.json cannot be a store symlink for two independent reasons:

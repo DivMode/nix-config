@@ -8,8 +8,9 @@
       # sleep; the machine may not.
       computer = "never";
 
-      # Blank the display after 20 minutes of idle, matching the screen saver
-      # in modules/home/screensaver.nix, and cut the backlight at 30.
+      # Turn the display off after 30 minutes idle. There is no screen saver
+      # (modules/home/screensaver.nix); macOS asks for the password when the
+      # display wakes, after its own lock delay (sysadminctl -screenLock).
       display = 30;
 
       # "Put hard disks to sleep when possible" — off. Spinning storage back up
@@ -20,12 +21,17 @@
     # "Start up automatically after a power failure". Without this the machine
     # stays dark after an outage and has to be woken physically.
     restartAfterPowerFailure = true;
+
+    # "Restart automatically if the computer freezes". A hung server that waits
+    # for someone to hold the power button is the same outage as a dark one.
+    restartAfterFreeze = true;
   };
 
-  # Not declarable through nix-darwin, and already correct on this host:
-  #   womp 1          "Wake for network access"
-  #   lowpowermode 0  Low Power Mode off
-  # nix-darwin exposes no options for either (only power.sleep.* and
-  # power.restartAfter*). They would need a `pmset` activation script, which is
-  # deliberately not added here — verify them with `pmset -g custom` instead.
+  # "Wake for network access" (pmset womp). nix-darwin applies it with
+  # `systemsetup -setWakeOnNetworkAccess`. It already read 1 on 2026-10-06;
+  # declared so a new machine gets it too.
+  networking.wakeOnLan.enable = true;
+
+  # Low Power Mode (pmset lowpowermode 0) has no nix-darwin option; verify it
+  # with `pmset -g custom`.
 }

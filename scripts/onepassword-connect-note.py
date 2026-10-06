@@ -2,7 +2,7 @@
 
   onepassword-connect-note CONNECT_ENV get  VAULT TITLE OUTPUT   # restore, 0600, never overwrites
   onepassword-connect-note CONNECT_ENV save VAULT TITLE FILE     # create/update, then verify
-  onepassword-connect-note CONNECT_ENV list PREFIX               # "vault<TAB>title" of matching notes
+  onepassword-connect-note CONNECT_ENV list TITLE                # "vault<TAB>title" of notes with that exact title
   onepassword-connect-note CONNECT_ENV check                     # the token is accepted
 
 Connect only; any failure exits non-zero with the reason.
@@ -25,7 +25,7 @@ def main():
             print(f"{vault}\t{title}")
         return
     if len(sys.argv) != 6 or sys.argv[2] not in {"get", "save"}:
-        raise ConnectError("usage: onepassword-connect-note CONNECT_ENV get|save VAULT TITLE PATH | list PREFIX")
+        raise ConnectError("usage: onepassword-connect-note CONNECT_ENV get|save VAULT TITLE PATH | list TITLE | check")
     connect_env, action, vault, title, path = sys.argv[1:]
     connect = Connect(connect_env)
     if action == "get":

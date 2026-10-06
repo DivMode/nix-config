@@ -68,7 +68,7 @@ echo "==> Activating $host (password dialog will appear)"
 
 # ── Keep the 1Password copy of local.nix current, through Connect ───────────
 # The host's local.nix (Connect host, item IDs, AWS profiles: everything a new
-# Mac needs) is stored as the Secure Note "nix-config local.nix <LocalHostName>"
+# Mac needs) is stored as the Secure Note "nix-config local.nix"
 # in the vault named by local.nix's onePassword.vault. It is created or updated
 # after every successful activation and read back to verify the exact text.
 # Connect cannot write Document items, hence a Secure Note. A failure is loud:
@@ -80,8 +80,7 @@ if [[ -z "$vault" ]]; then
   exit 1
 fi
 note_bin="/etc/profiles/per-user/$(id -un)/bin/nix-config-connect-note"
-host_name=$(/usr/sbin/scutil --get LocalHostName)
-if ! outcome=$("$note_bin" save "$vault" "nix-config local.nix $host_name" "$repository/local.nix"); then
+if ! outcome=$("$note_bin" save "$vault" "nix-config local.nix" "$repository/local.nix"); then
   echo "ERROR: activation succeeded, but the local.nix backup in 1Password could not be saved through Connect (see above)." >&2
   exit 1
 fi

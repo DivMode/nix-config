@@ -47,12 +47,25 @@ The repeatable setup wizard handles the two-pass bootstrap:
 ./scripts/setup-mac.sh
 ```
 
-On a new Mac, after Setup Assistant (same account short name), with the
-`Data` drive plugged in and on the Connect server's network, run:
+### New Mac
 
-```sh
-curl -fsSL https://raw.githubusercontent.com/DivMode/nix-config/main/scripts/bootstrap.sh | bash
-```
+1. In Setup Assistant, create the account with the same short name as the old
+   Mac (the computer name can be anything; it is kept).
+2. Plug in the external `Data` drive and join the network the 1Password Connect
+   server is on.
+3. In Terminal, run:
+
+   ```sh
+   curl -fsSL https://raw.githubusercontent.com/DivMode/nix-config/main/scripts/bootstrap.sh | bash
+   ```
+
+4. Type your Mac password once. When asked, paste the two Connect values, both
+   in 1Password (on a phone is fine; copy there, then Cmd-V on the Mac):
+   - **Connect URL:** open the Secure Note `nix-config local.nix <old Mac's name>`
+     and copy the value of `onePassword.connectHost` (an `http://…:8091` address).
+   - **Connect token:** search 1Password for "Connect", open the Connect
+     server's credentials item, and copy its `access-token` field.
+5. Grant the Karabiner and LinearMouse permissions it lists at the end.
 
 It installs the Command Line Tools and Nix, clones this repository, and runs the
 setup wizard, which asks for the 1Password Connect URL and token (and, when
@@ -137,7 +150,7 @@ procedures are in [`docs/operations/rebuild.md`](docs/operations/rebuild.md).
 
 macOS and third-party security controls require these one-time interactive steps:
 
-- complete 1Password and Git setup;
+- nothing for 1Password: everything reads it through Connect, set up by the wizard;
 - complete the Karabiner and LinearMouse approvals;
 - disable Raycast's native Hyper Key;
 - verify Git identity and a signed test commit before publishing;

@@ -64,6 +64,13 @@
   # `duti -d` read that table back; ./default-handlers.nix writes it.
   home.packages = [ pkgs.duti ];
 
+  # The locale every shell starts with. Herdr panes used to inherit LANG from
+  # the Ghostty that started the Herdr server; since ./herdr/server-app.nix
+  # moved the server under launchd, the server's environment has none, and on
+  # 2026-10-06 a pane showed LANG empty. Declared here, each shell sets it
+  # itself, whatever started it. en_US is this Mac's AppleLocale.
+  home.sessionVariables.LANG = "en_US.UTF-8";
+
   # Roles mirror what Ghostty.app's own Info.plist declares, because
   # LaunchServices ignores a claim an application does not support:
   #

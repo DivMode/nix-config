@@ -96,15 +96,23 @@ class Connect:
             raise ConnectError("Connect returned an unexpected item")
         return value
 
-    def field(self, vault, item, label):
+    def fields(self, vault, item, *labels):
+        """Values for `labels`, all from ONE read of the item, so a rotation
+        between requests can never pair an old value with a new one."""
+        found = {}
         for field in self.item(vault, item).get("fields") or []:
-            if (isinstance(field, dict) and isinstance(field.get("label"), str)
-                    and field["label"].strip().lower() == label.strip().lower()):
-                value = field.get("value")
-                if not isinstance(value, str) or not value:
-                    raise ConnectError(f"field '{label}' is empty")
-                return value
-        raise ConnectError(f"the item has no field '{label}'")
+            if isinstance(field, dict) and isinstance(field.get("label"), str):
+                found.setdefault(field["label"].strip().lower(), field.get("value"))
+        values = []
+        for label in labels:
+            value = found.get(label.strip().lower())
+            if not isinstance(value, str) or not value:
+                raise ConnectError(f"the item has no non-empty field '{label}'")
+            values.append(value)
+        return values
+
+    def field(self, vault, item, label):
+        return self.fields(vault, item, label)[0]
 
     def ssh_private_key(self, vault, item):
         for field in self.item(vault, item).get("fields") or []:

@@ -428,9 +428,12 @@ else
   [[ -n "$(_existing OP_VAULT || true)" ]] || write_env OP_VAULT "Homelab"
   ask OP_VAULT "1Password vault holding this host's local.nix:"
   validate_nix_text "The vault name" "$OP_VAULT"
-  restored="$REPO_ROOT/.local.nix.restore.$$"
+  # A private directory this run creates, so cleanup can never touch anything
+  # it did not make.
+  restore_dir=$(mktemp -d "$REPO_ROOT/.local.nix.restore.XXXXXX")
+  trap 'rm -rf "$restore_dir"' EXIT
+  restored="$restore_dir/local.nix"
   if ! "${CONNECT_PY[@]}" "$CONNECT_ENV" "$OP_VAULT" "$LOCAL_DOC_TITLE" "$restored"; then
-    rm -f "$restored"
     warn "ERROR: no document titled '$LOCAL_DOC_TITLE' could be read through Connect (see above)."
     say "Fix: copy local.nix from your old Mac into $REPO_ROOT, set its hostName to \"$MAC_HOST\","
     say "or rename this Mac to the old hostName (System Settings → General → Sharing → Local hostname), then rerun."
@@ -443,7 +446,6 @@ else
         "$NIX_BIN" eval --impure --raw --expr \
         "(import (builtins.toPath (builtins.getEnv \"SETUP_LOCAL\"))).$attr" 2>/dev/null) \
         || [[ "$actual" != "$expected" ]]; then
-      rm -f "$restored"
       warn "ERROR: the stored local.nix has $attr = '${actual:-?}', but this Mac is '$expected'."
       say "Fix: edit that field in a copy of local.nix placed at $LOCAL_FILE, then rerun."
       exit 1
@@ -451,6 +453,8 @@ else
   done
   chmod 600 "$restored"
   mv "$restored" "$LOCAL_FILE"
+  rm -rf "$restore_dir"
+  trap - EXIT
   IDENTITY_RESTORED=1
   say "Restored local.nix for $MAC_HOST through Connect."
 fi

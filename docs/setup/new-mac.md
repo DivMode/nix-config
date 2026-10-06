@@ -81,7 +81,7 @@ After installing and signing in to 1Password, replace:
 - `git.email`: Git-host-verified address embedded in commits;
 - `git.signingKey`: Ed25519 SSH **public** key used for signing;
 - `git.signingKeyReference`: reference to that same item's private key, ending
-  in `/private key?ssh-format=openssh`, readable by the service account;
+  in `/private key?ssh-format=openssh`, readable by the Connect token;
 - `onePassword.sshAgentKeyIds`: ordered item IDs for every SSH key this Mac
   should offer, with the Git signing/authentication key first.
 
@@ -112,10 +112,10 @@ public signing key.
 Older host inputs and restored backups must have `git.signingKeyReference`
 added before rebuilding. Preserve every existing field; do not replace the
 host input with bootstrap placeholders. The reference contains only item
-metadata, never the token or private key. A successful routine rebuild updates
-the stored backup with this field.
+metadata, never the token or private key. Update the stored `local.nix`
+Document in 1Password by hand after editing; rebuilds no longer upload it.
 
-GitHub SSH fetches and pushes use the same service-account key through the
+GitHub SSH fetches and pushes use the same key, read from Connect, through the
 declarative Git transport. Register its public key for authentication on the
 intended GitHub account as well as for signing. The transport accepts only
 GitHub repository fetch/push commands, requires a trusted GitHub host key in
@@ -148,74 +148,35 @@ sudo env \
   switch --impure --flake "path:$PWD#example-mac"
 ```
 
-The first generation installs 1Password and its CLI. Open 1Password, sign in,
-enable its SSH agent and CLI integration, then replace the bootstrap Git/SSH
-placeholders and credential references in `local.nix`. In the human setup
-terminal, run the generated `nix-config-bootstrap-onepassword` command with
-the declared service-account reference, then the network-share bootstrap below
-when configured. Remove the install-only marker from the setup environment,
-and open a fresh terminal so the declared shell initialization loads the cached
-service account. The initial recovery Document must exist before using the
-routine rebuild. Run the routine switch in the operations guide to apply the
-final identity. This distinction follows the
+After the first generation, write the Connect environment by hand (or let the
+wizard do it): `~/.config/op/connect.env`, mode 600, containing
+`OP_CONNECT_HOST=<url>` and `OP_CONNECT_TOKEN=<token>`. Replace the bootstrap
+Git/SSH placeholders in `local.nix`, run the network-share bootstrap below when
+configured, remove the install-only marker from the setup environment, and run
+the routine switch in the operations guide to apply the final identity. This distinction follows the
 [official nix-darwin installation instructions](https://github.com/nix-darwin/nix-darwin#step-2-installing-nix-darwin).
 
-### 1Password and Git
+### Git
 
-1. Enable **1Password > Settings > Developer > Use the SSH agent**.
-2. Put the intended SSH Key item IDs in `local.nix`; the generated 1Password
-   agent configuration makes keys from non-default vaults eligible.
-3. Ensure the same public key is registered as an SSH signing key with the Git
-   host.
-4. After activation, inspect the generated Git settings:
+1. Ensure the signing key's public half is registered on GitHub for both
+   authentication and signing.
+2. After activation, inspect the generated Git settings:
 
    ```sh
    git config --global --get-regexp '^(user|gpg|commit|tag)\.'
    ```
 
-5. Create a local signed test commit before publishing anything.
+3. Create a local signed test commit before publishing anything.
 
-### The service account and its vaults
+### Connect access
 
-**Scope the service account to every vault this machine reads, at the moment you
-create it.** 1Password states it plainly: "Service account permissions, vault
-access, and Environment access are immutable." There is no control anywhere —
-website, app, or CLI — to add a vault afterwards. Getting it wrong costs a new
-account and a token swap on every machine.
-
-This configuration currently reads two vaults:
-
-- the **business vault**, for the AWS profiles and the Connect credentials
-- the **homelab vault**, for the service-account token itself, the network share
-  password, and the `local.nix` document backup that `scripts/rebuild.sh`
-  uploads after every activation
-
-The `local.nix` backup lives in the homelab vault deliberately. It is the
-machine's own recovery material — `setup-mac.sh` restores it on a wiped Mac — so
-it must not sit behind access that can be revoked independently of the machine,
-such as a client or employer relationship ending. Losing that vault means losing
-the ability to set up your own computer, and you would discover it at the worst
-possible moment.
-
-Grant `read_items` **and** `write_items` on both. Write is not optional on the
-vault holding the `local.nix` backup: `rebuild.sh` reports failure when the upload
-or verification fails. Activation may already have succeeded; the recovery copy
-must be repaired before treating the maintenance run as complete.
-
-`setup-mac.sh` offers the homelab vault as the default answer when it asks which
-vault holds `local.nix`, so the usual case is a single Enter. That name can be
-written into a tracked script only because `local.nix` lists it in
-`publicTerms`; the private-name guard derives its denylist from
-`onePassword.vault`, so without that entry a generic vault name is guarded as
-though it were secret. A vault named after a company or a client must never be
-added to `publicTerms`.
-
-Leave `share_items` off. Nothing here shares items, and it is the one permission
-that turns a leaked token into an exfiltration path needing no 1Password
-credentials to redeem.
-
-Allowing the account to create vaults is harmless: a service account can only
-delete vaults it created, never a pre-existing one it was merely granted.
+Nothing uses the 1Password desktop application, its SSH agent, the `op` CLI, or
+a service account. Every read goes through the Connect server, and its token's
+vault scope decides what this Mac can reach. Give the Connect token read access
+to every vault this configuration reads: the vault holding the Git signing key,
+the vault holding the AWS profiles, and the homelab vault (network-share
+password and the `local.nix` Document). A vault outside the token's scope fails
+loudly with an HTTP error from Connect; there is no fallback.
 
 ### Network shares
 
@@ -225,27 +186,16 @@ reconciles them on a timer. The password is never in this repository or in
 
 On a machine with no Keychain entry yet, the human setup wizard invokes
 `nix-config-bootstrap-network-share-password` with the declared server,
-account and `local.networkShares.passwordReference`. For manual setup, run
-that generated command with the same three arguments in the signed-in human
-terminal. It can use the desktop integration in this explicit bootstrap step.
-Routine activation only verifies the existing Keychain entry and fails if a
-configured entry is missing; it never falls back to personal authentication.
-Leave `passwordReference` null to manage the Keychain entry through Finder
-instead.
+account and `local.networkShares.passwordReference`; it reads the password
+through Connect. Routine activation only verifies the existing Keychain entry
+and fails loudly if a configured entry is missing. Leave `passwordReference`
+null to manage the Keychain entry through Finder instead.
 
-The earlier 2026-08-21 end-to-end observation covered activation-time seeding.
-It does not establish end-to-end verification of the separate bootstrap flow.
-
-Home Manager requires SSH-format commit and tag signatures through the declared
-service-account signer. Set `git.signingKeyReference` in ignored `local.nix` to
-the approved key's private-key reference with `?ssh-format=openssh`; the existing
-`git.signingKey` is its public identity. The service account must have read access
-to that item. Its token must already be present in the process environment.
-The signer rejects missing service-account authentication and conflicting
-Connect variables rather than falling back to the desktop app. It checks the
-retrieved key against the configured public key, signs through OpenSSH, and
-removes its private temporary key file afterward. Verification uses OpenSSH
-without accessing credentials. Commit and tag signing remain mandatory.
+Commit and tag signing are mandatory and go through the declarative signer. It
+fetches the key named by `git.signingKeyReference` (vault and item IDs, ending
+in `/private key?ssh-format=openssh`) from Connect, checks it against
+`git.signingKey`, signs through OpenSSH with no agent, and removes its private
+temporary key file afterward. Verification uses OpenSSH without credentials.
 
 ### Manual checklist
 
@@ -255,7 +205,6 @@ without accessing credentials. Commit and tag signing remain mandatory.
   `Karabiner-Elements.app` — see the linked section for why that distinction
   matters.
 - Complete the [LinearMouse first run](../../modules/home/mouse.md).
-- Sign in to 1Password and enable its SSH agent as described above.
 
 These are protected macOS or application controls and cannot safely be approved
 by Nix. TCC grants are per-machine and never survive a fresh install; there is

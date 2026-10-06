@@ -47,15 +47,17 @@ The repeatable setup wizard handles the two-pass bootstrap:
 ./scripts/setup-mac.sh
 ```
 
-The first pass installs every declared application. The wizard then asks once
-for the 1Password Connect URL and token and **restores the ignored `local.nix`
-through Connect** — a
-Secure Note titled `nix-config local.nix <LocalHostName>` — and applies the
-final identity. Nothing is retyped on a wiped machine: the host's deploy
-wiring (the Connect host, 1Password item IDs, AWS profiles) comes back with
-the restore. Every rebuild saves it back to that Secure Note. A **brand-new host** with no stored copy stops with
-instructions: copy `local.nix` from another Mac and set its `hostName`. The complete manual fallback is in
-[`docs/setup/new-mac.md`](docs/setup/new-mac.md).
+On a new Mac, after Setup Assistant (same account short name), with the
+`Data` drive plugged in and on the Connect server's network, run:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/DivMode/nix-config/main/scripts/bootstrap.sh | bash
+```
+
+It installs the Command Line Tools and Nix, clones this repository, and runs the
+setup wizard, which asks only for the 1Password Connect URL and token, restores
+`local.nix` from its 1Password Secure Note, and applies everything (renaming the
+Mac to match). Details: [`docs/setup/new-mac.md`](docs/setup/new-mac.md).
 
 The manual short path is:
 

@@ -20,7 +20,10 @@
     ../../modules/darwin
   ];
 
+  # The Mac renames itself to local.nix's hostName, so a new Mac needs no
+  # manual rename before setup (the restored local.nix is the source).
   networking.hostName = local.hostName;
+  networking.localHostName = local.hostName;
   nixpkgs.hostPlatform = local.system;
   system.primaryUser = local.user;
 

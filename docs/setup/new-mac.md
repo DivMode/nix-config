@@ -3,49 +3,34 @@
 This documents bootstrap and its current limitations. The public repository
 contains no personal or machine identity.
 
-## Prerequisites
+## One command
 
-1. Install Apple Command Line Tools with `xcode-select --install` and complete
-   Apple's prompts.
-2. Install Nix and clone this repository. Do not install 1Password manually;
-   the first Nix switch installs it through declarative Homebrew.
-3. Open the repository directory in a terminal.
+1. In Setup Assistant, create the macOS account with the same short name as
+   the Mac it replaces (the stored `local.nix` names it).
+2. Plug in the external `Data` drive and join the network the 1Password Connect
+   server is on.
+3. In Terminal:
 
-Full Xcode is not required unless an Apple-platform project needs it.
+   ```sh
+   curl -fsSL https://raw.githubusercontent.com/DivMode/nix-config/main/scripts/bootstrap.sh | bash
+   ```
 
-## Setup wizard
+4. When asked, paste the Connect URL and token (copy them from 1Password on a
+   phone or the web; the desktop application is not needed). Approve the
+   password dialogs.
+5. Grant the macOS permissions listed in the manual checklist below.
 
-Nothing in setup or routine use touches the 1Password desktop application, the
-`op` CLI or a service account. The one credential a new Mac receives by hand is
-the **1Password Connect URL and token**; everything that reads 1Password
-afterwards (Git signing and push, AWS, the network share, the `local.nix`
-restore) uses Connect, and a Connect failure stops with the reason instead of
-falling back.
-
-Before running the wizard, have ready:
-
-- this Mac on the same network as the Connect server (or a VPN to it);
-- the Connect URL and access token (from 1Password on the web or a phone);
-- either the old Mac's `local.nix` (copy it into the clone, with `hostName`
-  changed to the new Mac's `scutil --get LocalHostName`), or the new Mac
-  renamed to the old Mac's local hostname so the stored copy matches.
-
-Then run:
-
-```sh
-./scripts/setup-mac.sh
-```
-
-The wizard detects the Mac, runs an install-only first switch, writes the
-Connect URL and token to `~/.config/op/connect.env` (mode 600; the token is
-never written to `.setup-mac.env`), checks that Connect answers, restores
-`local.nix` from the Secure Note `nix-config local.nix <LocalHostName>`
-through Connect (unless a complete matching `local.nix` is already present),
-seeds the network-share password from Connect, and applies the final switch.
-Every routine rebuild then fails loudly if `connect.env` is missing.
-
-`scripts/rebuild.sh` saves `local.nix` to that Secure Note after every
-activation and verifies it, so the stored copy is always current.
+`scripts/bootstrap.sh` installs Apple's Command Line Tools and Nix without
+prompts, clones or updates this repository at `/Volumes/Data/Developer/nix-config`,
+and runs `scripts/setup-mac.sh`. The wizard writes the Connect environment
+(`~/.config/op/connect.env`, mode 600; the token never reaches `.setup-mac.env`),
+finds the stored `nix-config local.nix <hostname>` Secure Note through Connect
+(choosing automatically when there is one, or when one matches this Mac's
+name), checks that its account, home and architecture match this Mac, installs
+everything declared, seeds the network-share password from Connect, and runs
+`scripts/rebuild.sh`, whose switch renames this Mac to the stored hostname and
+then saves the backup. Nothing uses the 1Password desktop application, the
+`op` CLI or a service account, and any failure stops with the reason.
 
 ## Manual fallback
 

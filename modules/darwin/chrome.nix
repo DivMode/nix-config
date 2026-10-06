@@ -95,6 +95,13 @@ let
       # stays a one-time step inside 1Password.
       "aeblfdkhhhdcdjpifhhbdiojplfjncoa;https://clients2.google.com/service/update2/crx"
     ];
+
+    # Keeps 1Password's button on the toolbar rather than behind the puzzle
+    # menu. `force_pinned` is one of the three `toolbar_pin` values in the
+    # policy's schema (policy_definitions/Extensions/ExtensionSettings.yaml:
+    # force_pinned, default_unpinned, default_pinned); force means the user
+    # cannot unpin it.
+    ExtensionSettings.aeblfdkhhhdcdjpifhhbdiojplfjncoa.toolbar_pin = "force_pinned";
   };
   policyHash = builtins.hashFile "sha256" chromePolicy;
   policyPath = "/Library/Managed Preferences/com.google.Chrome.plist";
@@ -136,6 +143,16 @@ let
       receiptPath=${lib.escapeShellArg receiptPath}
       expectedHash=${lib.escapeShellArg policyHash}
 
+      # cfprefsd caches managed preferences and does not notice a file written
+      # beside it: after the 1Password extension was added on 2026-10-05, the
+      # file listed it while CFPreferences still returned only Loom, and a
+      # Chrome restarted three minutes later installed nothing. Every cfprefsd
+      # is restarted, root's and each user's, because a user's instance hands
+      # out what it last received from root's. launchd restarts them on demand.
+      flushPreferencesCache() {
+        /usr/bin/killall cfprefsd 2>/dev/null || true
+      }
+
       if [ -L "$policyPath" ] || [ -L "$receiptPath" ]; then
         echo "Refusing to replace a symlink at $policyPath or $receiptPath" >&2
         exit 1
@@ -159,6 +176,13 @@ let
         fi
 
         if [ "$recordedHash" = "$expectedHash" ]; then
+          # The file is right, but Chrome reads it through cfprefsd's cache,
+          # which can still hold an earlier version (see
+          # ./chrome-policy-current.js). Flush that too, or a policy that was
+          # written while the cache was warm never reaches Chrome.
+          if [ "$(/usr/bin/osascript -l JavaScript ${./chrome-policy-current.js} "$policyPath")" != current ]; then
+            flushPreferencesCache
+          fi
           exit 0
         fi
       fi
@@ -171,6 +195,7 @@ let
       /usr/bin/printf '%s\n' "$expectedHash" > "$receiptPath.new"
       /bin/chmod 0644 "$receiptPath.new"
       /bin/mv -f "$receiptPath.new" "$receiptPath"
+      flushPreferencesCache
     '';
   };
 in

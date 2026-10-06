@@ -81,17 +81,25 @@ let
         # `fallback_app_name` is ignored whenever `custom_name` is set
         # (policy_definitions/.../WebAppInstallForceList.yaml), so it is gone.
         custom_name = "Gmail";
-        # The only icon a placeholder can have, and kept by the real app too.
-        # This is the 512 px icon Gmail's own manifest
-        # (mail.google.com/mail/manifest.json) lists. Fetched 2026-10-06
-        # without signing in: HTTP 200, 512×512 PNG, 19,082 bytes. Chrome
-        # downloads it without cookies, over HTTPS only, and uses it only if
-        # its SHA-256 matches; if Google ever changes those bytes the
-        # placeholder loses its icon, while the real app falls back to the
-        # manifest's icons.
+        # The app icon. Gmail's manifest offers only "any" icons — a bare "M"
+        # on transparency, no maskable variant (mail.google.com/mail/
+        # manifest.json, 2026-10-06). On macOS 26 and later Chrome writes such
+        # icons into the shim's app.icns unchanged and leaves the shape to the
+        # system (os_integration/mac/web_app_shortcut_creator.mm:
+        # ShouldUseSystemAppIconMasking, UpdateIcon), and macOS 27 puts a
+        # non-square icon in a grey tile — the wrong Dock icon, with or without
+        # Google's own image.
+        #
+        # So the icon is ./chrome-icons/gmail.png: that same logo centred on
+        # a full white 1024 px square (Gmail's own app-icon look), which the
+        # system rounds like any other app. Chrome only accepts a custom icon
+        # from a public HTTPS URL, fetched without cookies and used only if
+        # its SHA-256 matches, hence this repository's raw URL on main. It
+        # also gives the pre-sign-in placeholder its icon. Regenerating the
+        # PNG means updating this hash.
         custom_icon = {
-          url = "https://ssl.gstatic.com/images/branding/productlogos/gmail_2026/v2/web-512dp/logo_gmail_2026_color_1x_web_512dp.png";
-          hash = "19fcd9c6f32b12c49a8ca8ed6c2f00ec83d7b93bd9c0cb582809b77a11e98053";
+          url = "https://raw.githubusercontent.com/DivMode/nix-config/main/modules/darwin/chrome-icons/gmail.png";
+          hash = "7e677bb2114317a292c9f61779f2f37e2451399925e3558986f4c247023ef9e3";
         };
       }
     ];

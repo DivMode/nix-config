@@ -81,20 +81,15 @@ let
         # `fallback_app_name` is ignored whenever `custom_name` is set
         # (policy_definitions/.../WebAppInstallForceList.yaml), so it is gone.
         custom_name = "Gmail";
-        # The owner's pick, option 3 of the 2026-10-06 icon page: Google's 2026
-        # Gmail logo on a dark rounded square drawn to Apple's app-icon grid
-        # (824 px body on a 1024 canvas). Gmail's manifest offers only a bare
-        # "M", which Chrome on macOS 26+ hands to the system unchanged
-        # (os_integration/mac/web_app_shortcut_creator.mm) and macOS 27 then
-        # shrinks into a grey box. Chrome takes a custom icon only from a public
-        # HTTPS URL, fetched without cookies and used only if its SHA-256
-        # matches, hence this repository's raw URL on main; it also gives a
-        # pre-sign-in placeholder its icon. Replacing the PNG means updating
-        # the hash.
-        custom_icon = {
-          url = "https://raw.githubusercontent.com/DivMode/nix-config/main/modules/darwin/chrome-icons/gmail.png";
-          hash = "cbc39f90f738fbbec7c53ea99b1a2cda8489c582703fdc49b9e8198ece8e94b0";
-        };
+        # No custom_icon. Chrome applies one at install, then its silent
+        # manifest update (commands/manifest_silent_update_command.cc, which
+        # has no exception for policy icons) replaces it with Gmail's manifest
+        # icons the first time the app is opened — and rebuilds the whole
+        # Gmail.app to do it. Observed 2026-10-06: the policy icon applied at
+        # 02:05, reverted at 02:15 when Gmail was opened. Worse, a custom_icon
+        # keeps the stored icons different from the manifest, so every launch
+        # rebuilt the app and wiped the Finder custom icon that
+        # ../home/chrome-app-icons.nix now sets instead.
       }
     ];
 

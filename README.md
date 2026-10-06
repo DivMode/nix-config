@@ -185,6 +185,5 @@ Keychain contents, caches, or mutable terminal sessions. See
 ## Later milestones
 
 1. Validate Intel Darwin if that platform is added.
-2. Observe exact MX button identifiers before adding button mappings.
-3. Add merge-safe adapters before enabling mutable AI client configuration.
-4. Add NixOS host modules when the first server is defined.
+2. Add merge-safe adapters before enabling mutable AI client configuration.
+3. Add NixOS host modules when the first server is defined.

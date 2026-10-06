@@ -5,21 +5,18 @@ LinearMouse's own login item starts it, and Home Manager owns the documented
 `~/.config/linearmouse/linearmouse.json` — written as a real file, in place, so
 the app's watcher sees the change and so its settings window can still save.
 
-The baseline reverses vertical scrolling for devices categorized as mice while
-preserving natural trackpad scrolling. Logitech HID++ high-resolution wheel mode
-is deliberately off: the connected MX Master 3 advertises support, and enabling
-it does produce fine-grained smooth scrolling, but that was tried on 2026-08-13
-and rejected as worse in daily use. Off keeps the wheel's discrete, notched
-steps. This does not change MagSpeed free-spin, pointer DPI, or the horizontal
-thumb wheel.
+The mouse is a Logitech G502 X. It keeps its DPI levels and button assignments
+in onboard memory, so it works with no Logitech software running, and nothing
+here configures DPI or buttons; change them once with G HUB on any computer if
+ever needed. LinearMouse's only job is the one macOS cannot do on its own:
+reverse vertical scrolling for devices categorized as mice while trackpads keep
+natural scrolling (macOS has a single switch for both).
 
-It was tried a second time between 2026-08-13 and 2026-08-21, that time paired
-with a tuned `scrolling.smoothed` engine on a receiver-specific scheme, and
-rejected again. Both attempts are worth knowing about, because the second one
-looked like a tuning problem and was not: discrete clicks are the thing wanted,
-and removing them is precisely what the smoothed engine is for. There is no
-value of inertia, response, or speed that produces a detent. The knob is
-`logitech.highResolutionWheel`, and it stays off.
+The configuration used to carry MX Master specifics: Logitech HID++
+high-resolution wheel mode, tried twice in August 2026 and rejected both times
+in favour of discrete, notched steps. With the G502 that setting no longer
+applies and has been removed; do not reintroduce smoothed or high-resolution
+wheel scrolling without asking.
 
 Home Manager also converges the visible general settings without replacing the
 entire preferences domain: show the menu-bar item only when attention is needed,
@@ -39,7 +36,7 @@ SMAppService login item, which Nix cannot switch off, so both could start the
 app and two processes would filter the same mouse events.
 
 The configuration does not guess model-specific device IDs, pointer tuning, or
-button mappings. Add exact MX mappings only after observing the real identifiers.
+button mappings; the G502 X keeps those in its onboard memory.
 
 Grant LinearMouse Accessibility permission once. Nix does not bypass macOS TCC.
 The app UI is not the source of truth: edit `mouse.nix` and rebuild instead.

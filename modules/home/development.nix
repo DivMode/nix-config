@@ -368,9 +368,16 @@ in
 
     # This is a public fallback policy, not a project lock. Exact project runtime
     # versions belong in each project's repository.
+    #
+    # `trusted_config_paths = ["/"]` trusts every project's mise.toml without a
+    # per-repository `mise trust` (owner's decision, 2026-10-06). Untrusted
+    # configs made mise refuse to run at all in a fresh checkout on a new Mac.
     xdg.configFile."mise/config.toml".text = ''
       [tools]
       node = "24"
+
+      [settings]
+      trusted_config_paths = ["/"]
     '';
 
     # uv itself, and ~/.config/uv/uv.toml. `only-managed` keeps uv from ever

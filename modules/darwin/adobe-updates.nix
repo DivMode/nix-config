@@ -52,7 +52,7 @@ let
       done
 
       if [ "$matched" -eq 0 ]; then
-        echo "No com.adobe.ARMDCHelper.* LaunchAgent found; Adobe may have moved it" >&2
+        echo "Adobe ARM updater: no matching LaunchAgent plist; skipping agent disable."
       fi
 
       for label in ${lib.escapeShellArgs daemonLabels}; do
@@ -148,7 +148,11 @@ in
   # No reconciler daemon, unlike chrome.nix: launchd's disabled database
   # persists across boots by design, so asserting it once per activation is
   # enough.
-  system.activationScripts.extraActivation.text = lib.mkAfter ''
+  # The pinned nix-darwin modules/system/activation-scripts.nix runs
+  # extraActivation before groups/users and Homebrew, and postActivation after
+  # Homebrew. Inspect updater files after installation, not before it.
+  # mkAfter orders fragments within a phase; it cannot change the phase order.
+  system.activationScripts.postActivation.text = lib.mkAfter ''
     ${lib.getExe disableArm}
   '';
 }

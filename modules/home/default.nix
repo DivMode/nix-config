@@ -41,6 +41,7 @@ in
     ./caches.nix
     ./cli-proxy.nix
     ./command-governor.nix
+    ./default-handlers.nix
     ./development.nix
     ./downloads.nix
     ./fluidvoice.nix

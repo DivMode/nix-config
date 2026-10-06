@@ -20,9 +20,9 @@
 # in something else.
 #
 # The mechanism is the same one ./media.nix uses for IINA and ./terminal.nix
-# uses for Ghostty: one LaunchServices document-type binding per UTI, written
-# with `duti`.
-{ lib, pkgs, ... }:
+# uses for Ghostty: one LaunchServices document-type binding per UTI, declared
+# in `nixConfig.defaultHandlers` and applied by ./default-handlers.nix.
+{ lib, ... }:
 let
   # Bound by the UTI the extension ACTUALLY RESOLVES TO on this machine, read
   # out of UniformTypeIdentifiers rather than copied from Keka's Info.plist:
@@ -117,11 +117,9 @@ in
   #     Keka declares .war under a different identifier than macOS resolves it
   #     to, so the claim would be ignored rather than applied.
   #
-  # Unconditional, matching ./media.nix and ./terminal.nix: `duti -s` is
-  # idempotent, writes only the handler database, and restarts nothing.
-  home.activation.setDefaultArchiveHandlers = lib.hm.dag.entryAfter [ "writeBoundary" ] (
-    lib.concatMapStringsSep "\n" (
-      uti: "run ${pkgs.duti}/bin/duti -s com.aone.keka ${uti} viewer"
-    ) archiveTypes
-  );
+  # Applied by ./default-handlers.nix, which explains why not with `duti -s`.
+  nixConfig.defaultHandlers = lib.genAttrs archiveTypes (_: {
+    bundleId = "com.aone.keka";
+    role = "viewer";
+  });
 }

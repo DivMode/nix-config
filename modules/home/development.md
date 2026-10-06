@@ -52,8 +52,8 @@ Runtime ownership is deliberately single-purpose:
   commit `rust-toolchain.toml` when a specific toolchain is required.
 
 Language runtimes are mutable developer state downloaded on first use, not
-during a Nix activation. Run `mise trust` only after reviewing a project's
-configuration.
+during a Nix activation. mise trusts every project's configuration
+(`trusted_config_paths = ["/"]`), so no checkout needs a `mise trust`.
 
 Git is installed and configured through Home Manager. Its complete identity and
 signing setup is documented in [`../../secrets/README.md`](../../secrets/README.md).

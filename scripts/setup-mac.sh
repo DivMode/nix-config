@@ -190,8 +190,8 @@ finish() {
 # Replace the example below. Set the two totals to match the stages you write.
 # ──────────────────────────────────────────────────────────────────────────
 
-TOTAL_STAGES=8
-TOTAL_MINUTES=23
+TOTAL_STAGES=7
+TOTAL_MINUTES=17
 
 REPO_ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 ENV_FILE="$REPO_ROOT/.setup-mac.env"
@@ -360,7 +360,7 @@ else
 fi
 
 stage "Install the declared system" 8
-say "This first switch installs 1Password and every other declared application."
+say "This first switch installs every declared application."
 if confirm "Validate, build, and apply the first Nix generation now?"; then
   cd "$REPO_ROOT"
   # The first system is an install-only generation. This impure evaluation
@@ -373,203 +373,95 @@ if confirm "Validate, build, and apply the first Nix generation now?"; then
   run_switch bootstrap
   unset NIX_CONFIG_SETUP_BOOTSTRAP
 else
-  warn "The wizard cannot continue until the first switch installs 1Password and its CLI."
+  warn "The wizard cannot continue until the first switch succeeds."
   exit 1
 fi
 
-stage "Sign in to 1Password" 3
-open -a "1Password"
-step "Sign in and unlock 1Password."
-step "Open Settings → Developer and enable 'Use the SSH Agent'."
-step "Enable the 1Password CLI integration so this wizard can discover public SSH metadata."
-pause "Press Enter after those settings are enabled."
+stage "Connect to 1Password Connect" 2
+# The one credential this Mac is given by hand. Everything that reads 1Password
+# afterwards (Git signing and push, AWS, the network share, the local.nix
+# restore below) goes through Connect with this token: never the `op` CLI, a
+# service account, or the desktop application, and never a fallback.
+CONNECT_ENV="$MAC_HOME/.config/op/connect.env"
+CONNECT_PY=(/usr/bin/python3 "$REPO_ROOT/scripts/onepassword-connect-document.py")
+if [[ -s "$CONNECT_ENV" ]] && confirm "Keep the existing Connect environment at $CONNECT_ENV?"; then
+  say "Keeping $CONNECT_ENV."
+else
+  ask CONNECT_HOST "1Password Connect URL (https, or http on your LAN, e.g. http://192.168.1.10:8091):"
+  [[ "$CONNECT_HOST" =~ ^https?://[^/]+/?$ ]] || { warn "That is not a Connect server URL."; exit 1; }
+  CONNECT_HOST=${CONNECT_HOST%/}
+  # Read here, never through ask_secret: the token must not reach .setup-mac.env.
+  printf '%s' "  Connect access token (hidden): "
+  IFS= read -rs CONNECT_TOKEN
+  printf '\n'
+  [[ -n "$CONNECT_TOKEN" ]] || { warn "The Connect token cannot be empty."; exit 1; }
+  mkdir -p "$(dirname "$CONNECT_ENV")"
+  chmod 700 "$(dirname "$CONNECT_ENV")"
+  connect_tmp=$(umask 077; mktemp "$CONNECT_ENV.tmp.XXXXXX")
+  printf 'OP_CONNECT_HOST=%s\nOP_CONNECT_TOKEN=%s\n' "$CONNECT_HOST" "$CONNECT_TOKEN" > "$connect_tmp"
+  unset CONNECT_TOKEN
+  chmod 600 "$connect_tmp"
+  mv "$connect_tmp" "$CONNECT_ENV"
+  say "Wrote $CONNECT_ENV (mode 600)."
+fi
+connect_host=$(/usr/bin/sed -n 's/^OP_CONNECT_HOST=//p' "$CONNECT_ENV")
+if ! /usr/bin/curl -fsS -m 5 -o /dev/null "$connect_host/heartbeat"; then
+  warn "ERROR: Connect at $connect_host does not answer. This Mac must reach it (same network or VPN) before setup can continue."
+  exit 1
+fi
+say "Connect at $connect_host answers."
 
-stage "Restore local.nix from 1Password" 1
-# The canonical local.nix for each host lives in 1Password as a Document item
-# titled "nix-config local.nix <LocalHostName>". Restoring it here is what makes
-# a wiped machine a no-retyping setup: the Connect host, the 1Password item IDs,
-# and the AWS profile wiring all come back without a human ever knowing them.
-# scripts/rebuild.sh re-uploads the stored copy after every activation whose
-# local.nix differs, and the identity stage below uploads a fresh copy when it
-# runs (first-ever setup of a brand-new host).
-#
-# The vault is ASKED FOR, not written here. This wizard is the one moment the
-# name cannot come from local.nix — local.nix is what it is about to restore —
-# so the answer is remembered in the ignored .setup-mac.env and then written
-# into local.nix, from which every later run reads it. It was hard-coded in
-# this file until 2026-08-14; this repository is public.
-BREW_PREFIX=$([[ "$MAC_SYSTEM" == "aarch64-darwin" ]] && printf /opt/homebrew || printf /usr/local)
-OP="$BREW_PREFIX/bin/op"
-LOCAL_DOC_TITLE="nix-config local.nix $MAC_HOST"
-# Seeded, not hard-coded into the prompt: `ask` offers whatever is already in
-# the ignored .setup-mac.env as the default, so writing one first turns the
-# common case into a single Enter while still letting a different vault be
-# typed. "Homelab" is safe to name here because local.nix lists it in
-# publicTerms — it identifies nothing. A vault named after a company or client
-# must NOT be seeded this way; leave it to be asked.
-[[ -n "$(_existing OP_VAULT || true)" ]] || write_env OP_VAULT "Homelab"
-ask OP_VAULT "1Password vault holding this host's local.nix:"
-validate_nix_text "The vault name" "$OP_VAULT"
-write_env OP_VAULT "$OP_VAULT"
-LOCAL_DOC_VAULT="$OP_VAULT"
+stage "Restore local.nix through Connect" 1
+# Each host's local.nix is stored in 1Password as a Document titled
+# "nix-config local.nix <LocalHostName>". Restoring it is what brings back the
+# Git identity, item IDs, Connect host and AWS profiles without retyping.
 IDENTITY_RESTORED=0
-if [[ -x "$OP" ]]; then
-  restored=$(mktemp "$REPO_ROOT/.local.nix.restore.XXXXXX")
-  if "$OP" document get "$LOCAL_DOC_TITLE" --vault "$LOCAL_DOC_VAULT" > "$restored" 2>/dev/null \
-      && [[ -s "$restored" ]]; then
-    restore_ok=1
-    for attr_and_expected in \
-      "user|$MAC_USER" \
-      "hostName|$MAC_HOST" \
-      "system|$MAC_SYSTEM" \
-      "homeDirectory|$MAC_HOME"; do
-      attr=${attr_and_expected%%|*}
-      expected=${attr_and_expected#*|}
-      if ! actual=$(SETUP_LOCAL="$restored" \
-          NIX_CONFIG="extra-experimental-features = nix-command flakes" \
-          "$NIX_BIN" eval --impure --raw --expr \
-          "(import (builtins.toPath (builtins.getEnv \"SETUP_LOCAL\"))).$attr" 2>/dev/null) \
-          || [[ "$actual" != "$expected" ]]; then
-        restore_ok=0
-      fi
-    done
-    if [[ "$restore_ok" -eq 1 ]]; then
-      chmod 600 "$restored"
-      mv "$restored" "$LOCAL_FILE"
-      IDENTITY_RESTORED=1
-      say "Restored local.nix for $MAC_HOST from 1Password — nothing to retype."
-    else
-      rm -f "$restored"
-      warn "The stored local.nix does not match this Mac; falling back to the identity wizard."
-    fi
-  else
-    rm -f "$restored"
-    say "No stored local.nix for $MAC_HOST — the identity wizard will create and upload one."
+if [[ -s "$LOCAL_FILE" ]] && read_local_optional_attr "git.signingKeyReference" 2>/dev/null | grep -q '^op://' \
+    && [[ "$(read_local_attr hostName 2>/dev/null)" == "$MAC_HOST" ]] \
+    && ! read_local_attr git.signingKey 2>/dev/null | grep -q 'AAAAAAAAAAAAAAAA'; then
+  IDENTITY_RESTORED=1
+  say "local.nix already holds this Mac's full identity; nothing to restore."
+else
+  LOCAL_DOC_TITLE="nix-config local.nix $MAC_HOST"
+  # The vault name is asked, never written into this public file. It is
+  # remembered in the ignored .setup-mac.env for reruns.
+  [[ -n "$(_existing OP_VAULT || true)" ]] || write_env OP_VAULT "Homelab"
+  ask OP_VAULT "1Password vault holding this host's local.nix:"
+  validate_nix_text "The vault name" "$OP_VAULT"
+  # A private directory this run creates, so cleanup can never touch anything
+  # it did not make.
+  restore_dir=$(mktemp -d "$REPO_ROOT/.local.nix.restore.XXXXXX")
+  trap 'rm -rf "$restore_dir"' EXIT
+  restored="$restore_dir/local.nix"
+  if ! "${CONNECT_PY[@]}" "$CONNECT_ENV" "$OP_VAULT" "$LOCAL_DOC_TITLE" "$restored"; then
+    warn "ERROR: no document titled '$LOCAL_DOC_TITLE' could be read through Connect (see above)."
+    say "Fix: copy local.nix from your old Mac into $REPO_ROOT, set its hostName to \"$MAC_HOST\","
+    say "or rename this Mac to the old hostName (System Settings → General → Sharing → Local hostname), then rerun."
+    exit 1
   fi
-else
-  warn "1Password CLI missing; continuing with the identity wizard."
-fi
-
-stage "Choose Git identity and SSH keys" 4
-if [[ "$IDENTITY_RESTORED" -eq 1 ]]; then
-  say "Skipped — local.nix was restored from 1Password."
-else
-ask GIT_NAME "Public Git author name:"
-ask GIT_EMAIL "Git-host-verified public commit email:"
-[[ -n "$GIT_NAME" ]] || { warn "Git author name cannot be empty."; exit 1; }
-[[ "$GIT_EMAIL" == *@* ]] || { warn "Git email must contain @."; exit 1; }
-validate_nix_text "Git author name" "$GIT_NAME"
-validate_nix_text "Git email" "$GIT_EMAIL"
-write_env GIT_NAME "$GIT_NAME"
-write_env GIT_EMAIL "$GIT_EMAIL"
-
-BREW_PREFIX=$([[ "$MAC_SYSTEM" == "aarch64-darwin" ]] && printf /opt/homebrew || printf /usr/local)
-OP="$BREW_PREFIX/bin/op"
-JQ="/etc/profiles/per-user/$MAC_USER/bin/jq"
-[[ -x "$OP" ]] || { warn "1Password CLI is missing; rerun the first switch."; exit 1; }
-[[ -x "$JQ" ]] || { warn "jq is missing; rerun the first switch."; exit 1; }
-
-keys_json=$(mktemp)
-keys_tsv=$(mktemp)
-ordered_ids=$(mktemp)
-trap 'rm -f "$keys_json" "$keys_tsv" "$ordered_ids"' EXIT
-"$OP" item list --categories "SSH Key" --format json > "$keys_json"
-"$JQ" -r '.[] | [.id, .title, .vault.name] | @tsv' "$keys_json" > "$keys_tsv"
-key_count=$(wc -l < "$keys_tsv" | tr -d ' ')
-[[ "$key_count" -gt 0 ]] || { warn "No SSH Key items are available in 1Password."; exit 1; }
-
-say "Available SSH keys:"
-awk -F '\t' '{ printf "  %d. %s (%s)\n", NR, $2, $3 }' "$keys_tsv"
-ask SIGNING_KEY_NUMBER "Number of the Git signing key:"
-case "$SIGNING_KEY_NUMBER" in *[!0-9]*|'') warn "Enter a number from the list."; exit 1 ;; esac
-[[ "$SIGNING_KEY_NUMBER" -ge 1 && "$SIGNING_KEY_NUMBER" -le "$key_count" ]] \
-  || { warn "Signing-key selection is out of range."; exit 1; }
-
-selected_id=$(sed -n "${SIGNING_KEY_NUMBER}p" "$keys_tsv" | cut -f1)
-selected_vault=$("$JQ" -er --arg id "$selected_id" '.[] | select(.id == $id) | .vault.id' "$keys_json")
-signing_reference="op://$selected_vault/$selected_id/private key?ssh-format=openssh"
-say "The configured service account must have read access to the selected signing key."
-signing_key=$("$OP" item get "$selected_id" --fields "public key")
-[[ "$signing_key" == ssh-ed25519\ * ]] \
-  || { warn "The selected item does not expose an Ed25519 public key."; exit 1; }
-signing_key=$(printf '%s\n' "$signing_key" | awk '{ print $1 " " $2 }')
-printf '%s\n' "$selected_id" > "$ordered_ids"
-ask ADDITIONAL_KEY_NUMBERS "Additional key numbers to offer (comma-separated, blank for none, or 'all'):"
-if [[ "$ADDITIONAL_KEY_NUMBERS" == "all" ]]; then
-  awk -F '\t' -v selected="$selected_id" '$1 != selected { print $1 }' "$keys_tsv" >> "$ordered_ids"
-elif [[ -n "$ADDITIONAL_KEY_NUMBERS" ]]; then
-  for key_number in ${ADDITIONAL_KEY_NUMBERS//,/ }; do
-    case "$key_number" in *[!0-9]*|'') warn "Additional key selections must be numbers."; exit 1 ;; esac
-    [[ "$key_number" -ge 1 && "$key_number" -le "$key_count" ]] \
-      || { warn "Additional key selection is out of range."; exit 1; }
-    item_id=$(sed -n "${key_number}p" "$keys_tsv" | cut -f1)
-    grep -qx "$item_id" "$ordered_ids" || printf '%s\n' "$item_id" >> "$ordered_ids"
+  for attr_and_expected in "user|$MAC_USER" "hostName|$MAC_HOST" "system|$MAC_SYSTEM" "homeDirectory|$MAC_HOME"; do
+    attr=${attr_and_expected%%|*}
+    expected=${attr_and_expected#*|}
+    if ! actual=$(SETUP_LOCAL="$restored" NIX_CONFIG="extra-experimental-features = nix-command flakes" \
+        "$NIX_BIN" eval --impure --raw --expr \
+        "(import (builtins.toPath (builtins.getEnv \"SETUP_LOCAL\"))).$attr" 2>/dev/null) \
+        || [[ "$actual" != "$expected" ]]; then
+      warn "ERROR: the stored local.nix has $attr = '${actual:-?}', but this Mac is '$expected'."
+      say "Fix: edit that field in a copy of local.nix placed at $LOCAL_FILE, then rerun."
+      exit 1
+    fi
   done
-fi
-if confirm "Replace local.nix with the detected host and selected Git/SSH metadata?"; then
-  write_local_nix "$GIT_NAME" "$GIT_EMAIL" "$signing_key" "$ordered_ids" "$signing_reference"
-else
-  warn "No local identity was changed."
-  exit 1
-fi
-say "Wrote public identity and ordered 1Password item IDs to ignored local.nix."
-
-# First-ever setup of this host: store the freshly written local.nix so the
-# NEXT wipe of this machine restores it without retyping anything. Deploy
-# wiring (Connect host, item IDs, AWS profiles) added to local.nix later is
-# captured by the rebuild.sh sync, not here.
-if "$OP" document get "$LOCAL_DOC_TITLE" --vault "$LOCAL_DOC_VAULT" >/dev/null 2>&1; then
-  if "$OP" document edit "$LOCAL_DOC_TITLE" "$LOCAL_FILE" --vault "$LOCAL_DOC_VAULT" >/dev/null 2>&1; then
-    updated_backup=$(mktemp)
-    if "$OP" document get "$LOCAL_DOC_TITLE" --vault "$LOCAL_DOC_VAULT" > "$updated_backup" 2>/dev/null \
-        && cmp -s "$LOCAL_FILE" "$updated_backup"; then
-      rm -f "$updated_backup"
-      say "Updated and verified the stored local.nix in 1Password ($LOCAL_DOC_TITLE)."
-    else
-      rm -f "$updated_backup"
-      warn "The updated local.nix backup did not verify byte-for-byte; fix 1Password access and rerun setup."
-      exit 1
-    fi
-  else
-    warn "Could not update the existing stored local.nix; fix 1Password access and rerun setup."
-    exit 1
-  fi
-else
-  if ! confirm "No readable local.nix backup was found. Create a new backup for this Mac?"; then
-    warn "No local.nix backup was created; routine rebuilds require an existing backup document."
-    exit 1
-  elif "$OP" document create "$LOCAL_FILE" --title "$LOCAL_DOC_TITLE" --vault "$LOCAL_DOC_VAULT" --file-name local.nix >/dev/null 2>&1; then
-    say "Stored local.nix in 1Password for future restores ($LOCAL_DOC_TITLE)."
-    created_backup=$(mktemp)
-    if ! "$OP" document get "$LOCAL_DOC_TITLE" --vault "$LOCAL_DOC_VAULT" > "$created_backup" 2>/dev/null \
-        || ! cmp -s "$LOCAL_FILE" "$created_backup"; then
-      rm -f "$created_backup"
-      warn "The new local.nix backup did not verify byte-for-byte; routine rebuilds require a verified backup document."
-      exit 1
-    fi
-    rm -f "$created_backup"
-  else
-    warn "Could not create the local.nix backup; routine rebuilds require an existing backup document. Fix 1Password access and rerun setup."
-    exit 1
-  fi
-fi
+  chmod 600 "$restored"
+  mv "$restored" "$LOCAL_FILE"
+  rm -rf "$restore_dir"
+  trap - EXIT
+  IDENTITY_RESTORED=1
+  say "Restored local.nix for $MAC_HOST through Connect."
 fi
 
-stage "Bootstrap runtime credentials" 2
+stage "Bootstrap runtime credentials" 1
 PROFILE_BIN="/etc/profiles/per-user/$MAC_USER/bin"
-ONEPASSWORD_BOOTSTRAP="$PROFILE_BIN/nix-config-bootstrap-onepassword"
 NETWORK_SHARE_BOOTSTRAP="$PROFILE_BIN/nix-config-bootstrap-network-share-password"
-SERVICE_ACCOUNT_REFERENCE=$(read_local_optional_attr "onePassword.serviceAccountReference" || true)
-if [[ ! -x "$ONEPASSWORD_BOOTSTRAP" ]]; then
-  warn "The generated 1Password bootstrap command is missing; rerun the first generation."
-  exit 1
-fi
-if [[ -z "$SERVICE_ACCOUNT_REFERENCE" ]]; then
-  warn "local.nix does not declare onePassword.serviceAccountReference; add it before the final switch."
-  exit 1
-fi
-"$ONEPASSWORD_BOOTSTRAP" "$SERVICE_ACCOUNT_REFERENCE" "$MAC_HOME/.config/op/service-account-token"
-
 NETWORK_SERVER=$(read_local_optional_attr "networkShares.server" || true)
 NETWORK_ACCOUNT=$(read_local_optional_attr "networkShares.account" || true)
 NETWORK_PASSWORD_REFERENCE=$(read_local_optional_attr "networkShares.passwordReference" || true)
@@ -595,4 +487,4 @@ else
 fi
 
 finish
-note "1Password will require consent the first time an application uses each private SSH key."
+note "Nothing on this Mac uses the 1Password app or CLI; Git, AWS and the network share read through Connect."

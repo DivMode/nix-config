@@ -254,10 +254,9 @@ false positive.
 This boundary also applies to programs Git invokes implicitly. Before creating
 a commit or tag, pushing, or requesting signature verification, inspect Git's
 effective signing configuration and the transport without invoking either.
-Every agent-created commit must remain signed using the approved service-account
-signing identity and noninteractive credential path, never the owner's personal
-desktop account. Service-account authentication alone does not select a Git
-signing key; both the authorized key and its access path must be established.
+Every agent-created commit must remain signed with the approved signing key
+through the declarative Connect-backed signer, never the owner's personal
+desktop account, the desktop application's SSH agent, or the `op` CLI.
 If the operation would use a personal desktop signer, SSH agent, biometric,
 or password prompt, stop before starting it and use only an already documented,
 approved noninteractive repository path. Do not assume a credential-loader fix
@@ -265,38 +264,29 @@ also changed Git signing or transport. Never disable signing, override its
 configuration, switch credentials, or bypass a hook to get the operation through.
 Preserve the work and report the exact configuration conflict instead.
 
-The declarative Git service-account signer is an approved signing interface:
-it may read only its configured signing-key reference using the existing
-service-account environment, verify the key against the configured public
-identity, and sign the Git payload. It must fail closed on missing credentials,
-conflicting authentication, or a failed read. This does not authorize general
-CLI secret access, a personal-session fallback, or unsigned commits.
+**1Password is reached only through Connect.** Nothing on this machine may use
+the `op` CLI, a 1Password service account, the desktop application, or its SSH
+agent, and nothing falls back to them: a Connect failure stops with the reason.
+The approved Connect interfaces are declarative and read the cached
+`connect.env` themselves; agents never read that file or name its path:
 
-The declarative `onepassword-sa` command is the approved interface for
-1Password **writes** — creating vaults, creating items, adding or replacing
-fields on an existing item (`item-edit`, verified), copying an item between
-vaults, moving one (`item-move`: copy, verify every field, then delete the
-source), deleting a vault only once it is empty, and giving a group (such as
-Owners) full access to a vault the service account created, so the owner can
-see it (`vault-access` lists who has it; `items` lists titles, never values). It authenticates only with the existing service-account token, takes
-secret values on stdin, and has no command that prints a secret. Use it when a
-task needs a credential stored; do not reach for `op` or write another client.
-It is not a read path: runtime secrets still come only through the
-repository's loader.
+- The Git signer and GitHub transport (`gpg.ssh.program`, `core.sshCommand`)
+  fetch the configured signing key from Connect, verify it against the
+  configured public identity, and sign or push with OpenSSH children that have
+  no `SSH_AUTH_SOCK`. The transport enforces host-key verification, disables
+  agent and password authentication, and accepts only GitHub upload/receive-pack.
+- AWS `credential_process` reads its key pair from Connect.
+- `nix-config-connect-document` restores a stored document (the setup wizard's
+  `local.nix` restore).
 
-The declarative Git service-account transport may use that same configured,
-verified key for GitHub Git fetches and pushes. It must enforce host-key
-verification, disable SSH-agent and password authentication, and reject other
-hosts and arbitrary remote commands. This grants no general SSH or secret access.
+1Password **writes** have no approved interface at present: the former
+`onepassword-sa` command depended on the disabled service account. When a task
+needs a credential stored, stop and ask; do not reach for `op` or write a client.
 
-An explicitly authorized, reviewed declarative rebuild entry point named in the
-repository's instructions may use its declared credential interface for
-configuration backup and credential refresh. Its unattended path must require
-the designated service account and fail closed on missing credentials or an
-authentication error; it must never fall back to a personal session. First-time
-personal sign-in belongs to an explicit human setup workflow. This permits
-running that maintenance entry point, not extracting credentials, changing
-accounts, weakening guards, or inventing a new loader to evade this boundary.
+`scripts/rebuild.sh` is the declarative rebuild entry point. It does not touch
+1Password at all; activation only checks that the Connect environment exists
+and fails loudly when it does not. First-time Connect setup belongs to the
+human setup workflow (`scripts/setup-mac.sh`).
 
 ## Shell commands never prompt the owner
 

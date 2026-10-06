@@ -1,4 +1,9 @@
-"""Git SSH signing through the configured service account, without an agent."""
+"""Git SSH signing and GitHub transport with the approved key, read from 1Password Connect.
+
+No `op` CLI, no service account, no desktop application, no SSH agent: the key
+is fetched over the Connect REST API, used from a private temporary file, and
+every OpenSSH child runs without SSH_AUTH_SOCK.
+"""
 
 import os
 import re
@@ -9,13 +14,19 @@ import subprocess
 import sys
 import tempfile
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from onepassword_connect import Connect, ConnectError  # noqa: E402
+
 
 def fail(message):
-    print(f"Git service-account signing: {message}", file=sys.stderr)
+    print(f"Git signing: {message}", file=sys.stderr)
     raise SystemExit(1)
 
 
-mode, op, ssh_keygen, ssh, reference, expected_public_file, *arguments = sys.argv[1:]
+mode, connect_env, ssh_keygen, ssh, reference, expected_public_file, *arguments = sys.argv[1:]
+
+# OpenSSH children never see an agent socket or 1Password variables.
+child_env = {k: v for k, v in os.environ.items() if k != "SSH_AUTH_SOCK" and not k.startswith("OP_")}
 
 def terminate(signum, frame):
     raise SystemExit(128 + signum)
@@ -41,13 +52,9 @@ if mode == "sign":
     if len(arguments) < 2 or arguments[0] != "-Y":
         fail("unsupported operation")
     if arguments[1] in {"verify", "find-principals", "check-novalidate"}:
-        os.execv(ssh_keygen, [ssh_keygen, *arguments])
+        os.execve(ssh_keygen, [ssh_keygen, *arguments], child_env)
     if arguments[1] != "sign":
         fail("unsupported operation")
-if not os.environ.get("OP_SERVICE_ACCOUNT_TOKEN"):
-    fail("service-account authentication is missing; no desktop fallback")
-if os.environ.get("OP_CONNECT_HOST") or os.environ.get("OP_CONNECT_TOKEN"):
-    fail("conflicting Connect environment; no credentials changed")
 
 if mode == "sign":
     forward = []
@@ -59,7 +66,7 @@ if mode == "sign":
         argument = arguments[index]
         if argument == "-U":
             # Git adds this for a public signing key. This signer uses the matching
-            # private key from the service account, never an SSH agent.
+            # private key from Connect, never an SSH agent.
             index += 1
         elif argument in {"-f", "-n"} and index + 1 < len(arguments):
             value = arguments[index + 1]
@@ -89,15 +96,13 @@ except OSError:
 if len(expected) != 2 or requested != expected:
     fail("requested signing identity does not match the configured key")
 
+match = re.fullmatch(r"op://([a-z0-9]{26})/([a-z0-9]{26})/private key\?ssh-format=openssh", reference)
+if match is None:
+    fail("the signing key reference must name a vault and item by ID")
 try:
-    secret = subprocess.run(
-        [op, "read", reference], stdin=subprocess.DEVNULL,
-        stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, timeout=30,
-    )
-except (OSError, subprocess.TimeoutExpired):
-    fail("service-account key retrieval failed; no desktop fallback")
-if secret.returncode or not secret.stdout:
-    fail("service-account key retrieval failed; no desktop fallback")
+    secret = Connect(connect_env).ssh_private_key(*match.groups()).encode()
+except ConnectError as error:
+    fail(f"{error}; no other credential is tried")
 
 # TemporaryDirectory is private (0700), and the key is created as 0600. Nothing
 # is added to an agent or cached after signing. The private bytes never reach logs.
@@ -105,15 +110,17 @@ with tempfile.TemporaryDirectory(prefix="git-service-account-sign-") as director
     private = Path(directory) / "key"
     descriptor = os.open(private, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
     with os.fdopen(descriptor, "wb") as output:
-        output.write(secret.stdout)
+        output.write(secret)
     del secret
     public = subprocess.run(
         [ssh_keygen, "-y", "-P", "", "-f", str(private)],
         stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
-        stderr=subprocess.DEVNULL, timeout=10,
+        stderr=subprocess.DEVNULL, timeout=10, env=child_env,
     )
     if public.returncode or public.stdout.decode().split()[:2] != expected:
         fail("retrieved key does not match the configured public identity")
+    # A PKCS#8 key carries no public half; ssh-keygen -Y sign reads it from key.pub.
+    Path(f"{private}.pub").write_bytes(public.stdout)
     if mode == "transport":
         result = subprocess.run([
             ssh, "-F", "/dev/null", "-T",
@@ -122,15 +129,15 @@ with tempfile.TemporaryDirectory(prefix="git-service-account-sign-") as director
             "-o", "PasswordAuthentication=no", "-o", "KbdInteractiveAuthentication=no",
             "-o", "ForwardAgent=no", "-o", "ConnectTimeout=15",
             "-i", str(private), "git@github.com", remote_command,
-        ])
+        ], env=child_env)
         raise SystemExit(result.returncode)
     try:
         result = subprocess.run(
             [ssh_keygen, "-Y", "sign", "-n", "git", "-f", str(private), *forward, payload],
-            stdin=subprocess.DEVNULL, stderr=subprocess.PIPE, timeout=30,
+            stdin=subprocess.DEVNULL, stderr=subprocess.PIPE, timeout=30, env=child_env,
         )
     except (OSError, subprocess.TimeoutExpired):
         fail("SSH signing failed or timed out")
     if result.returncode:
-        fail("SSH signing failed")
+        fail(f"SSH signing failed: {result.stderr.decode(errors='replace').strip()[:300]}")
     raise SystemExit(0)

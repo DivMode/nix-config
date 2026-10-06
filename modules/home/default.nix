@@ -9,14 +9,14 @@ let
   signingReference = local.git.signingKeyReference or "";
   signingPublicKey = pkgs.writeText "git-service-account-public-key" local.git.signingKey;
   serviceAccountSigner = pkgs.writeShellScript "git-service-account-sign" ''
-    exec ${pkgs.python3}/bin/python3 ${../../scripts/git-service-account-sign.py} \
-      sign ${if pkgs.stdenv.hostPlatform.isAarch64 then "/opt/homebrew" else "/usr/local"}/bin/op \
+    exec ${pkgs.python3}/bin/python3 ${../../scripts}/git-service-account-sign.py \
+      sign ${lib.escapeShellArg config.nixConfig.secrets.onePassword.connect.envPath} \
       ${pkgs.openssh}/bin/ssh-keygen ${pkgs.openssh}/bin/ssh \
       ${lib.escapeShellArg signingReference} ${signingPublicKey} "$@"
   '';
   serviceAccountTransport = pkgs.writeShellScript "git-service-account-ssh" ''
-    exec ${pkgs.python3}/bin/python3 ${../../scripts/git-service-account-sign.py} \
-      transport ${if pkgs.stdenv.hostPlatform.isAarch64 then "/opt/homebrew" else "/usr/local"}/bin/op \
+    exec ${pkgs.python3}/bin/python3 ${../../scripts}/git-service-account-sign.py \
+      transport ${lib.escapeShellArg config.nixConfig.secrets.onePassword.connect.envPath} \
       ${pkgs.openssh}/bin/ssh-keygen ${pkgs.openssh}/bin/ssh \
       ${lib.escapeShellArg signingReference} ${signingPublicKey} "$@"
   '';
@@ -26,7 +26,12 @@ in
     {
       assertion =
         builtins.match "op://[^/]+/[^/]+/private key\\?ssh-format=openssh" signingReference != null;
-      message = "git.signingKeyReference must name the approved service-account SSH key in OpenSSH format.";
+      message = "git.signingKeyReference must name the approved SSH key in OpenSSH format.";
+    }
+    {
+      # Git signing and GitHub transport read the key from Connect only.
+      assertion = config.nixConfig.secrets.onePassword.connect.enable;
+      message = "Git signing reads its key from 1Password Connect; enable nixConfig.secrets.onePassword.connect.";
     }
   ];
   imports = [
@@ -179,15 +184,14 @@ in
   # signing are a separate 1Password capability.
   nixConfig.ai.enable = true;
   nixConfig.secrets.onePassword.enable = false;
-  nixConfig.secrets.onePassword.sshAgent.enable = lib.mkDefault true;
+  # Off: the desktop application's agent socket made every SSH and ssh-keygen
+  # call reach the 1Password app. Git uses the Connect-backed signer instead.
+  nixConfig.secrets.onePassword.sshAgent.enable = false;
 
-  # A cached service-account token, exported from .zshenv. This is what stops
-  # the desktop application prompting: a service account authenticates with no
-  # app, no biometrics, and no controlling terminal, so non-interactive
-  # processes read secrets silently. Independent of the dormant `enable` above,
-  # which is the `op run` launcher, and of the SSH agent, which is the
-  # application's own capability and keeps working either way.
-  nixConfig.secrets.onePassword.serviceAccount.enable = true;
+  # Off: everything that reads 1Password goes through Connect only. The service
+  # account's `op` path reached the desktop application and spent a 1,000
+  # request/24h cap; nothing falls back to it.
+  nixConfig.secrets.onePassword.serviceAccount.enable = false;
 
   # Connect credentials for the deploy path only. Cached to a 0600 env file that
   # the work monorepo's sst-connect-env.sh sources at the sst invocation seam, so

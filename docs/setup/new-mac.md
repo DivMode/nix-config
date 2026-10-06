@@ -171,9 +171,9 @@ the routine switch in the operations guide to apply the final identity. This dis
 Nothing uses the 1Password desktop application, its SSH agent, the `op` CLI, or
 a service account. Every read goes through the Connect server, and its token's
 vault scope decides what this Mac can reach. Give the Connect token read access
-to every vault this configuration reads: the vault holding the Git signing key,
-the vault holding the AWS profiles, and the homelab vault (network-share
-password and the `local.nix` Document). A vault outside the token's scope fails
+to the vault holding the Git signing key and the vault holding the AWS profiles,
+and **read and write** access to the homelab vault: it holds the network-share
+password and the `local.nix` Secure Note that every rebuild creates or updates. A vault outside the token's scope fails
 loudly with an HTTP error from Connect; there is no fallback.
 
 ### Network shares

@@ -25,12 +25,13 @@ def main():
             descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
         except OSError:
             raise ConnectError(f"cannot create {path} (it must not already exist)") from None
-        with os.fdopen(descriptor, "w") as handle:
-            handle.write(text)
+        # Bytes, not text mode: newline translation would alter the file.
+        with os.fdopen(descriptor, "wb") as handle:
+            handle.write(text.encode())
         return
     try:
-        text = Path(path).read_text()
-    except OSError:
+        text = Path(path).read_bytes().decode()
+    except (OSError, UnicodeDecodeError):
         raise ConnectError(f"cannot read {path}") from None
     print(connect.save_note(vault, title, text))
 

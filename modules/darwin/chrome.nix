@@ -87,6 +87,13 @@ let
       # 2026-09-06 (manifest name "Loom – Screen Recorder & Screen Capture"),
       # so the policy adopts that install rather than adding a second one.
       "liecbddmkiiihnedobmlmillhodjkdmb;https://clients2.google.com/service/update2/crx"
+
+      # 1Password – Password Manager, the browser half of the `1password` cask
+      # in ./homebrew.nix. The id is the one the Chrome Web Store serves that
+      # title under (chromewebstore.google.com/detail/aeblfdkhhhdcdjpifhhbdiojplfjncoa,
+      # checked 2026-10-05). Unlocking it, or linking it to the desktop app,
+      # stays a one-time step inside 1Password.
+      "aeblfdkhhhdcdjpifhhbdiojplfjncoa;https://clients2.google.com/service/update2/crx"
     ];
   };
   policyHash = builtins.hashFile "sha256" chromePolicy;

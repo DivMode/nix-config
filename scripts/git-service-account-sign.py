@@ -5,7 +5,6 @@ is fetched over the Connect REST API, used from a private temporary file, and
 every OpenSSH child runs without SSH_AUTH_SOCK.
 """
 
-import json
 import os
 import re
 import shlex
@@ -14,10 +13,9 @@ from pathlib import Path
 import subprocess
 import sys
 import tempfile
-import urllib.error
-import urllib.parse
-import urllib.request
-from ipaddress import ip_address
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from onepassword_connect import Connect, ConnectError  # noqa: E402
 
 
 def fail(message):
@@ -101,60 +99,10 @@ if len(expected) != 2 or requested != expected:
 match = re.fullmatch(r"op://([a-z0-9]{26})/([a-z0-9]{26})/private key\?ssh-format=openssh", reference)
 if match is None:
     fail("the signing key reference must name a vault and item by ID")
-vault_id, item_id = match.groups()
-
-# The same cached Connect environment the deploy loaders read; never the
-# service account or the desktop application.
-connect = {}
 try:
-    for line in Path(connect_env).read_text().splitlines():
-        name, separator, value = line.partition("=")
-        if separator and name in {"OP_CONNECT_HOST", "OP_CONNECT_TOKEN"}:
-            connect[name] = value.strip().strip("'\"")
-except OSError:
-    fail("the Connect environment is unavailable; no other credential is tried")
-host, token = connect.get("OP_CONNECT_HOST", ""), connect.get("OP_CONNECT_TOKEN", "")
-origin = urllib.parse.urlsplit(host)
-try:
-    private_host = origin.hostname == "localhost" or ip_address(origin.hostname or "").is_private
-except ValueError:
-    private_host = False
-if (not token or origin.username or origin.password or origin.query or origin.fragment
-        or origin.path not in {"", "/"}
-        or not (origin.scheme == "https" or (origin.scheme == "http" and private_host))):
-    fail("the Connect environment is invalid; no other credential is tried")
-
-
-class NoRedirect(urllib.request.HTTPRedirectHandler):
-    def redirect_request(self, *args):
-        return None
-
-
-request = urllib.request.Request(
-    f"{host.rstrip('/')}/v1/vaults/{vault_id}/items/{item_id}",
-    headers={"Authorization": f"Bearer {token}", "Accept": "application/json"},
-)
-try:
-    with urllib.request.build_opener(NoRedirect).open(request, timeout=15) as response:
-        item = json.loads(response.read(2 * 1024 * 1024))
-except urllib.error.HTTPError as error:
-    fail(f"Connect returned HTTP {error.code} for the signing key; no other credential is tried")
-except (OSError, ValueError):
-    fail("Connect is unreachable or returned invalid data; no other credential is tried")
-del token, connect, request
-if not isinstance(item, dict) or item.get("id") != item_id or (item.get("vault") or {}).get("id") != vault_id:
-    fail("Connect returned an unexpected item")
-secret = None
-for field in item.get("fields") or []:
-    if isinstance(field, dict) and field.get("type") == "SSHKEY":
-        # OpenSSH form when Connect provides it; otherwise the stored PKCS#8,
-        # which OpenSSH 10 reads directly for Ed25519.
-        secret = ((field.get("ssh_formats") or {}).get("openssh") or {}).get("value") or field.get("value")
-        break
-del item
-if not isinstance(secret, str) or not secret.strip():
-    fail("the signing item has no SSH private key")
-secret = secret.strip().encode() + b"\n"
+    secret = Connect(connect_env).ssh_private_key(*match.groups()).encode()
+except ConnectError as error:
+    fail(f"{error}; no other credential is tried")
 
 # TemporaryDirectory is private (0700), and the key is created as 0600. Nothing
 # is added to an agent or cached after signing. The private bytes never reach logs.

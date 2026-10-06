@@ -32,6 +32,9 @@ fi
 
 host="${1:-example-mac}"
 
+# Never activate a checkout older than GitHub's main; see the script.
+"$repository/scripts/require-current-main.sh" "$repository"
+
 echo "==> Building $host"
 nix build --no-link --impure ".#darwinConfigurations.${host}.system"
 

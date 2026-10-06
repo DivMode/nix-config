@@ -76,13 +76,14 @@
 
   # Where browser downloads land. modules/darwin/chrome.nix declares it as a
   # mandatory Chrome policy, modules/darwin/dock.nix pins it as a stack, and
-  # modules/home/downloads.nix creates it.
+  # modules/home/downloads.nix creates local directories, never mountpoints.
   #
-  # It must be a path that is ALWAYS present. Chrome's DownloadDirectory policy
-  # takes one static string, read at launch, with no fallback — so a path that
-  # comes and goes, an SMB mount or a disk that is sometimes unplugged, aims
-  # every download made while it is away at somewhere that does not exist and
-  # that Chrome cannot create.
+  # Choose an always-available location for reliable downloads: the policy
+  # names one static destination, with no fallback while a volume is offline.
+  # A path under /Volumes requires its actual volume to be mounted. Activation
+  # leaves unavailable volumes untouched and continues setup; it does not
+  # create a local substitute, change permissions, or mount a share itself.
+  # SMB mounting belongs to network-shares.nix, after Keychain setup.
   downloadsDirectory = "/Volumes/ExampleDisk/Downloads";
 
   # Where package and tool caches go (Bun, NuGet, Playwright, Puppeteer, uv,

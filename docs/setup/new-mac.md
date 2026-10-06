@@ -71,33 +71,31 @@ For the first pass, fill only these Mac fields:
 - `system`: `aarch64-darwin` for Apple Silicon or `x86_64-darwin` for Intel;
 - `homeDirectory`: absolute `/Users/<account>` path;
 
-Leave the public Git and 1Password placeholders intact until the first switch
-has installed 1Password. They are structurally valid bootstrap values, not
-credentials and not a usable signing identity.
+Leave the public Git and 1Password placeholders intact for the first switch.
+They are structurally valid bootstrap values, not credentials and not a usable
+signing identity.
 
-After installing and signing in to 1Password, replace:
+After the first switch, replace them (copy the values from the old Mac's
+`local.nix`, or from 1Password on the web or a phone):
 
 - `git.name`: public author name embedded in commits;
 - `git.email`: Git-host-verified address embedded in commits;
 - `git.signingKey`: Ed25519 SSH **public** key used for signing;
 - `git.signingKeyReference`: reference to that same item's private key, ending
   in `/private key?ssh-format=openssh`, readable by the Connect token;
-- `onePassword.sshAgentKeyIds`: ordered item IDs for every SSH key this Mac
-  should offer, with the Git signing/authentication key first.
+- `onePassword.sshAgentKeyIds`: still a required, non-empty list of SSH Key
+  item IDs (the Git signing key first). The 1Password SSH agent is disabled, so
+  nothing offers these keys; the list only satisfies evaluation.
 
 The email is not secret: Git embeds it in every commit and local Nix evaluation
 places it in the Nix store. Use a GitHub privacy address if public commits must
 not expose a personal mailbox. Its numeric prefix is the GitHub account ID, not
 a key identifier.
 
-In 1Password, copy only the public key from the existing SSH Key item. Never put
-an SSH private key, password, token, recovery value, or private repository detail
-in `local.nix` or another Nix expression.
-
-For each intended SSH key, copy its item UUID from 1Password and add it to
-`onePassword.sshAgentKeyIds`. IDs keep private item and vault names out of the
-public repository. The order is also the order in which 1Password offers keys to
-SSH servers.
+Copy only the public key from the existing SSH Key item. Never put an SSH
+private key, password, token, recovery value, or private repository detail in
+`local.nix` or another Nix expression. Item IDs keep private item and vault
+names out of the public repository.
 
 Keep the file ignored and expose its absolute path to Nix:
 

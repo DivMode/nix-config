@@ -26,9 +26,10 @@ let
       # as a question mark.
       "/System/Applications/Apps.app"
       "/Applications/Google Chrome.app"
-      # Chrome creates this real app shim after a profile first processes the
-      # declared policy. It may show a question mark until Chrome is opened.
-      "${local.homeDirectory}/Applications/Chrome Apps.localized/Gmail.app"
+      # No Gmail pin. The shim Chrome creates from the WebAppInstallForceList
+      # policy did not work until the PWA was added again by hand inside the
+      # signed-in profile (2026-10-06), so a pin to it is a broken tile on
+      # every new machine.
       "/Applications/ChatGPT.app"
       # Home Manager owns Ghostty (modules/home/terminal.nix) and, from
       # stateVersion 25.11 onward, copies rather than symlinks bundles into

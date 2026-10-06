@@ -106,7 +106,7 @@
 
       # Open-source mouse utility, and the ONLY owner of mouse EVENTS here.
       # Home Manager owns its JSON configuration, written as a real file it can
-      # still save over; its login item, not a launch agent, starts it. Only
+      # still save over; ../home/login-apps.nix starts it at login. Only
       # macOS Accessibility approval remains manual.
       "linearmouse"
 

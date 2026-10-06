@@ -40,6 +40,7 @@ in
     ./archives.nix
     ./browser.nix
     ./caches.nix
+    ./chrome-app-icons.nix
     ./cli-proxy.nix
     ./command-governor.nix
     ./default-handlers.nix

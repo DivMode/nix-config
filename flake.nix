@@ -70,7 +70,7 @@
     # local delegation policy onto it. MIT; referenced, not vendored. A tag
     # pin does not move with `nix flake update`; edit the tag to upgrade.
     codex-orchestrator = {
-      url = "github:alexzh3/codex-orchestrator/v0.5.0";
+      url = "github:alexzh3/codex-orchestrator/v0.5.1";
       flake = false;
     };
 

@@ -70,16 +70,16 @@
     "codex-orchestrator": {
       "flake": false,
       "locked": {
-        "lastModified": 1783810938,
-        "narHash": "sha256-wwpVN+REqENl6fKzKtRxmKh+AhMcf7putWLtBXbS0hI=",
+        "lastModified": 1784048549,
+        "narHash": "sha256-XHHdrIs8wMjWTRvYQPCyg5xWBCm7WatDXwnNi6Z6eCg=",
         "owner": "alexzh3",
         "repo": "codex-orchestrator",
-        "rev": "ca0141b9354398af785ae43fd191f5eedc582dbb",
+        "rev": "eaee221860b77817aad0f9740636d28e4d17fd00",
         "type": "github"
       },
       "original": {
         "owner": "alexzh3",
-        "ref": "v0.5.0",
+        "ref": "v0.5.1",
         "repo": "codex-orchestrator",
         "type": "github"
       }

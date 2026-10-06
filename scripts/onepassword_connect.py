@@ -193,13 +193,15 @@ class Connect:
             raise ConnectError("Connect did not return the written item")
         # Connect serves reads from its local copy, which catches up a few
         # seconds after a write (observed 2026-10-06), so wait a bounded time.
-        for _ in range(30):
+        deadline = time.monotonic() + 60
+        while True:
             stored = self.get(f"/v1/vaults/{vault_id}/items/{item_id}")
             if (isinstance(stored, dict) and stored.get("id") == item_id
                     and self._notes_field(stored).get("value") == text):
                 return outcome
+            if time.monotonic() + 2 >= deadline:
+                raise ConnectError(f"the stored {title} still does not match 60 s after the write")
             time.sleep(2)
-        raise ConnectError(f"the stored {title} still does not match 60 s after the write")
 
 
 def run(main):

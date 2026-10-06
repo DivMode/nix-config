@@ -19,6 +19,12 @@ step() { printf '\n==> %s\n' "$1"; }
 [[ "$(id -u)" != 0 ]] || fail "Run this as your own user, not with sudo."
 [[ -d /Volumes/Data ]] || fail "The external Data drive is not mounted at /Volumes/Data. Plug it in and rerun."
 
+# Your Mac password, once: kept valid while this runs, so later steps
+# (Command Line Tools, Nix, the first switch) do not stop to ask again.
+echo "Your Mac password is needed once, to install system software."
+sudo -v </dev/tty
+( while true; do sudo -n true; sleep 50; kill -0 "$$" 2>/dev/null || exit; done ) 2>/dev/null &
+
 step "Apple Command Line Tools"
 if xcode-select -p >/dev/null 2>&1; then
   echo "already installed"
@@ -49,6 +55,11 @@ export PATH="/nix/var/nix/profiles/default/bin:$PATH"
 
 step "nix-config on the Data drive"
 if [[ -d "$TARGET/.git" ]]; then
+  # Only a clean main is applied; anything else is your work, left untouched.
+  branch=$(git -C "$TARGET" rev-parse --abbrev-ref HEAD)
+  [[ "$branch" == main ]] || fail "$TARGET is on branch '$branch', not main. Switch it to main (keeping your work) and rerun."
+  [[ -z "$(git -C "$TARGET" status --porcelain --untracked-files=no)" ]] \
+    || fail "$TARGET has uncommitted changes. Commit or stash them, then rerun."
   # Over HTTPS: the Connect-backed SSH transport is not configured yet.
   git -C "$TARGET" pull --ff-only "$REPO_URL" main
 else

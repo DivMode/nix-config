@@ -260,7 +260,8 @@ read_local_optional_attr() {
     "(let local = import (builtins.toPath (builtins.getEnv \"SETUP_LOCAL\")); value = local.$attr or null; in if value == null then \"\" else value)"
 }
 
-banner "Declarative Mac setup"
+# Unattended: no "Ready to start?" pause.
+printf '\n%s%s  Declarative Mac setup%s\n' "$BOLD" "$BLUE" "$RESET"
 
 stage "Detect this Mac" 1
 [[ "$(uname -s)" == "Darwin" ]] || { warn "This wizard supports macOS only."; exit 1; }
@@ -281,19 +282,19 @@ stage "Connect to 1Password Connect" 2
 # a service account, or the desktop application, and never a fallback.
 CONNECT_ENV="$MAC_HOME/.config/op/connect.env"
 CONNECT_NOTE=(/usr/bin/python3 "$REPO_ROOT/scripts/onepassword-connect-note.py")
-connect_answers() {
-  local host
-  host=$(/usr/bin/sed -n 's/^OP_CONNECT_HOST=//p' "$CONNECT_ENV" 2>/dev/null)
-  [[ -n "$host" ]] && /usr/bin/curl -fsS -m 5 -o /dev/null "$host/heartbeat"
+connect_accepts() {
+  # An authenticated read, not just /heartbeat: a wrong or revoked token fails.
+  "${CONNECT_NOTE[@]}" "$1" check
 }
-if [[ -s "$CONNECT_ENV" ]] && connect_answers; then
+if [[ -s "$CONNECT_ENV" ]] && connect_accepts "$CONNECT_ENV" 2>/dev/null; then
   say "Using the existing Connect environment at $CONNECT_ENV."
 else
+  [[ -s "$CONNECT_ENV" ]] && warn "The saved Connect URL or token does not work; enter them again."
   ask CONNECT_HOST "1Password Connect URL (e.g. http://192.168.1.10:8091):"
   [[ "$CONNECT_HOST" =~ ^https?://[^/]+/?$ ]] || { warn "That is not a Connect server URL."; exit 1; }
   CONNECT_HOST=${CONNECT_HOST%/}
   # Read here, never through ask_secret: the token must not reach .setup-mac.env.
-  printf '%s' "  Connect access token (hidden; copy it from 1Password on your phone): "
+  printf '%s' "  Connect access token (hidden; copy it from 1Password on your phone and press Cmd-V): "
   IFS= read -rs CONNECT_TOKEN
   printf '\n'
   [[ -n "$CONNECT_TOKEN" ]] || { warn "The Connect token cannot be empty."; exit 1; }
@@ -303,9 +304,14 @@ else
   printf 'OP_CONNECT_HOST=%s\nOP_CONNECT_TOKEN=%s\n' "$CONNECT_HOST" "$CONNECT_TOKEN" > "$connect_tmp"
   unset CONNECT_TOKEN
   chmod 600 "$connect_tmp"
+  # Published only after Connect accepts it, so a rerun can always replace a bad one.
+  if ! connect_accepts "$connect_tmp"; then
+    rm -f "$connect_tmp"
+    warn "ERROR: Connect at $CONNECT_HOST did not accept that URL and token (see above). Check both and rerun."
+    exit 1
+  fi
   mv "$connect_tmp" "$CONNECT_ENV"
-  connect_answers || { warn "ERROR: Connect at $CONNECT_HOST does not answer. Join the network it is on (or its VPN) and rerun."; exit 1; }
-  say "Wrote $CONNECT_ENV (mode 600)."
+  say "Connect accepted the token; wrote $CONNECT_ENV (mode 600)."
 fi
 
 stage "Restore local.nix from 1Password" 1
@@ -318,22 +324,54 @@ local_is_complete() {
     && read_local_optional_attr "git.signingKeyReference" 2>/dev/null | grep -q '^op://' \
     && ! read_local_attr git.signingKey 2>/dev/null | grep -q 'AAAAAAAAAAAAAAAA'
 }
+local_attr_of() {
+  SETUP_LOCAL="$1" NIX_CONFIG="extra-experimental-features = nix-command flakes" \
+    "$NIX_BIN" eval --impure --raw --expr \
+    "(import (builtins.toPath (builtins.getEnv \"SETUP_LOCAL\"))).$2" 2>/dev/null
+}
+# Account, home and architecture must match this Mac; the hostname becomes this
+# Mac's own (nothing is renamed). Applies to a restored and an existing file.
+adopt_local() {
+  local file="$1" attr expected actual
+  for attr_and_expected in "user|$MAC_USER" "system|$MAC_SYSTEM" "homeDirectory|$MAC_HOME"; do
+    attr=${attr_and_expected%%|*}
+    expected=${attr_and_expected#*|}
+    if ! actual=$(local_attr_of "$file" "$attr") || [[ "$actual" != "$expected" ]]; then
+      warn "ERROR: local.nix expects $attr = '${actual:-?}', but this Mac has '$expected'."
+      [[ "$attr" == user ]] && say "Create the macOS account with short name '$actual' (Setup Assistant), sign in to it, and rerun."
+      return 1
+    fi
+  done
+  if [[ "$(local_attr_of "$file" hostName)" != "$MAC_HOST" ]]; then
+    if [[ $(grep -c '^  hostName = ".*";$' "$file") -ne 1 ]]; then
+      warn "ERROR: local.nix does not have exactly one 'hostName = \"...\";' line."
+      return 1
+    fi
+    /usr/bin/sed -i '' "s/^  hostName = \".*\";\$/  hostName = \"$MAC_HOST\";/" "$file"
+    [[ "$(local_attr_of "$file" hostName)" == "$MAC_HOST" ]] \
+      || { warn "ERROR: could not set hostName to $MAC_HOST in local.nix."; return 1; }
+  fi
+}
 if local_is_complete; then
-  say "local.nix is already complete; keeping it."
+  adopt_local "$LOCAL_FILE" || exit 1
+  say "local.nix is complete and matches this Mac; keeping it."
 else
   notes=$("${CONNECT_NOTE[@]}" "$CONNECT_ENV" list "nix-config local.nix ") \
     || { warn "ERROR: could not list local.nix notes through Connect (see above)."; exit 1; }
   [[ -n "$notes" ]] || { warn "ERROR: Connect sees no 'nix-config local.nix <hostname>' Secure Note. Check the token's vault access."; exit 1; }
-  if [[ $(printf '%s\n' "$notes" | wc -l | tr -d ' ') -eq 1 ]]; then
+  count=$(printf '%s\n' "$notes" | wc -l | tr -d ' ')
+  if [[ "$count" -eq 1 ]]; then
     choice="$notes"
   elif match=$(printf '%s\n' "$notes" | awk -F'\t' -v t="nix-config local.nix $MAC_HOST" '$2 == t') && [[ -n "$match" ]]; then
     choice="$match"
   else
+    # Only when 1Password holds several Macs and none has this Mac's name.
     say "Several Macs are stored in 1Password:"
     printf '%s\n' "$notes" | awk -F'\t' '{ printf "    %d) %s  (%s)\n", NR, substr($2, 22), $1 }'
     ask NOTE_NUMBER "Number of the Mac this one replaces:"
+    [[ "$NOTE_NUMBER" =~ ^[0-9]+$ ]] && (( NOTE_NUMBER >= 1 && NOTE_NUMBER <= count )) \
+      || { warn "Enter a number from 1 to $count."; exit 1; }
     choice=$(printf '%s\n' "$notes" | sed -n "${NOTE_NUMBER}p")
-    [[ -n "$choice" ]] || { warn "No such number."; exit 1; }
   fi
   note_vault=$(printf '%s' "$choice" | cut -f1)
   note_title=$(printf '%s' "$choice" | cut -f2)
@@ -342,30 +380,7 @@ else
   restored="$restore_dir/local.nix"
   "${CONNECT_NOTE[@]}" "$CONNECT_ENV" get "$note_vault" "$note_title" "$restored" \
     || { warn "ERROR: could not read '$note_title' through Connect (see above)."; exit 1; }
-  for attr_and_expected in "user|$MAC_USER" "system|$MAC_SYSTEM" "homeDirectory|$MAC_HOME"; do
-    attr=${attr_and_expected%%|*}
-    expected=${attr_and_expected#*|}
-    if ! actual=$(SETUP_LOCAL="$restored" NIX_CONFIG="extra-experimental-features = nix-command flakes" \
-        "$NIX_BIN" eval --impure --raw --expr \
-        "(import (builtins.toPath (builtins.getEnv \"SETUP_LOCAL\"))).$attr" 2>/dev/null) \
-        || [[ "$actual" != "$expected" ]]; then
-      warn "ERROR: '$note_title' expects $attr = '${actual:-?}', but this Mac has '$expected'."
-      [[ "$attr" == user ]] && say "Create the macOS account with short name '$actual' (Setup Assistant), sign in to it, and rerun."
-      exit 1
-    fi
-  done
-  # This Mac keeps the name macOS gave it: take the old Mac's settings but
-  # record this Mac's own hostname, so nothing is renamed and every rebuild
-  # backs up under this Mac's name.
-  if [[ $(grep -c '^  hostName = ".*";$' "$restored") -ne 1 ]]; then
-    warn "ERROR: the stored local.nix does not have exactly one 'hostName = \"...\";' line."
-    exit 1
-  fi
-  /usr/bin/sed -i '' "s/^  hostName = \".*\";\$/  hostName = \"$MAC_HOST\";/" "$restored"
-  [[ "$(SETUP_LOCAL="$restored" NIX_CONFIG="extra-experimental-features = nix-command flakes" \
-      "$NIX_BIN" eval --impure --raw --expr \
-      '(import (builtins.toPath (builtins.getEnv "SETUP_LOCAL"))).hostName')" == "$MAC_HOST" ]] \
-    || { warn "ERROR: could not set hostName to $MAC_HOST in the restored local.nix."; exit 1; }
+  adopt_local "$restored" || exit 1
   chmod 600 "$restored"
   mv "$restored" "$LOCAL_FILE"
   rm -rf "$restore_dir"
@@ -377,6 +392,7 @@ stage "Install the declared system" 8
 # Install-only first generation: applications and tools, credential checks deferred.
 cd "$REPO_ROOT"
 export NIX_CONFIG_SETUP_BOOTSTRAP=1
+run_nix flake check --impure
 run_nix build --no-link --impure .#darwinConfigurations.example-mac.system
 run_switch bootstrap
 unset NIX_CONFIG_SETUP_BOOTSTRAP

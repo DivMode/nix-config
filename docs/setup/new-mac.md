@@ -18,8 +18,8 @@ contains no personal or machine identity.
 4. When asked, paste the Connect URL (`onePassword.connectHost` in the old
    Mac's `local.nix`) and the Connect token (the `access-token` field of the
    Connect server's credentials item in 1Password; copy it on a phone or the
-   web; the desktop application is not needed). Approve the
-   password dialogs.
+   web, then Cmd-V on the Mac via Universal Clipboard; the desktop application
+   is not needed). Type your Mac password once when asked.
 5. Grant the macOS permissions listed in the manual checklist below.
 
 `scripts/bootstrap.sh` installs Apple's Command Line Tools and Nix without
@@ -37,12 +37,10 @@ under it. Nothing uses the 1Password desktop application, the
 
 ## Manual fallback
 
-The steps below also cover a brand-new host without a complete stored
-`local.nix`. The wizard's identity writer currently omits required download and
-credential configuration fields; it is not a complete new-host configurator.
-Prepare a complete input from `local.example.nix` before the first build, and
-retain those fields when setting the final identity. Restoring a complete
-existing host document avoids that limitation.
+For a brand-new host with no stored `local.nix` (the wizard stops with an
+error in that case), prepare a complete input from `local.example.nix` as
+below, place it in the clone, and run the one command again: the wizard keeps a
+complete `local.nix` that matches this Mac.
 
 ### Create the local host input
 

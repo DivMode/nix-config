@@ -3,6 +3,7 @@
   onepassword-connect-note CONNECT_ENV get  VAULT TITLE OUTPUT   # restore, 0600, never overwrites
   onepassword-connect-note CONNECT_ENV save VAULT TITLE FILE     # create/update, then verify
   onepassword-connect-note CONNECT_ENV list PREFIX               # "vault<TAB>title" of matching notes
+  onepassword-connect-note CONNECT_ENV check                     # the token is accepted
 
 Connect only; any failure exits non-zero with the reason.
 """
@@ -16,6 +17,9 @@ from onepassword_connect import Connect, ConnectError, run  # noqa: E402
 
 
 def main():
+    if len(sys.argv) == 3 and sys.argv[2] == "check":
+        Connect(sys.argv[1]).vault_count()
+        return
     if len(sys.argv) == 4 and sys.argv[2] == "list":
         for vault, title in Connect(sys.argv[1]).notes_titled(sys.argv[3]):
             print(f"{vault}\t{title}")

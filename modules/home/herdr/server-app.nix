@@ -112,4 +112,24 @@ in
       StandardErrorPath = "${config.home.homeDirectory}/Library/Logs/herdr-server.log";
     };
   };
+
+  # Home Manager loads an agent only when its plist file changes
+  # (setupLaunchAgents: `cmp -s` → "already up-to-date"); it never checks that
+  # launchd actually has the agent. On 2026-10-06 the agent was booted out at
+  # 02:06:57 with its plist left in place, so every later rebuild skipped it
+  # and Herdr silently fell back to a Ghostty-started server. This loads it
+  # when the plist is there but launchd has no such job. It never touches a
+  # loaded agent, so it restarts nothing.
+  home.activation.ensureHerdrServerAgentLoaded =
+    let
+      label = config.launchd.agents.herdr-server.config.Label;
+      plist = "${config.home.homeDirectory}/Library/LaunchAgents/${label}.plist";
+    in
+    lib.hm.dag.entryAfter [ "setupLaunchAgents" ] ''
+      if [[ -f ${lib.escapeShellArg plist} ]] \
+        && ! /bin/launchctl print "gui/$UID/${label}" >/dev/null 2>&1; then
+        warnEcho "The Herdr Server agent was not loaded; loading it."
+        run /bin/launchctl bootstrap "gui/$UID" ${lib.escapeShellArg plist}
+      fi
+    '';
 }

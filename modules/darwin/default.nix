@@ -8,6 +8,7 @@
     ./fonts.nix
     ./github-ssh.nix
     ./homebrew.nix
+    ./log-rotation.nix
     ./macos-defaults.nix
     ./nix.nix
     ./power.nix

@@ -6,31 +6,6 @@
   sudoAskpass,
   ...
 }:
-let
-  # The version a vendored cask pins, read at evaluation time from the SAME
-  # file brew installs from, so the reconcile check below and the artefact it
-  # installs cannot disagree.
-  pinnedCaskVersion =
-    path:
-    let
-      versionLine = builtins.head (
-        builtins.filter (l: lib.hasInfix "version \"" l) (lib.splitString "\n" (builtins.readFile path))
-      );
-    in
-    builtins.head (builtins.match ".*version \"([^\"]+)\".*" versionLine);
-
-  # Every cask served from the in-repo pinned tap, by token. Used twice: the
-  # reconcile step below, and nothing else — the cask DECLARATIONS stay in
-  # homebrew.casks like every other cask.
-  pinnedCasks = {
-    thaw = ../../taps/homebrew-pinned/Casks/thaw.rb;
-  };
-
-  # Mirrors how nix-darwin's own homebrew activation invokes brew: PATH
-  # extended then preserved through sudo, dropping from root to the brew
-  # owner with a clean home.
-  brewAsOwner = "PATH=\"${config.homebrew.prefix}/bin:$PATH\" sudo --preserve-env=PATH --user=${lib.escapeShellArg config.homebrew.user} --set-home brew";
-in
 {
   # Vendor CLIs must also be visible to noninteractive deploy shells. The
   # default brew shellenv integration runs only from /etc/zshrc; the installed
@@ -53,16 +28,6 @@ in
     taps = {
       "homebrew/homebrew-core" = inputs.homebrew-core;
       "homebrew/homebrew-cask" = inputs.homebrew-cask;
-
-      # In-repo tap for casks deliberately held at a version the upstream tap
-      # does not carry — see taps/homebrew-pinned/README.md for its rules. Each
-      # pinned cask's WHY lives at its declaration in the list below.
-      # `builtins.path` fixes the store name so the tap's path does not change
-      # whenever unrelated repository files do.
-      "nix-config/homebrew-pinned" = builtins.path {
-        name = "homebrew-pinned-tap";
-        path = ../../taps/homebrew-pinned;
-      };
     };
   };
 
@@ -203,17 +168,16 @@ in
       # No declared workload requires tailscale-app or tmux. Add either only
       # when a workload in this repository needs it, with that reason recorded.
 
-      # Menu bar manager (an actively maintained fork of Ice), at the newest
-      # release that runs on this macOS: Thaw's 2.x line is macOS 26-only —
-      # its release notes state "Systems on macOS 14 or 15 stay on the 1.x
-      # line" — and upstream homebrew-cask carries only 2.x, so the upstream
-      # `thaw` token cannot install on macOS 15 at all (`depends_on macos:
-      # :tahoe`). Hence the in-repo pinned cask, taps/homebrew-pinned/Casks/thaw.rb.
+      # Menu bar manager (an actively maintained fork of Ice). Upstream's cask
+      # carries the 2.x line, which needs macOS 26 (`depends_on macos:
+      # :tahoe`); this Mac runs macOS 27. Until 2026-10-06 an in-repo cask held
+      # 1.2.0 for macOS 15 — the only reason this repository had a pinned tap.
+      # Sparkle keeps it current (../home/sparkle.nix).
       #
       # modules/home/menu-bar.nix seeds its behavioural defaults. Two things
       # stay manual, documented there: the one-time permission grants Thaw asks
       # for, and which icons live in which section (⌘-drag in the menu bar).
-      "nix-config/pinned/thaw"
+      "thaw"
 
       # The desktop app provides authentication and the CLI is a separate
       # vendor bundle; installing it does not enable secret injection.
@@ -325,30 +289,4 @@ in
       cleanup = "uninstall";
     };
   };
-
-  # Reconcile pinned-tap casks DOWNWARD, which `brew bundle` cannot do: it
-  # installs what is missing and upgrades what is outdated, but an installed
-  # cask NEWER than its declared definition is left in place. Measured on
-  # 2026-09-01, the day the (since removed) chatgpt pin landed: with
-  # 26.831.20005 installed and the vendored cask pinning 26.825.51511,
-  # activation logged "Using chatgpt" and moved nothing. For a normal tap that gap cannot arise;
-  # for a pinned tap it is the entire point of the tap, so activation closes
-  # it explicitly here. Runs after the homebrew activation script (this is
-  # postActivation), compares the installed version against the version the
-  # vendored cask file pins, and reinstalls from the pin only on a mismatch —
-  # activations where the pin already holds run one `brew list` per pinned
-  # cask and change nothing.
-  system.activationScripts.postActivation.text = lib.mkAfter ''
-    if [ -f "${config.homebrew.prefix}/bin/brew" ]; then
-      ${lib.concatStrings (
-        lib.mapAttrsToList (name: path: ''
-          installedVersion="$(${brewAsOwner} list --cask --versions ${name} 2>/dev/null | /usr/bin/awk '{ print $2 }')"
-          if [ -n "$installedVersion" ] && [ "$installedVersion" != "${pinnedCaskVersion path}" ]; then
-            echo "Reconciling cask ${name} to its pin: $installedVersion -> ${pinnedCaskVersion path}" >&2
-            ${brewAsOwner} reinstall --cask nix-config/pinned/${name}
-          fi
-        '') pinnedCasks
-      )}
-    fi
-  '';
 }

@@ -55,7 +55,6 @@ in
     ./network-shares.nix
     ./privacy.nix
     ./projects.nix
-    ./retired-stillpane.nix
     ./screensaver.nix
     ./secrets.nix
     ./sparkle.nix
@@ -208,32 +207,6 @@ in
   # deploy with "aws: failed to get shared config profile, <profile>".
   # The profile definitions are declared; only the keys stay in 1Password.
   nixConfig.secrets.onePassword.aws.enable = true;
-
-  # Home Manager refuses to replace an unmanaged file and aborts the whole
-  # activation, which is what happened on 2026-08-13: a pre-existing global git
-  # ignore file blocked every later step. Clear it, but ONLY on evidence that
-  # its content is the single legacy line now carried in `programs.git.ignores`
-  # above. Anything else means someone added rules that are not declared here,
-  # and those must not be discarded silently.
-  #
-  # Depends on `checkLinkTargets` BY NAME. Both are entryBefore
-  # [ "writeBoundary" ], which puts them in one DAG tier with no ordering
-  # between them, and the check would otherwise run first and abort on the very
-  # file this exists to clear.
-  home.activation.claimGlobalGitIgnore = lib.hm.dag.entryBefore [ "checkLinkTargets" ] ''
-    globalIgnore="${config.xdg.configHome}/git/ignore"
-    legacyContent='**/.claude/.cc-writes/'
-
-    if [[ -f "$globalIgnore" && ! -L "$globalIgnore" ]]; then
-      if [[ "$(< "$globalIgnore")" == "$legacyContent" ]]; then
-        run rm -f "$globalIgnore"
-      else
-        errorEcho "Refusing to replace unmanaged file with unknown content: $globalIgnore"
-        errorEcho "Add its rules to programs.git.ignores in modules/home/default.nix, then remove it."
-        exit 1
-      fi
-    fi
-  '';
 
   # Validate collisions before Home Manager begins writing any managed state.
   home.activation.validateScreenshotsDirectory = lib.hm.dag.entryBefore [ "writeBoundary" ] ''

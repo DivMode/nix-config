@@ -118,20 +118,10 @@ PS1="%n@%m %1~ %# "
 [ -r "/etc/zshrc_$TERM_PROGRAM" ] && . "/etc/zshrc_$TERM_PROGRAM"
 """
 
-# The pre-26 version differs only in this locale check and its comment. Its
-# independently published stock/appended hashes verify the reconstruction.
-OLD_ZSHRC = ZSHRC.replace(
-    b"# Correctly display UTF-8 with combining characters.  We'll assume UTF-8 if the\n"
-    b"# locale(1) binary is missing entirely.\nif [[ ! -x /usr/bin/locale ]] || ",
-    b"# Correctly display UTF-8 with combining characters.\nif ",
-)
 FIXTURES = (
     ("bashrc", BASHRC,
      "444c716ac2ccd9e1e3347858cb08a00d2ea38e8c12fdc5798380dc261e32e9ef",
      "617b39e36fa69270ddbee19ddc072497dbe7ead840cbd442d9f7c22924f116f4"),
-    ("zshrc", OLD_ZSHRC,
-     "fb5827cb4712b7e7932d438067ec4852c8955a9ff0f55e282473684623ebdfa1",
-     "40b0d8751adae5b0100a4f863be5b75613a49f62706427e92604f7e04d2e2261"),
     ("zshrc", ZSHRC,
      "4d1ab5704f9d167a042fecac0d056c8a79a8ebd71e032d3489536c8db9ffe3e0",
      "bf76c5ed8e65e616f4329eccf662ee91be33b8bfd33713ce9946f2fe94fea7fa"),

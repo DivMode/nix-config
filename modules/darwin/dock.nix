@@ -25,16 +25,18 @@ let
       # /System/Applications/Launchpad.app does not exist and its pin rendered
       # as a question mark.
       "/System/Applications/Apps.app"
-      "/Applications/Google Chrome.app"
-      # No Gmail pin. The shim Chrome creates from the WebAppInstallForceList
-      # policy did not work until the PWA was added again by hand inside the
-      # signed-in profile (2026-10-06), so a pin to it is a broken tile on
-      # every new machine.
-      "/Applications/ChatGPT.app"
       # Home Manager owns Ghostty (modules/home/terminal.nix) and, from
       # stateVersion 25.11 onward, copies rather than symlinks bundles into
       # this directory so Spotlight and LaunchServices resolve them.
       "${local.homeDirectory}/Applications/Home Manager Apps/Ghostty.app"
+      "/Applications/Google Chrome.app"
+      # The shim Chrome creates from ./chrome.nix's WebAppInstallForceList.
+      # Before the profile is signed in to Google it belongs to a placeholder
+      # app, which now carries the Gmail name and icon (custom_icon), so the
+      # tile is right from the first login; after signing in and reopening
+      # Chrome once, the real app's shim takes the same path.
+      "${local.homeDirectory}/Applications/Chrome Apps.localized/Gmail.app"
+      "/Applications/ChatGPT.app"
     ];
 
     # The downloads directory, as a Dock stack. Absolute path deliberately: a

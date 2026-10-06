@@ -77,9 +77,9 @@ unmounted share; the stack renders the path it was given.
 PWA through Chrome's supported `WebAppInstallForceList` platform policy, and
 the Loom screen-recorder extension through `ExtensionInstallForcelist`.
 Chrome—not Nix—creates the native `~/Applications/Chrome Apps.localized/Gmail.app`
-shim after each profile first processes the policy. The Dock does not pin it:
-that shim did not work until the app was added again by hand inside the
-signed-in profile (2026-10-06).
+shim after each profile first processes the policy, and the Dock pins it right
+after Chrome. The policy's `custom_icon` gives the shim the Gmail icon even
+before the profile is signed in; after signing in, quit and reopen Chrome once.
 
 That generated policy file carries only keys that are mandatory-only upstream,
 and the receipt guard and reconciler daemon around it exist only for those.

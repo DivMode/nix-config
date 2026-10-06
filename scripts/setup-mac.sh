@@ -310,9 +310,9 @@ fi
 
 stage "Restore local.nix from 1Password" 1
 # Each Mac's local.nix lives in 1Password as the Secure Note
-# "nix-config local.nix <hostname>", saved by every rebuild. A new Mac takes
-# one over: the old hostname comes with it, and the first switch renames this
-# Mac to match, so nothing has to be renamed by hand first.
+# "nix-config local.nix <hostname>", saved by every rebuild. A new Mac copies
+# one and keeps its own macOS hostname; its first rebuild saves a new note
+# under that name.
 local_is_complete() {
   [[ -s "$LOCAL_FILE" ]] \
     && read_local_optional_attr "git.signingKeyReference" 2>/dev/null | grep -q '^op://' \
@@ -354,14 +354,24 @@ else
       exit 1
     fi
   done
+  # This Mac keeps the name macOS gave it: take the old Mac's settings but
+  # record this Mac's own hostname, so nothing is renamed and every rebuild
+  # backs up under this Mac's name.
+  if [[ $(grep -c '^  hostName = ".*";$' "$restored") -ne 1 ]]; then
+    warn "ERROR: the stored local.nix does not have exactly one 'hostName = \"...\";' line."
+    exit 1
+  fi
+  /usr/bin/sed -i '' "s/^  hostName = \".*\";\$/  hostName = \"$MAC_HOST\";/" "$restored"
+  [[ "$(SETUP_LOCAL="$restored" NIX_CONFIG="extra-experimental-features = nix-command flakes" \
+      "$NIX_BIN" eval --impure --raw --expr \
+      '(import (builtins.toPath (builtins.getEnv "SETUP_LOCAL"))).hostName')" == "$MAC_HOST" ]] \
+    || { warn "ERROR: could not set hostName to $MAC_HOST in the restored local.nix."; exit 1; }
   chmod 600 "$restored"
   mv "$restored" "$LOCAL_FILE"
   rm -rf "$restore_dir"
   trap - EXIT
-  say "Restored local.nix from '$note_title'."
+  say "Restored local.nix from '$note_title' for this Mac ($MAC_HOST)."
 fi
-TARGET_HOST=$(read_local_attr hostName)
-[[ "$TARGET_HOST" == "$MAC_HOST" ]] || say "This Mac will be renamed from $MAC_HOST to $TARGET_HOST."
 
 stage "Install the declared system" 8
 # Install-only first generation: applications and tools, credential checks deferred.
@@ -388,8 +398,8 @@ else
 fi
 
 stage "Apply the final configuration" 3
-# The routine rebuild: final switch (which renames this Mac to local.nix's
-# hostName), then the local.nix backup saved to 1Password through Connect.
+# The routine rebuild: final switch, then the local.nix backup saved to
+# 1Password through Connect under this Mac's name.
 "$REPO_ROOT/scripts/rebuild.sh"
 # GitHub pushes go through the declared Connect-backed SSH transport.
 git -C "$REPO_ROOT" remote set-url origin git@github.com:DivMode/nix-config.git

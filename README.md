@@ -56,8 +56,8 @@ curl -fsSL https://raw.githubusercontent.com/DivMode/nix-config/main/scripts/boo
 
 It installs the Command Line Tools and Nix, clones this repository, and runs the
 setup wizard, which asks only for the 1Password Connect URL and token, restores
-`local.nix` from its 1Password Secure Note, and applies everything (renaming the
-Mac to match). Details: [`docs/setup/new-mac.md`](docs/setup/new-mac.md).
+`local.nix` from its 1Password Secure Note (keeping this Mac's own name), and
+applies everything. Details: [`docs/setup/new-mac.md`](docs/setup/new-mac.md).
 
 The manual short path is:
 

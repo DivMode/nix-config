@@ -6,7 +6,7 @@ contains no personal or machine identity.
 ## One command
 
 1. In Setup Assistant, create the macOS account with the same short name as
-   the Mac it replaces (the stored `local.nix` names it).
+   the Mac it replaces (the stored `local.nix` names it). Any computer name is fine.
 2. Plug in the external `Data` drive and join the network the 1Password Connect
    server is on.
 3. In Terminal:
@@ -15,8 +15,10 @@ contains no personal or machine identity.
    curl -fsSL https://raw.githubusercontent.com/DivMode/nix-config/main/scripts/bootstrap.sh | bash
    ```
 
-4. When asked, paste the Connect URL and token (copy them from 1Password on a
-   phone or the web; the desktop application is not needed). Approve the
+4. When asked, paste the Connect URL (`onePassword.connectHost` in the old
+   Mac's `local.nix`) and the Connect token (the `access-token` field of the
+   Connect server's credentials item in 1Password; copy it on a phone or the
+   web; the desktop application is not needed). Approve the
    password dialogs.
 5. Grant the macOS permissions listed in the manual checklist below.
 
@@ -28,8 +30,9 @@ finds the stored `nix-config local.nix <hostname>` Secure Note through Connect
 (choosing automatically when there is one, or when one matches this Mac's
 name), checks that its account, home and architecture match this Mac, installs
 everything declared, seeds the network-share password from Connect, and runs
-`scripts/rebuild.sh`, whose switch renames this Mac to the stored hostname and
-then saves the backup. Nothing uses the 1Password desktop application, the
+`scripts/rebuild.sh`. The Mac keeps the name macOS gave it: the restored
+`local.nix` gets this Mac's hostname, and the first rebuild saves a new note
+under it. Nothing uses the 1Password desktop application, the
 `op` CLI or a service account, and any failure stops with the reason.
 
 ## Manual fallback

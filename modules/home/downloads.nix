@@ -1,41 +1,71 @@
 {
   lib,
   local,
+  pkgs,
   ...
 }:
-{
-  # One owner for the download directory's EXISTENCE. dock.nix and chrome.nix
-  # only name it.
-  #
-  # It has to exist before either of them is useful, and both fail quietly when
-  # it does not: a Dock stack pinned to a missing path renders as a question
-  # mark and never re-checks, and Chrome cannot create a directory under
-  # /Volumes itself, that being root:wheel drwxr-xr-x.
+let
+  volumeMatch = builtins.match "/Volumes/([^/]+)(/.*)?" local.downloadsDirectory;
+  volumeRoot = if volumeMatch == null then "" else "/Volumes/${builtins.head volumeMatch}";
 
-  # Validate collisions before Home Manager begins writing any managed state,
-  # matching the screenshots directory in ./default.nix.
-  home.activation.validateDownloadsDirectory = lib.hm.dag.entryBefore [ "writeBoundary" ] ''
+  # Both phases check again: a volume can disappear between validation and
+  # writing. /Volumes/<name> belongs to the volume mounter, not Home Manager.
+  # network-shares.nix deliberately defers mounting during install-only setup
+  # until setup-mac.sh seeds the Keychain; creating a local mountpoint here
+  # would either fail as the user or occupy the path before NetFS mounts it.
+  checkDownloadsDirectory = ''
     downloadsDirectory=${lib.escapeShellArg local.downloadsDirectory}
+    downloadsVolume=${lib.escapeShellArg volumeRoot}
+    downloadsReady=1
 
-    if [[ -L "$downloadsDirectory" || ( -e "$downloadsDirectory" && ! -d "$downloadsDirectory" ) ]]; then
-      echo "Cannot create $downloadsDirectory because a symlink or non-directory already exists" >&2
-      exit 1
+    for path in "$downloadsDirectory" "$downloadsVolume"; do
+      if [[ -n "$path" && ( -L "$path" || ( -e "$path" && ! -d "$path" ) ) ]]; then
+        echo "Cannot use $path for downloads because a symlink or non-directory already exists" >&2
+        exit 1
+      fi
+    done
+
+    if [[ -n "$downloadsVolume" ]]; then
+      # Directory existence is not proof of a mount: a stale empty directory
+      # must not become an accidental download destination on the system disk.
+      downloadsMounted=$(${pkgs.python3}/bin/python3 -c \
+        'import os, sys; print("yes" if os.path.ismount(sys.argv[1]) else "no")' \
+        "$downloadsVolume")
+      if [[ "$downloadsMounted" == no ]]; then
+        downloadsReady=0
+      fi
     fi
 
-    # The parent is checked separately so an unmounted external volume reports
-    # itself. Without this the failure arrives as a bare "Permission denied"
-    # from mkdir — /Volumes is root-owned, so a user agent cannot create a
-    # mountpoint there — which reads as a permissions bug rather than as a disk
-    # that is not plugged in.
-    downloadsParent=$(dirname "$downloadsDirectory")
-    if [[ ! -d "$downloadsParent" ]]; then
-      echo "Cannot create $downloadsDirectory because $downloadsParent does not exist; is that volume mounted?" >&2
-      exit 1
+    if [[ "$downloadsReady" == 1 ]]; then
+      if [[ -d "$downloadsDirectory" ]]; then
+        if [[ ! -w "$downloadsDirectory" || ! -x "$downloadsDirectory" ]]; then
+          echo "Downloads directory $downloadsDirectory is not writable/searchable by the current user" >&2
+          exit 1
+        fi
+      else
+        downloadsParent=$(dirname "$downloadsDirectory")
+        if [[ ! -d "$downloadsParent" || ! -w "$downloadsParent" || ! -x "$downloadsParent" ]]; then
+          echo "Cannot create $downloadsDirectory: parent $downloadsParent is missing or not writable/searchable" >&2
+          exit 1
+        fi
+      fi
     fi
   '';
+in
+{
+  # Only local directories (or subdirectories of a mounted volume) are ours to
+  # create. Missing volumes are a normal offline/bootstrap state, not a reason
+  # to block installation. Chrome and the Dock keep the declared path; no
+  # alternate destination or symlink is introduced while storage is offline.
+  home.activation.validateDownloadsDirectory = lib.hm.dag.entryBefore [ "writeBoundary" ]
+    checkDownloadsDirectory;
 
-  # `run` preserves Home Manager's dry-run behavior.
   home.activation.ensureDownloadsDirectory = lib.hm.dag.entryAfter [ "writeBoundary" ] ''
-    run mkdir -p ${lib.escapeShellArg local.downloadsDirectory}
+    ${checkDownloadsDirectory}
+    if [[ "$downloadsReady" == 0 ]]; then
+      echo "Downloads volume $downloadsVolume is not mounted; leaving $downloadsDirectory unchanged. Downloads require that volume."
+    elif [[ ! -d "$downloadsDirectory" ]]; then
+      run mkdir -p "$downloadsDirectory"
+    fi
   '';
 }

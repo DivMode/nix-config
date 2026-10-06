@@ -62,12 +62,37 @@ let
 
     WebAppInstallForceList = [
       {
-        # Google publishes this endpoint specifically for managed Gmail PWA
-        # installation. Authentication remains inside each Chrome profile.
+        # The URL Chromium itself maps the old Gmail Chrome App to for policy
+        # installs (components/policy/core/common/
+        # default_chrome_apps_migrator.cc). Authentication remains inside each
+        # Chrome profile.
+        #
+        # Until that profile is signed in to Google, every Gmail URL redirects
+        # to accounts.google.com, which Chrome treats as a failed load and
+        # answers with a PLACEHOLDER app (chrome/browser/web_applications/jobs/
+        # install_placeholder_job.cc): the policy URL as its start URL, and no
+        # icon at all unless the policy gives one. That was the broken,
+        # iconless Gmail.app on 2026-10-05. Chrome swaps in the real app only
+        # at profile start, on a policy change, or when a tab lands on exactly
+        # this URL — so after signing in, quit and reopen Chrome once. Do not
+        # add Gmail by hand as well; that creates a second app.
         url = "https://mail.google.com/mail/installwebapp?usp=admin";
         default_launch_container = "window";
-        fallback_app_name = "Gmail";
+        # `fallback_app_name` is ignored whenever `custom_name` is set
+        # (policy_definitions/.../WebAppInstallForceList.yaml), so it is gone.
         custom_name = "Gmail";
+        # The only icon a placeholder can have, and kept by the real app too.
+        # This is the 512 px icon Gmail's own manifest
+        # (mail.google.com/mail/manifest.json) lists. Fetched 2026-10-06
+        # without signing in: HTTP 200, 512×512 PNG, 19,082 bytes. Chrome
+        # downloads it without cookies, over HTTPS only, and uses it only if
+        # its SHA-256 matches; if Google ever changes those bytes the
+        # placeholder loses its icon, while the real app falls back to the
+        # manifest's icons.
+        custom_icon = {
+          url = "https://ssl.gstatic.com/images/branding/productlogos/gmail_2026/v2/web-512dp/logo_gmail_2026_color_1x_web_512dp.png";
+          hash = "19fcd9c6f32b12c49a8ca8ed6c2f00ec83d7b93bd9c0cb582809b77a11e98053";
+        };
       }
     ];
 

@@ -145,126 +145,15 @@ let
   # the cached service-account token instead, and forces service-account mode:
   # with OP_CONNECT_* inherited, `op item get --fields` fails outright, because
   # Connect refuses every non-JSON output format.
+  # Connect only (scripts/aws-credential-connect.py): no `op`, no service
+  # account, no fallback. If Connect cannot answer, the aws call fails loudly.
   awsCredentialProcess = pkgs.writeShellApplication {
-    name = "op-aws-credential-process";
-
-    # curl is declared, not inherited. `credential_process` is executed by the
-    # AWS SDK, not by a login shell, so PATH is whatever that caller happened to
-    # have — and a heartbeat probe that silently fails to find curl would send
-    # every read down the service-account path, quietly spending the daily
-    # budget this helper exists to protect.
-    runtimeInputs = [ pkgs.curl ];
-
+    name = "aws-credential-connect";
     text = ''
-      vault="''${1:?vault name required}"
-      item="''${2:?1Password item title required}"
-
-      # Prefer Connect, which serves reads from the LAN server and does NOT
-      # spend the service account's 1,000 request/24h account-wide budget.
-      # `credential_process` runs on EVERY aws invocation, so charging that
-      # budget here would exhaust it through ordinary use.
-      #
-      # The choice is made on REACHABILITY, not on whether connect.env exists —
-      # and that distinction is the whole bug this replaced. The previous
-      # version tested `[ -r connect.env ]` and its comment claimed it fell back
-      # "only when Connect is absent (off-LAN)". Going off-LAN does not delete
-      # the file. It stayed readable, Connect was sourced anyway, `op read` then
-      # tried to reach a LAN address that was not there, and the `elif` holding
-      # the service-account fallback could never execute. The fallback was
-      # unreachable code, so every `aws` call away from the LAN failed with no
-      # second chance — a deploy path that worked at a desk and not on a train.
-      #
-      # A one-second heartbeat is cheap on-LAN (single-digit milliseconds) and
-      # bounds the off-LAN penalty rather than waiting out op's own timeout.
-      connectEnv=${escapeShellArg cfg.connect.envPath}
-      tokenPath=${escapeShellArg cfg.serviceAccount.tokenPath}
-      useConnect=0
-
-      if [ -r "$connectEnv" ]; then
-        connectHost=$(
-          # shellcheck source=/dev/null
-          . "$connectEnv" >/dev/null 2>&1
-          printf '%s' "''${OP_CONNECT_HOST:-}"
-        )
-        if [ -n "$connectHost" ] \
-          && curl -fsS -m 1 -o /dev/null "$connectHost/heartbeat" 2>/dev/null; then
-          useConnect=1
-        fi
-      fi
-
-      # Reads through whichever path is live, and if the preferred one fails
-      # anyway — Connect up but refusing, a rotated token — tries the other
-      # rather than surfacing a partial credential.
-      readSecret() {
-        if [ "$useConnect" = 1 ]; then
-          if value=$(
-            set -a
-            # shellcheck source=/dev/null
-            . "$connectEnv"
-            set +a
-            ${escapeShellArg opExecutable} read "$1" 2>/dev/null
-          ); then
-            printf '%s' "$value"
-            return 0
-          fi
-        fi
-
-        if [ -r "$tokenPath" ]; then
-          if value=$(
-            OP_SERVICE_ACCOUNT_TOKEN="$(cat "$tokenPath")" \
-              ${escapeShellArg opExecutable} read "$1" 2>/dev/null
-          ); then
-            printf '%s' "$value"
-            return 0
-          fi
-        fi
-
-        return 1
-      }
-
-      # `op read` with an item ID, not `op item get --fields`: under Connect the
-      # CLI refuses every non-JSON output format, so `--fields` cannot work
-      # there. The ID also sidesteps the reference parser rejecting the '(' in
-      # these items' titles — both constraints measured 2026-08-13.
-      if ! access_key_id=$(readSecret "op://$vault/$item/access key id") \
-        || ! secret_access_key=$(readSecret "op://$vault/$item/secret access key"); then
-        printf '%s\n' "could not read AWS credentials for $item from 1Password (Connect unreachable and no usable service-account token)" >&2
-        exit 1
-      fi
-
-      # Both or neither. A half-resolved pair printed as JSON is accepted by the
-      # AWS SDK and then fails much further downstream as an opaque signature
-      # error, rather than here where the cause is obvious.
-      if [ -z "$access_key_id" ] || [ -z "$secret_access_key" ]; then
-        printf '%s\n' "1Password returned an empty AWS credential field for $item" >&2
-        exit 1
-      fi
-
-      printf '{"Version":1,"AccessKeyId":"%s","SecretAccessKey":"%s"}\n' \
-        "$access_key_id" "$secret_access_key"
+      exec ${pkgs.python3}/bin/python3 ${../../scripts/aws-credential-connect.py} \
+        ${escapeShellArg cfg.connect.envPath} "$@"
     '';
   };
-
-  # The connect.env content derives from `connectHost` and `connectReference`
-  # alone — the host is NOT restated as a separate mapping, so each machine
-  # types it exactly once in local.nix. The host is a literal known at
-  # evaluation time; the token is resolved at activation, so no secret reaches
-  # the store.
-  connectEnvLines = ''
-    if ! printf '%s=%s\n' OP_CONNECT_HOST ${escapeShellArg local.onePassword.connectHost} >> "$tmp"; then
-      printf '%s\n' 'Could not write OP_CONNECT_HOST to the temporary Connect environment file.' >&2
-      exit 1
-    fi
-    if value=$(${escapeShellArg opExecutable} read ${escapeShellArg local.onePassword.connectReference} 2>/dev/null) && [ -n "$value" ]; then
-      if ! printf '%s=%s\n' OP_CONNECT_TOKEN "$value" >> "$tmp"; then
-        printf '%s\n' 'Could not write OP_CONNECT_TOKEN to the temporary Connect environment file.' >&2
-        exit 1
-      fi
-    else
-      printf '%s\n' 'Could not resolve OP_CONNECT_TOKEN from 1Password; the Connect environment file was not written.' >&2
-      resolved=0
-    fi
-  '';
 
   awsConfigText = concatStringsSep "\n" (
     mapAttrsToList (profileName: profile: ''
@@ -542,93 +431,23 @@ in
       # writeBoundary: both would otherwise land in one DAG tier with no
       # ordering between them, and this entry needs that token to already
       # exist so its `op read` can authenticate headlessly.
-      home.activation.onePasswordConnectEnv =
-        lib.hm.dag.entryAfter [ "onePasswordServiceAccountToken" ]
-          ''
-            envPath=${escapeShellArg cfg.connect.envPath}
-            if ${if setupBootstrap then "true" else "false"}; then
-              printf '%s\n' 'First-generation setup: Connect refresh deferred until after interactive sign-in.' >&2
-            elif [ ! -s ${escapeShellArg cfg.serviceAccount.tokenPath} ]; then
-              if [ ! -x ${escapeShellArg opExecutable} ]; then
-                printf '%s\n' '1Password CLI is unavailable during routine Connect refresh; refusing to continue.' >&2
-                exit 1
-              else
-                printf '%s\n' 'Cached 1Password service-account token is missing; Connect refresh cannot use the desktop session.' >&2
-                exit 1
-              fi
-            elif [ ! -x ${escapeShellArg opExecutable} ]; then
-              printf '%s\n' '1Password CLI is unavailable while a cached service-account token exists.' >&2
-              exit 1
-            else
-              if [ -n "''${OP_CONNECT_HOST:-}" ] || [ -n "''${OP_CONNECT_TOKEN:-}" ]; then
-                printf '%s\n' 'Connect variables are already set; refusing to refresh through an inherited credential context.' >&2
-                exit 1
-              fi
-              # Authenticate with the cached service-account token. Activation runs
-              # from darwin-rebuild, NOT a login zsh, so OP_SERVICE_ACCOUNT_TOKEN is
-              # absent from this environment. Read it explicitly so `op` cannot
-              # fall back to the desktop application.
-              OP_SERVICE_ACCOUNT_TOKEN="$(cat ${escapeShellArg cfg.serviceAccount.tokenPath})"
-              if [ -z "$OP_SERVICE_ACCOUNT_TOKEN" ]; then
-                printf '%s\n' 'Cached 1Password service-account token is empty; Connect refresh aborted.' >&2
-                exit 1
-              fi
-              export OP_SERVICE_ACCOUNT_TOKEN
-              mkdir -p "$(dirname "$envPath")"
-              if ! (
-                umask 077
-                tmp="$(mktemp "''${envPath}.tmp.XXXXXX")" || {
-                  printf '%s\n' 'Could not create a private temporary Connect environment file.' >&2
-                  exit 1
-                }
-                trap 'rm -f "$tmp"' EXIT
-                resolved=1
-                ${connectEnvLines}
-                # All-or-nothing. A half-written file exports some variables and
-                # silently omits others, which surfaces much further downstream —
-                # as a provider "not initialized" error mid-deploy rather than here.
-                # Rewrite only when the resolved content actually differs, per
-                # the cmp -s rule for activation entries that run every rebuild.
-                # This entry used to skip entirely when the file merely existed,
-                # which meant a rotated Connect token could never reach the file:
-                # granting the server a new vault requires issuing a NEW token
-                # (vault scope is fixed per token), and activation kept serving
-                # the old one until the file was deleted by hand. Observed
-                # 2026-08-21, two rebuilds with no effect.
-                if [ "$resolved" = 1 ]; then
-                  publish=1
-                  if [ -e "$envPath" ]; then
-                    if cmp -s "$tmp" "$envPath"; then
-                      rm -f "$tmp"
-                      publish=0
-                    else
-                      cmp_status=$?
-                      if [ "$cmp_status" -ne 1 ]; then
-                        printf '%s\n' 'Could not compare the refreshed Connect environment with the existing file.' >&2
-                        exit 1
-                      fi
-                    fi
-                  fi
-                  if [ "$publish" = 1 ]; then
-                    if ! chmod 600 "$tmp"; then
-                      printf '%s\n' 'Could not set private permissions on the Connect environment file.' >&2
-                      exit 1
-                    fi
-                    if ! mv "$tmp" "$envPath"; then
-                      printf '%s\n' 'Could not publish the refreshed Connect environment file.' >&2
-                      exit 1
-                    fi
-                  fi
-                else
-                  rm -f "$tmp"
-                  exit 1
-                fi
-              ); then
-                printf '%s\n' 'Could not refresh the 1Password Connect environment with the cached service-account token.' >&2
-                exit 1
-              fi
-            fi
-          '';
+      # Connect is the only 1Password path. Activation never calls `op` and
+      # never refreshes the token: the human setup writes this 0600 file once
+      # (scripts/setup-mac.sh). A missing or incomplete file fails loudly.
+      home.activation.onePasswordConnectEnv = lib.hm.dag.entryAfter [ "writeBoundary" ] ''
+        envPath=${escapeShellArg cfg.connect.envPath}
+        if ${if setupBootstrap then "true" else "false"}; then
+          printf '%s\n' 'First-generation setup: the Connect environment is written by the setup wizard.' >&2
+        elif [ ! -s "$envPath" ] \
+          || ! /usr/bin/grep -q '^OP_CONNECT_HOST=.' "$envPath" \
+          || ! /usr/bin/grep -q '^OP_CONNECT_TOKEN=.' "$envPath"; then
+          printf '%s\n' "ERROR: $envPath is missing or incomplete. Everything that reads 1Password uses Connect only; run scripts/setup-mac.sh connect to write it." >&2
+          exit 1
+        elif [ "$(/usr/bin/stat -f %Lp "$envPath")" != 600 ]; then
+          printf '%s\n' "ERROR: $envPath must be mode 600." >&2
+          exit 1
+        fi
+      '';
     })
 
     (mkIf cfg.aws.enable {

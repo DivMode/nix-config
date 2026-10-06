@@ -104,7 +104,6 @@ if ! LOCAL_PATH="$local_file" REPO_PATH="$repository" CANONICAL_REPO_PATH="$cano
       ++ awsVaults
       ++ [
         (local.user or "")
-        (local.hostName or "")
         (local.homeDirectory or "")
         (local.git.name or "")
         (local.git.email or "")

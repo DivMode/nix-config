@@ -267,13 +267,12 @@ stage "Detect this Mac" 1
 [[ "$(uname -s)" == "Darwin" ]] || { warn "This wizard supports macOS only."; exit 1; }
 MAC_USER=$(id -un)
 MAC_HOME="$HOME"
-MAC_HOST=$(/usr/sbin/scutil --get LocalHostName)
 case "$(uname -m)" in
   arm64) MAC_SYSTEM="aarch64-darwin" ;;
   x86_64) MAC_SYSTEM="x86_64-darwin" ;;
   *) warn "Unsupported Mac architecture: $(uname -m)"; exit 1 ;;
 esac
-say "Detected $MAC_USER on $MAC_HOST ($MAC_SYSTEM)."
+say "Detected $MAC_USER ($MAC_SYSTEM)."
 
 stage "Connect to 1Password Connect" 2
 # The one credential this Mac is given by hand. Everything that reads or writes
@@ -315,10 +314,8 @@ else
 fi
 
 stage "Restore local.nix from 1Password" 1
-# Each Mac's local.nix lives in 1Password as the Secure Note
-# "nix-config local.nix <hostname>", saved by every rebuild. A new Mac copies
-# one and keeps its own macOS hostname; its first rebuild saves a new note
-# under that name.
+# local.nix lives in 1Password as the one Secure Note "nix-config local.nix",
+# saved by every rebuild. Found by its exact title in whichever vault holds it.
 local_is_complete() {
   [[ -s "$LOCAL_FILE" ]] \
     && read_local_optional_attr "git.signingKeyReference" 2>/dev/null | grep -q '^op://' \
@@ -329,8 +326,8 @@ local_attr_of() {
     "$NIX_BIN" eval --impure --raw --expr \
     "(import (builtins.toPath (builtins.getEnv \"SETUP_LOCAL\"))).$2" 2>/dev/null
 }
-# Account, home and architecture must match this Mac; the hostname becomes this
-# Mac's own (nothing is renamed). Applies to a restored and an existing file.
+# Account, home and architecture must match this Mac. The computer's name is
+# not configuration (macOS owns it). Applies to a restored and an existing file.
 adopt_local() {
   local file="$1" attr expected actual
   for attr_and_expected in "user|$MAC_USER" "system|$MAC_SYSTEM" "homeDirectory|$MAC_HOME"; do
@@ -342,47 +339,16 @@ adopt_local() {
       return 1
     fi
   done
-  if [[ "$(local_attr_of "$file" hostName)" != "$MAC_HOST" ]]; then
-    # Rewrite only the quoted value of the one top-level hostName assignment,
-    # whatever its indentation or trailing comment; nix eval confirms it.
-    if ! MAC_HOST="$MAC_HOST" /usr/bin/python3 -I - "$file" <<'PY'
-import os, re, sys
-path = sys.argv[1]
-text = open(path).read()
-pattern = re.compile(r'(\bhostName\s*=\s*")[^"\n]*(")')
-if len(pattern.findall(text)) != 1:
-    sys.exit(1)
-open(path, "w").write(pattern.sub(lambda m: m.group(1) + os.environ["MAC_HOST"] + m.group(2), text))
-PY
-    then
-      warn "ERROR: local.nix does not have exactly one hostName = \"...\" assignment."
-      return 1
-    fi
-    [[ "$(local_attr_of "$file" hostName)" == "$MAC_HOST" ]] \
-      || { warn "ERROR: could not set hostName to $MAC_HOST in local.nix."; return 1; }
-  fi
 }
 if local_is_complete; then
   adopt_local "$LOCAL_FILE" || exit 1
   say "local.nix is complete and matches this Mac; keeping it."
 else
-  notes=$("${CONNECT_NOTE[@]}" "$CONNECT_ENV" list "nix-config local.nix ") \
-    || { warn "ERROR: could not list local.nix notes through Connect (see above)."; exit 1; }
-  [[ -n "$notes" ]] || { warn "ERROR: Connect sees no 'nix-config local.nix <hostname>' Secure Note. Check the token's vault access."; exit 1; }
-  count=$(printf '%s\n' "$notes" | wc -l | tr -d ' ')
-  if [[ "$count" -eq 1 ]]; then
-    choice="$notes"
-  elif match=$(printf '%s\n' "$notes" | awk -F'\t' -v t="nix-config local.nix $MAC_HOST" '$2 == t') && [[ -n "$match" ]]; then
-    choice="$match"
-  else
-    # Only when 1Password holds several Macs and none has this Mac's name.
-    say "Several Macs are stored in 1Password:"
-    printf '%s\n' "$notes" | awk -F'\t' '{ printf "    %d) %s  (%s)\n", NR, substr($2, 22), $1 }'
-    ask NOTE_NUMBER "Number of the Mac this one replaces:"
-    [[ "$NOTE_NUMBER" =~ ^[0-9]+$ ]] && (( NOTE_NUMBER >= 1 && NOTE_NUMBER <= count )) \
-      || { warn "Enter a number from 1 to $count."; exit 1; }
-    choice=$(printf '%s\n' "$notes" | sed -n "${NOTE_NUMBER}p")
-  fi
+  notes=$("${CONNECT_NOTE[@]}" "$CONNECT_ENV" list "nix-config local.nix") \
+    || { warn "ERROR: could not search 1Password through Connect (see above)."; exit 1; }
+  count=$(printf '%s' "$notes" | grep -c . || true)
+  [[ "$count" -eq 1 ]] || { warn "ERROR: expected exactly one 'nix-config local.nix' Secure Note visible to the Connect token; found $count."; exit 1; }
+  choice="$notes"
   note_vault=$(printf '%s' "$choice" | cut -f1)
   note_title=$(printf '%s' "$choice" | cut -f2)
   restore_dir=$(mktemp -d "$REPO_ROOT/.local.nix.restore.XXXXXX")
@@ -395,7 +361,7 @@ else
   mv "$restored" "$LOCAL_FILE"
   rm -rf "$restore_dir"
   trap - EXIT
-  say "Restored local.nix from '$note_title' for this Mac ($MAC_HOST)."
+  say "Restored local.nix from 1Password."
 fi
 
 stage "Install the declared system" 8
@@ -425,7 +391,7 @@ fi
 
 stage "Apply the final configuration" 3
 # The routine rebuild: final switch, then the local.nix backup saved to
-# 1Password through Connect under this Mac's name.
+# 1Password through Connect.
 "$REPO_ROOT/scripts/rebuild.sh"
 # GitHub pushes go through the declared Connect-backed SSH transport.
 git -C "$REPO_ROOT" remote set-url origin git@github.com:DivMode/nix-config.git

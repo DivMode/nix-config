@@ -9,6 +9,7 @@ import http.client
 import json
 import re
 import sys
+import threading
 import time
 import urllib.error
 import urllib.parse
@@ -21,6 +22,10 @@ ID = re.compile(r"[a-z0-9]{26}")
 
 class ConnectError(Exception):
     """A Connect failure whose message is safe to print."""
+
+
+class NotFound(ConnectError):
+    """Connect answered 404."""
 
 
 class _NoRedirect(urllib.request.HTTPRedirectHandler):
@@ -61,7 +66,8 @@ class Connect:
             with urllib.request.build_opener(_NoRedirect).open(request, timeout=timeout) as response:
                 body = response.read(limit + 1)
         except urllib.error.HTTPError as error:
-            raise ConnectError(f"Connect returned HTTP {error.code} for {path.split('?')[0]}") from None
+            kind = NotFound if error.code == 404 else ConnectError
+            raise kind(f"Connect returned HTTP {error.code} for {path.split('?')[0]}") from None
         except (OSError, http.client.HTTPException):
             # Never echo the response: a malformed status line can carry its text.
             raise ConnectError(f"Connect at {self.host} is unreachable or answered malformed HTTP") from None
@@ -165,9 +171,9 @@ class Connect:
             raise ConnectError("the Connect token sees no vaults")
         return len(vaults)
 
-    def notes_titled(self, prefix):
-        """(vault name, title) of every Secure Note whose title starts with
-        `prefix`, across the vaults this token can see."""
+    def notes_titled(self, title):
+        """(vault name, title) of every Secure Note titled exactly `title`,
+        across the vaults this token can see."""
         vaults = self.get("/v1/vaults")
         if not isinstance(vaults, list):
             raise ConnectError("Connect returned an invalid vault list")
@@ -178,9 +184,28 @@ class Connect:
             items = self.get(f"/v1/vaults/{vault['id']}/items")
             for item in items if isinstance(items, list) else []:
                 if (isinstance(item, dict) and item.get("category") == "SECURE_NOTE"
-                        and isinstance(item.get("title"), str) and item["title"].startswith(prefix)):
+                        and item.get("title") == title):
                     found.append((str(vault.get("name", vault["id"])), item["title"]))
         return sorted(found)
+
+    @staticmethod
+    def _within(seconds, call):
+        """Run `call` but give up after `seconds` of wall time, even if a slow
+        response keeps each socket read under its own timeout."""
+        outcome = {}
+        def target():
+            try:
+                outcome["value"] = call()
+            except BaseException as error:  # handed to the caller below
+                outcome["error"] = error
+        worker = threading.Thread(target=target, daemon=True)
+        worker.start()
+        worker.join(max(0.0, seconds))
+        if worker.is_alive():
+            raise ConnectError("Connect did not answer within the time left")
+        if "error" in outcome:
+            raise outcome["error"]
+        return outcome["value"]
 
     def note_text(self, vault, title):
         item = self._note(self.vault_id(vault), title)
@@ -195,6 +220,14 @@ class Connect:
         """Create or update the note, then read it back; returns 'created',
         'updated' or 'unchanged'. Fails unless the stored text matches."""
         vault_id = self.vault_id(vault)
+        # One note in all of 1Password, not one per vault: setup finds it by
+        # title across every vault and refuses two.
+        elsewhere = [v for v, _ in self.notes_titled(title) if v != vault]
+        vault_name = next((str(v.get("name")) for v in self.get("/v1/vaults")
+                           if isinstance(v, dict) and v.get("id") == vault_id), vault)
+        elsewhere = [v for v in elsewhere if v != vault_name]
+        if elsewhere:
+            raise ConnectError(f"a '{title}' note also exists in vault {elsewhere[0]}; keep only the one in {vault_name}")
         item = self._note(vault_id, title)
         if item is None:
             written = self.get(f"/v1/vaults/{vault_id}/items", method="POST", body={
@@ -223,7 +256,12 @@ class Connect:
             if remaining <= 0:
                 raise ConnectError(f"the stored {title} still does not match 60 s after the write")
             # Each read gets only the time left, so the whole check ends by 60 s.
-            stored = self.get(f"/v1/vaults/{vault_id}/items/{item_id}", timeout=min(15.0, remaining))
+            try:
+                stored = self._within(remaining, lambda: self.get(
+                    f"/v1/vaults/{vault_id}/items/{item_id}", timeout=min(15.0, remaining)))
+            except NotFound:
+                # A just-created item 404s until Connect's copy has it.
+                stored = None
             if time.monotonic() > deadline:
                 raise ConnectError(f"the stored {title} still does not match 60 s after the write")
             if (isinstance(stored, dict) and stored.get("id") == item_id

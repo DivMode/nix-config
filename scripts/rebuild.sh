@@ -4,9 +4,9 @@
 # dialog rather than on a terminal.
 #
 # This is the same command documented in docs/operations/rebuild.md, wrapped so
-# it can be started from a shell with no controlling terminal. Credentials are
-# supplied by the configured service account; this path never signs in through
-# the desktop application. First-time credential setup belongs to setup-mac.sh.
+# it can be started from a shell with no controlling terminal. It never calls
+# the 1Password CLI or the desktop application: everything that reads 1Password
+# goes through Connect. First-time setup belongs to setup-mac.sh.
 
 set -euo pipefail
 
@@ -26,47 +26,6 @@ if [[ -n "${NIX_CONFIG_SETUP_BOOTSTRAP:-}" ]]; then
   exit 1
 fi
 
-# Validate the backup's authentication before changing the running system.
-# Connect variables take precedence over the service account in the CLI;
-# reject an incompatible environment instead of stripping credentials.
-vault=$(nix eval --impure --raw --expr \
-  '(import (builtins.toPath (builtins.getEnv "NIX_CONFIG_LOCAL"))).onePassword.vault or ""')
-if [[ -n "$vault" ]]; then
-  if [[ -z "${OP_SERVICE_ACCOUNT_TOKEN:-}" ]]; then
-    echo "error: rebuilding with automatic backup requires the configured service-account environment; use the human setup workflow if credentials are missing." >&2
-    exit 1
-  fi
-  if [[ -n "${OP_CONNECT_HOST:-}" || -n "${OP_CONNECT_TOKEN:-}" ]]; then
-    echo "error: automatic backup requires the service-account environment, not a Connect environment; no credentials were changed." >&2
-    exit 1
-  fi
-  # Editor-launched shells may omit Homebrew's bin directory. Resolve the same
-  # vendor CLI declared by modules/home/secrets.nix, without changing credentials.
-  if ! op_bin=$(command -v op); then
-    case "$(uname -m)" in
-      arm64) op_bin=/opt/homebrew/bin/op ;;
-      x86_64) op_bin=/usr/local/bin/op ;;
-      *) op_bin="" ;;
-    esac
-  fi
-  if [[ ! -x "$op_bin" ]]; then
-    echo "error: the configured 1Password CLI is unavailable." >&2
-    exit 1
-  fi
-  host_name=$(/usr/sbin/scutil --get LocalHostName)
-  if [[ -z "$host_name" ]]; then
-    echo "error: cannot identify this host's backup document." >&2
-    exit 1
-  fi
-  doc_title="nix-config local.nix $host_name"
-  backup_dir=$(umask 077; mktemp -d)
-  trap 'rm -rf "$backup_dir"' EXIT
-  if ! (umask 077; "$op_bin" document get "$doc_title" --vault "$vault" > "$backup_dir/stored" 2>/dev/null); then
-    echo "error: backup authentication/read preflight failed; check service-account access and the setup-created document. Activation was not attempted; no fallback or document creation was attempted." >&2
-    exit 1
-  fi
-fi
-
 # Every activation re-asserts the private-name guard, so a fresh clone is
 # protected from its first rebuild rather than from whenever someone remembers.
 "$repository/scripts/install-hooks.sh"
@@ -76,20 +35,6 @@ host="${1:-example-mac}"
 echo "==> Building $host"
 nix build --no-link --impure ".#darwinConfigurations.${host}.system"
 
-# ── 1Password must survive its own cask upgrade ─────────────────────────────
-# Homebrew's 1password cask declares `quit: "com.1password.1password"`, so an
-# activation that upgrades it quits the application and never starts it again.
-# Restore an application the user was already running. Git signing uses the
-# service-account signer and no longer depends on this desktop application's
-# availability or personal session.
-#
-# The state is recorded BEFORE activation and acted on after, so this only ever
-# restores what activation destroyed. An application the user had already quit
-# themselves stays quit.
-onePasswordWasRunning=false
-if /usr/bin/pgrep -x 1Password >/dev/null 2>&1; then
-  onePasswordWasRunning=true
-fi
 
 echo "==> Activating $host (password dialog will appear)"
 # --preserve-env, NOT an `env` wrapper: sudoers matches the literal command,
@@ -121,54 +66,3 @@ echo "==> Activating $host (password dialog will appear)"
   /run/current-system/sw/bin/darwin-rebuild switch --impure \
   --flake "path:${repository}#${host}"
 
-if [[ "$onePasswordWasRunning" == true ]] && ! /usr/bin/pgrep -x 1Password >/dev/null 2>&1; then
-  echo "==> 1Password was quit by its cask upgrade; reopening it"
-  /usr/bin/open -a 1Password
-
-  # Confirm it actually came back rather than reporting success on the `open`
-  # call alone. The agent socket is NOT the check: it is a filesystem entry
-  # that outlives the process, and it was present on disk while 1Password was
-  # dead on 2026-08-27 — a check that cannot fail is not a check. Unlocking is
-  # deliberately not waited on; that is the user's to do, and a running agent
-  # is what this script is responsible for.
-  for _ in $(seq 1 20); do
-    /usr/bin/pgrep -x 1Password >/dev/null 2>&1 && break
-    sleep 0.5
-  done
-
-  if /usr/bin/pgrep -x 1Password >/dev/null 2>&1; then
-    echo "==> 1Password is running again"
-  else
-    echo "warning: the previously running 1Password desktop application did not come back" >&2
-  fi
-fi
-
-# ── Keep the 1Password copy of local.nix current ────────────────────────────
-# local.nix is git-ignored (public repository) but is this machine's whole
-# deploy identity — the Connect host, 1Password item IDs, and AWS profile
-# wiring. scripts/setup-mac.sh restores it on a wiped machine from a Document
-# item titled "nix-config local.nix <LocalHostName>", so that item must track
-# every local.nix edit. Runs only after successful activation. A backup failure
-# is reported as a failure, without switching accounts or creating another item.
-#
-# The vault comes FROM local.nix. It was hard-coded here until 2026-08-14, when
-# an audit found the vault name — a private name — in four lines of this script
-# and two of the wizard, in a public repository.
-if [[ -z "$vault" ]]; then
-  echo "==> No local.nix backup vault configured"
-else
-  if ! cmp -s local.nix "$backup_dir/stored"; then
-    if ! "$op_bin" document edit "$doc_title" local.nix --vault "$vault" >/dev/null 2>&1; then
-      echo "error: activation succeeded but the local.nix backup could not be updated." >&2
-      exit 1
-    fi
-    if ! (umask 077; "$op_bin" document get "$doc_title" --vault "$vault" > "$backup_dir/verified" 2>/dev/null) \
-      || ! cmp -s local.nix "$backup_dir/verified"; then
-      echo "error: activation succeeded but the local.nix backup did not verify." >&2
-      exit 1
-    fi
-    echo "==> Updated and verified the local.nix backup"
-  else
-    echo "==> Verified the local.nix backup is current"
-  fi
-fi

@@ -188,13 +188,10 @@ in
   # call reach the 1Password app. Git uses the Connect-backed signer instead.
   nixConfig.secrets.onePassword.sshAgent.enable = false;
 
-  # A cached service-account token, exported from .zshenv. This is what stops
-  # the desktop application prompting: a service account authenticates with no
-  # app, no biometrics, and no controlling terminal, so non-interactive
-  # processes read secrets silently. Independent of the dormant `enable` above,
-  # which is the `op run` launcher, and of the SSH agent, which is the
-  # application's own capability and keeps working either way.
-  nixConfig.secrets.onePassword.serviceAccount.enable = true;
+  # Off: everything that reads 1Password goes through Connect only. The service
+  # account's `op` path reached the desktop application and spent a 1,000
+  # request/24h cap; nothing falls back to it.
+  nixConfig.secrets.onePassword.serviceAccount.enable = false;
 
   # Connect credentials for the deploy path only. Cached to a 0600 env file that
   # the work monorepo's sst-connect-env.sh sources at the sst invocation seam, so

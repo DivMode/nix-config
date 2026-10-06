@@ -166,14 +166,12 @@ let
 
   passwordReference = shares.passwordReference or null;
   seedsKeychain = passwordReference != null;
-  homebrewPrefix = if pkgs.stdenv.hostPlatform.isAarch64 then "/opt/homebrew" else "/usr/local";
-  opExecutable = "${homebrewPrefix}/bin/op";
+  connectEnv = config.nixConfig.secrets.onePassword.connect.envPath;
   setupBootstrap = config.nixConfig.secrets.onePassword.setupBootstrap;
 
-  # First-machine network-share seeding is a separate, interactive command.
-  # Routine activation only checks for the already-seeded Keychain item and
-  # fails closed when it is missing; it never drops the service-account token
-  # to reach the desktop session.
+  # First-machine network-share seeding is a separate, interactive command that
+  # reads the password from 1Password Connect only. Routine activation only
+  # checks for the already-seeded Keychain item and fails loudly when missing.
   networkShareBootstrap = pkgs.writeShellApplication {
     name = "nix-config-bootstrap-network-share-password";
     runtimeInputs = [ pkgs.coreutils ];
@@ -191,22 +189,9 @@ let
         exit 0
       fi
 
-      if [ ! -x ${escapeShellArg opExecutable} ]; then
-        printf '%s\n' '1Password CLI is unavailable; complete the first Nix generation before bootstrapping.' >&2
-        exit 1
-      fi
-
-      password=""
-      if [ -n "''${OP_SERVICE_ACCOUNT_TOKEN:-}" ]; then
-        password="$(${escapeShellArg opExecutable} read "$reference" 2>/dev/null || true)"
-      fi
-      if [ -z "$password" ]; then
-        # This branch is reachable only from this interactive setup command.
-        # Routine activation never strips OP_SERVICE_ACCOUNT_TOKEN.
-        password="$(/usr/bin/env -u OP_SERVICE_ACCOUNT_TOKEN ${escapeShellArg opExecutable} read "$reference" 2>/dev/null || true)"
-      fi
-      if [ -z "$password" ]; then
-        printf '%s\n' 'Could not read the network-share password; confirm the 1Password app is signed in and CLI integration is enabled.' >&2
+      if ! password="$(${pkgs.python3}/bin/python3 ${../../scripts/onepassword-connect-read.py} ${escapeShellArg connectEnv} "$reference")" \
+        || [ -z "$password" ]; then
+        printf '%s\n' 'ERROR: could not read the network-share password from 1Password Connect (see the message above).' >&2
         exit 1
       fi
 
@@ -269,9 +254,6 @@ in
             printf '%s\n' 'Install-only generation: network-share bootstrap deferred until after interactive sign-in.' >&2
           elif /usr/bin/security find-internet-password -a "$account" -s "$server" -r 'smb ' >/dev/null 2>&1; then
             verboseEcho "Network share password already in the login Keychain"
-          elif [ ! -x ${escapeShellArg opExecutable} ]; then
-            printf '%s\n' '1Password CLI is unavailable during routine network-share activation; refusing to continue.' >&2
-            exit 1
           else
             printf '%s\n' 'Network-share password is not in the login Keychain; run the interactive bootstrap before rebuilding.' >&2
             exit 1

@@ -40,7 +40,8 @@ PATH_WRITERS = {"rm", "mv", "cp", "install", "mkdir", "touch", "tee", "ln",
 # icon) does not need them to type the command themselves. Applications and
 # daemons stay blocked: their restarts belong in an activation entry that
 # compares before and after.
-SELF_RESTARTING_UI_AGENTS = {"Dock", "Finder", "SystemUIServer", "ControlCenter"}
+SELF_RESTARTING_UI_AGENTS = {"Dock", "Finder", "SystemUIServer", "ControlCenter",
+                             "TextInputMenuAgent"}
 
 
 def restarts_only_ui_agents(args):

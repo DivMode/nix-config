@@ -17,7 +17,7 @@ let
   # App name as Chrome names the shim -> icon (a square PNG on Apple's
   # app-icon grid; Gmail's is option 3 of the 2026-10-06 icon page).
   icons = {
-    Gmail = ../darwin/chrome-icons/gmail.png;
+    Gmail = ./chrome-app-icons/gmail.png;
   };
 
   appsDir = "${config.home.homeDirectory}/Applications/Chrome Apps.localized";

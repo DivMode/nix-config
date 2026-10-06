@@ -96,6 +96,7 @@ CASES = [
     ("restart the Dock", f"{KILL} Dock", "ALLOW"),
     ("restart Finder, quietly, as a named user", f"/usr/bin/{KILL} -qu {GENERIC_USER} Finder".replace("-qu", "-q -u"), "ALLOW"),
     ("restart two UI agents at once", f"{KILL} SystemUIServer ControlCenter", "ALLOW"),
+    ("restart the keyboard menu item", f"{KILL} TextInputMenuAgent", "ALLOW"),
     # ---- ...and nothing beyond them. ----
     ("a UI agent next to an application", f"{KILL} Dock LinearMouse", "DENY"),
     ("a signal flag", f"{KILL} -9 Dock", "DENY"),

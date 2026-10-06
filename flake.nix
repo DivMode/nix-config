@@ -194,6 +194,16 @@
             "x86_64-linux"
           ]
           (system: {
+            shell-bootstrap-hashes =
+              let
+                pkgs = nixpkgs.legacyPackages.${system};
+              in
+              pkgs.runCommand "shell-bootstrap-hash-tests" { } ''
+                ${pkgs.python3}/bin/python3 \
+                  ${./scripts/check-shell-bootstrap.py} \
+                  ${./modules/darwin/default.nix}
+                touch "$out"
+              '';
             agent-instructions = (import ./ai/instructions { pkgs = nixpkgs.legacyPackages.${system}; }).tests;
             orchestration-docs = (import ./docs/links.nix { pkgs = nixpkgs.legacyPackages.${system}; }).tests;
             codex-config-merge = (import ./ai/codex { pkgs = nixpkgs.legacyPackages.${system}; }).tests;

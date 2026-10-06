@@ -55,17 +55,26 @@ export PATH="/nix/var/nix/profiles/default/bin:$PATH"
 
 step "nix-config on the Data drive"
 if [[ -d "$TARGET/.git" ]]; then
-  # Only a clean main is applied; anything else is your work, left untouched.
-  branch=$(git -C "$TARGET" rev-parse --abbrev-ref HEAD)
-  [[ "$branch" == main ]] || fail "$TARGET is on branch '$branch', not main. Switch it to main (keeping your work) and rerun."
+  # Resume from main or an already-merged fix branch; never discard local work.
   [[ -z "$(git -C "$TARGET" status --porcelain --untracked-files=no)" ]] \
     || fail "$TARGET has uncommitted changes. Commit or stash them, then rerun."
   # Over HTTPS: the Connect-backed SSH transport is not configured yet.
   git -C "$TARGET" fetch "$REPO_URL" main
-  git -C "$TARGET" merge-base --is-ancestor HEAD FETCH_HEAD \
+  remote_main=$(git -C "$TARGET" rev-parse FETCH_HEAD)
+  git -C "$TARGET" merge-base --is-ancestor HEAD "$remote_main" \
     || fail "$TARGET has local commits not on GitHub's main. Push or move them to a branch, then rerun."
-  git -C "$TARGET" merge --ff-only FETCH_HEAD
-  [[ "$(git -C "$TARGET" rev-parse HEAD)" == "$(git -C "$TARGET" rev-parse FETCH_HEAD)" ]] \
+  branch=$(git -C "$TARGET" rev-parse --abbrev-ref HEAD)
+  if [[ "$branch" != main ]]; then
+    if git -C "$TARGET" show-ref --verify --quiet refs/heads/main; then
+      git -C "$TARGET" merge-base --is-ancestor main "$remote_main" \
+        || fail "$TARGET has unmerged commits on its local main; leaving them untouched."
+      git -C "$TARGET" checkout main
+    else
+      git -C "$TARGET" checkout -b main "$remote_main"
+    fi
+  fi
+  git -C "$TARGET" merge --ff-only "$remote_main"
+  [[ "$(git -C "$TARGET" rev-parse HEAD)" == "$remote_main" ]] \
     || fail "$TARGET is not at GitHub's main after updating."
 else
   mkdir -p "$(dirname "$TARGET")"

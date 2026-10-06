@@ -49,6 +49,7 @@ in
     ./herdr
     ./karabiner.nix
     ./launchers.nix
+    ./login-apps.nix
     ./media.nix
     ./menu-bar.nix
     ./mouse.nix

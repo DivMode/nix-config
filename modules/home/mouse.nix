@@ -225,23 +225,10 @@ in
     showPointerLocation = false;
   };
 
-  # Start at login is owned by LinearMouse's own SMAppService registration, NOT
-  # by a Home Manager launch agent. There was one here until 2026-08-13; it is
-  # deliberately gone.
-  #
-  # One application, one thing that starts it. LinearMouse registers itself as a
-  # login item the moment "Start at login" is ticked in its settings, and that
-  # registration cannot be revoked declaratively — so a launch agent does not
-  # replace the login item, it races it. Both starting the app means two
-  # processes filtering the same mouse events, which is never correct, and it
-  # only manifests after a reboot, long after the change that caused it.
-  #
-  # The agent also bought nothing. Its whole job was to start the app at login,
-  # which the login item already does — and does better, because a login item is
-  # a real bundle launch, whereas the agent ran the app under /bin/sh and gave
-  # it a different LaunchServices and TCC identity for no benefit.
-  #
-  # The cost of this choice is honest: start-at-login is now mutable GUI state
-  # rather than something this repository declares. It is the same arrangement
-  # every other application on the machine already uses.
+  # Start at login is declared in ./login-apps.nix. Leaving it to LinearMouse's
+  # own "Start at login" switch (2026-08-13 to 2026-10-06) meant a new home
+  # directory had it off, and the first restart came up with the mouse
+  # scrolling the trackpad's way. The agent removed on 2026-08-13 exec'd the
+  # binary and could start a second copy beside the login item; the new one
+  # launches through `open`, which reuses a running instance, so it cannot.
 }

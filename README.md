@@ -50,11 +50,10 @@ The repeatable setup wizard handles the two-pass bootstrap:
 The first pass installs every declared application. The wizard then asks once
 for the 1Password Connect URL and token and **restores the ignored `local.nix`
 through Connect** — a
-Document item titled `nix-config local.nix <LocalHostName>` — and applies the
+Secure Note titled `nix-config local.nix <LocalHostName>` — and applies the
 final identity. Nothing is retyped on a wiped machine: the host's deploy
 wiring (the Connect host, 1Password item IDs, AWS profiles) comes back with
-the restore. Rebuilds no longer upload it, so update the stored copy by hand
-after editing `local.nix`. A **brand-new host** with no stored copy stops with
+the restore. Every rebuild saves it back to that Secure Note. A **brand-new host** with no stored copy stops with
 instructions: copy `local.nix` from another Mac and set its `hostName`. The complete manual fallback is in
 [`docs/setup/new-mac.md`](docs/setup/new-mac.md).
 

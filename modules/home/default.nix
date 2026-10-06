@@ -10,13 +10,13 @@ let
   signingPublicKey = pkgs.writeText "git-service-account-public-key" local.git.signingKey;
   serviceAccountSigner = pkgs.writeShellScript "git-service-account-sign" ''
     exec ${pkgs.python3}/bin/python3 ${../../scripts/git-service-account-sign.py} \
-      sign ${if pkgs.stdenv.hostPlatform.isAarch64 then "/opt/homebrew" else "/usr/local"}/bin/op \
+      sign ${lib.escapeShellArg config.nixConfig.secrets.onePassword.connect.envPath} \
       ${pkgs.openssh}/bin/ssh-keygen ${pkgs.openssh}/bin/ssh \
       ${lib.escapeShellArg signingReference} ${signingPublicKey} "$@"
   '';
   serviceAccountTransport = pkgs.writeShellScript "git-service-account-ssh" ''
     exec ${pkgs.python3}/bin/python3 ${../../scripts/git-service-account-sign.py} \
-      transport ${if pkgs.stdenv.hostPlatform.isAarch64 then "/opt/homebrew" else "/usr/local"}/bin/op \
+      transport ${lib.escapeShellArg config.nixConfig.secrets.onePassword.connect.envPath} \
       ${pkgs.openssh}/bin/ssh-keygen ${pkgs.openssh}/bin/ssh \
       ${lib.escapeShellArg signingReference} ${signingPublicKey} "$@"
   '';
@@ -26,7 +26,12 @@ in
     {
       assertion =
         builtins.match "op://[^/]+/[^/]+/private key\\?ssh-format=openssh" signingReference != null;
-      message = "git.signingKeyReference must name the approved service-account SSH key in OpenSSH format.";
+      message = "git.signingKeyReference must name the approved SSH key in OpenSSH format.";
+    }
+    {
+      # Git signing and GitHub transport read the key from Connect only.
+      assertion = config.nixConfig.secrets.onePassword.connect.enable;
+      message = "Git signing reads its key from 1Password Connect; enable nixConfig.secrets.onePassword.connect.";
     }
   ];
   imports = [
@@ -179,7 +184,9 @@ in
   # signing are a separate 1Password capability.
   nixConfig.ai.enable = true;
   nixConfig.secrets.onePassword.enable = false;
-  nixConfig.secrets.onePassword.sshAgent.enable = lib.mkDefault true;
+  # Off: the desktop application's agent socket made every SSH and ssh-keygen
+  # call reach the 1Password app. Git uses the Connect-backed signer instead.
+  nixConfig.secrets.onePassword.sshAgent.enable = false;
 
   # A cached service-account token, exported from .zshenv. This is what stops
   # the desktop application prompting: a service account authenticates with no

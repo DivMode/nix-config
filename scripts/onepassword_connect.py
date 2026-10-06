@@ -50,7 +50,7 @@ class Connect:
                 or not (origin.scheme == "https" or (origin.scheme == "http" and private))):
             raise ConnectError("the Connect environment is invalid (https, or http on a private address, and a token)")
 
-    def raw(self, path, limit=2 * 1024 * 1024, method="GET", body=None):
+    def raw(self, path, limit=2 * 1024 * 1024, method="GET", body=None, timeout=15.0):
         headers = {"Authorization": f"Bearer {self._token}"}
         data = None
         if body is not None:
@@ -58,7 +58,7 @@ class Connect:
             headers["Content-Type"] = "application/json"
         request = urllib.request.Request(f"{self.host}{path}", data=data, headers=headers, method=method)
         try:
-            with urllib.request.build_opener(_NoRedirect).open(request, timeout=15) as response:
+            with urllib.request.build_opener(_NoRedirect).open(request, timeout=timeout) as response:
                 body = response.read(limit + 1)
         except urllib.error.HTTPError as error:
             raise ConnectError(f"Connect returned HTTP {error.code} for {path.split('?')[0]}") from None
@@ -69,9 +69,9 @@ class Connect:
             raise ConnectError(f"Connect returned more than {limit} bytes for {path.split('?')[0]}")
         return body
 
-    def get(self, path, method="GET", body=None):
+    def get(self, path, method="GET", body=None, timeout=15.0):
         try:
-            return json.loads(self.raw(path, method=method, body=body))
+            return json.loads(self.raw(path, method=method, body=body, timeout=timeout))
         except ValueError:
             raise ConnectError(f"Connect returned invalid JSON for {path.split('?')[0]}") from None
 
@@ -195,13 +195,17 @@ class Connect:
         # seconds after a write (observed 2026-10-06), so wait a bounded time.
         deadline = time.monotonic() + 60
         while True:
-            stored = self.get(f"/v1/vaults/{vault_id}/items/{item_id}")
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise ConnectError(f"the stored {title} still does not match 60 s after the write")
+            # Each read gets only the time left, so the whole check ends by 60 s.
+            stored = self.get(f"/v1/vaults/{vault_id}/items/{item_id}", timeout=min(15.0, remaining))
+            if time.monotonic() > deadline:
+                raise ConnectError(f"the stored {title} still does not match 60 s after the write")
             if (isinstance(stored, dict) and stored.get("id") == item_id
                     and self._notes_field(stored).get("value") == text):
                 return outcome
-            if time.monotonic() + 2 >= deadline:
-                raise ConnectError(f"the stored {title} still does not match 60 s after the write")
-            time.sleep(2)
+            time.sleep(min(2.0, max(0.0, deadline - time.monotonic())))
 
 
 def run(main):

@@ -33,23 +33,42 @@ home-directory collision policy is unchanged.
 
 During normal activation, nix-darwin renames recognized originals to
 `/etc/bashrc.before-nix-darwin` and `/etc/zshrc.before-nix-darwin`, then installs
-its managed links. This change leaves upstream backup behavior unchanged;
-retain any already-existing backups separately before a repeated takeover.
+its managed links. These backups are not merged into the generated shell
+configuration. This change leaves upstream backup behavior unchanged; retain
+any already-existing backups separately before a repeated takeover.
 Already-managed links continue through nix-darwin's existing idempotent path.
 
-## Resume setup
+## One command, including after an interrupted setup
 
-After updating the existing checkout to include this fix, run the wizard from
-that checkout:
+Run the same command in Terminal as your normal macOS user:
 
 ```sh
-./scripts/setup-mac.sh
+curl -fsSL https://raw.githubusercontent.com/DivMode/nix-config/main/scripts/bootstrap.sh | bash
 ```
 
-Use the wizard for incomplete first setup; `scripts/rebuild.sh` assumes the
-first nix-darwin generation is already installed. The normal one-command
-bootstrap updates only `main`, so a fix on an unmerged branch must be checked
-out explicitly and run through `setup-mac.sh` directly.
+The external Data drive must be mounted and the Connect server reachable.
+Bootstrap skips installed Command Line Tools and Nix, updates the existing
+checkout over public HTTPS, and runs the setup wizard. No GitHub login, manual
+fetch, or branch switch is needed. A clean checkout on an already-merged branch
+(including this fix branch) automatically returns to `main`. Bootstrap refuses
+uncommitted tracked edits or unmerged commits, including a divergent local
+`main`; it never resets, deletes, or automatically stashes your work.
+
+The wizard reuses `~/.config/op/connect.env` when its saved URL and token pass
+the authenticated Connect check, and keeps a complete `local.nix` matching this
+Mac. The shell-file error happens after both steps, so a normal retry does not
+ask for those values again. Missing or invalid credentials, or an unreachable
+Connect server, currently cause the wizard to ask for the URL/token again.
+The macOS administrator password may still be requested by `sudo`; that is not
+a Connect or 1Password login, and it is not stored by this repository.
+
+Resume means rechecking and reconciling the current state, not jumping to a
+saved line number. Validation, builds, and activation run again, reusing
+available Nix build results. Previously completed installation steps and saved
+identity are not wiped. For incomplete first setup, use this bootstrap rather
+than `scripts/rebuild.sh`, which assumes nix-darwin is already installed.
+
+## Still-unrecognized contents
 
 Do not delete or blindly rename the two files. If the error remains, read their
 hashes first:

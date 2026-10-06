@@ -140,6 +140,13 @@ wantsInput() {
   done
   return 1
 }
+# True when tag $1 is a strictly newer version than tag $2. `releases/latest`
+# never returns a pre-release, so a pin deliberately on one (codex-orchestrator
+# v0.5.1) compares ahead of "latest"; #116 moved it back to v0.5.0 that way.
+versionNewer() {
+  local a="${1#v}" b="${2#v}"
+  [[ "$a" != "$b" ]] && [[ "$(printf '%s\n%s\n' "$a" "$b" | sort -V | tail -n 1)" == "$a" ]]
+}
 echo "==> Tag-pinned inputs"
 if ! command -v jq >/dev/null 2>&1; then
   echo "    warning: jq not found — cannot check tag-pin staleness" >&2
@@ -160,6 +167,8 @@ else
       echo "    ${name}: ${ref} (current)"
     elif [[ "$via" == "direct" && ! "$latest" =~ ^v?[0-9]+(\.[0-9]+)+$ ]]; then
       echo "    ${name}: pinned ${ref}; upstream's latest release is tagged '${latest}', not a plain version — not moving to it" >&2
+    elif [[ "$via" == "direct" ]] && ! versionNewer "$latest" "$ref"; then
+      echo "    ${name}: pinned ${ref} is ahead of upstream's latest release ${latest} — not moving it backwards"
     elif [[ "$via" == "direct" ]] && wantsInput "$name"; then
       echo "    ${name}: pinned ${ref}, upstream has ${latest} — moving"
       tagMoves+=("${name}"$'\t'"${owner}"$'\t'"${repo}"$'\t'"${ref}"$'\t'"${latest}")

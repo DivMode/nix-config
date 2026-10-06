@@ -81,26 +81,12 @@ let
         # `fallback_app_name` is ignored whenever `custom_name` is set
         # (policy_definitions/.../WebAppInstallForceList.yaml), so it is gone.
         custom_name = "Gmail";
-        # The app icon. Gmail's manifest offers only "any" icons — a bare "M"
-        # on transparency, no maskable variant (mail.google.com/mail/
-        # manifest.json, 2026-10-06). On macOS 26 and later Chrome writes such
-        # icons into the shim's app.icns unchanged and leaves the shape to the
-        # system (os_integration/mac/web_app_shortcut_creator.mm:
-        # ShouldUseSystemAppIconMasking, UpdateIcon), and macOS 27 puts a
-        # non-square icon in a grey tile — the wrong Dock icon, with or without
-        # Google's own image.
-        #
-        # So the icon is ./chrome-icons/gmail.png: that same logo centred on
-        # a full white 1024 px square (Gmail's own app-icon look), which the
-        # system rounds like any other app. Chrome only accepts a custom icon
-        # from a public HTTPS URL, fetched without cookies and used only if
-        # its SHA-256 matches, hence this repository's raw URL on main. It
-        # also gives the pre-sign-in placeholder its icon. Regenerating the
-        # PNG means updating this hash.
-        custom_icon = {
-          url = "https://raw.githubusercontent.com/DivMode/nix-config/main/modules/darwin/chrome-icons/gmail.png";
-          hash = "7e677bb2114317a292c9f61779f2f37e2451399925e3558986f4c247023ef9e3";
-        };
+        # No custom_icon, by the owner's decision (2026-10-06): the app uses the
+        # icons from Gmail's own manifest. On macOS 27 that bare "M" is shown in
+        # a grey tile (Chrome leaves non-maskable icons to the system's mask:
+        # os_integration/mac/web_app_shortcut_creator.mm), and a placeholder
+        # created before the profile is signed in has no icon until Chrome is
+        # reopened after signing in.
       }
     ];
 

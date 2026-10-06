@@ -158,6 +158,13 @@ class Connect:
                 return field
         raise ConnectError("the secure note has no notes field")
 
+    def vault_count(self):
+        """An authenticated read: fails unless the token is accepted."""
+        vaults = self.get("/v1/vaults")
+        if not isinstance(vaults, list) or not vaults:
+            raise ConnectError("the Connect token sees no vaults")
+        return len(vaults)
+
     def notes_titled(self, prefix):
         """(vault name, title) of every Secure Note whose title starts with
         `prefix`, across the vaults this token can see."""

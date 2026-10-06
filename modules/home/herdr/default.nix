@@ -186,6 +186,9 @@ let
   };
 in
 {
+  # The server's Local Network identity on macOS; see ./server-app.nix.
+  imports = [ ./server-app.nix ];
+
   # Herdr reads this at startup and on `herdr server reload-config`. A store
   # symlink is correct for the same reason it is for ccstatusline's settings:
   # the tool reads this file, and only its own interactive configurator writes

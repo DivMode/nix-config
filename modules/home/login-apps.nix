@@ -6,8 +6,6 @@ let
   # simply off: after the first restart on 2026-10-06 LinearMouse was not
   # running until it was started by hand four minutes after boot, and the
   # mouse scrolled the trackpad's way until then.
-  #
-  # Thaw is deliberately absent: the owner does not want it started.
   apps = {
     "com.lujjjh.LinearMouse" = "/Applications/LinearMouse.app";
   };

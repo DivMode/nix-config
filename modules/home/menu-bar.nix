@@ -6,9 +6,10 @@
 }:
 {
   # What sits in the menu bar, declaratively: Apple's own removable status
-  # items are hidden here, and Thaw (declared in modules/darwin/homebrew.nix)
-  # manages the rest. This module owns only menu bar VISIBILITY — Spotlight
-  # search and Siri themselves are untouched by every key in this file.
+  # items are hidden here. This module owns only menu bar VISIBILITY —
+  # Spotlight search and Siri themselves are untouched by every key in this
+  # file. No menu bar manager: Thaw was removed on 2026-10-06; macOS 27 chooses
+  # visible items in System Settings → Menu Bar.
 
   # ── Spotlight: hide the icon, keep ⌘Space ─────────────────────────────────
   #
@@ -63,28 +64,6 @@
   # against System Settings → Menu Bar on macOS 27
   # (lib/options/applications/systemSettings/menu-bar.nix, commit 4ef635b).
   targets.darwin.currentHostDefaults."com.apple.controlcenter".Siri = 8;
-
-  # ── Thaw: seed behaviour, leave layout to the GUI ─────────────────────────
-  #
-  # Key names verified against Thaw's own source at tag 1.2.0
-  # (Thaw/Utilities/Defaults.swift) — they are inherited unchanged from Ice
-  # and identical on the 2.x line, but they are an internal schema, not a
-  # documented contract: re-verify against that file before adding keys or
-  # bumping the pinned version. Only flat behavioural switches are seeded.
-  # Per-item section membership is persisted in undocumented blobs
-  # (MenuBarItemManager.savedSectionOrder), so which icon lives in which
-  # section stays a GUI act: ⌘-drag icons across the divider Thaw adds.
-  # Also manual, once: Thaw's permission prompts and its launch-at-login
-  # toggle, both TCC/SMAppService state that Nix deliberately does not own.
-  # It is deliberately not in ./login-apps.nix.
-  targets.darwin.defaults."com.stonerl.Thaw" = {
-    # Hidden icons come back out only briefly: re-hide 15s (RehideInterval
-    # default) after the pointer leaves the menu bar.
-    AutoRehide = true;
-    # A third section for icons that never show, even while the hidden
-    # section is revealed.
-    EnableAlwaysHiddenSection = true;
-  };
 
   # Make a changed Siri visibility take effect now rather than at next login:
   # ControlCenter draws that item on macOS 27 and reads its values at launch.

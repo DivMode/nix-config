@@ -7,8 +7,8 @@
 # on an application's second launch unless SUEnableAutomaticChecks is already
 # set, and the first answer is stored in the application's defaults domain.
 # On 2026-10-05, a new home directory showed that dialog for LinearMouse
-# right after activation. IINA, Keka and Thaw had no stored answer either
-# (`defaults read <id> SUEnableAutomaticChecks` failed for all three), so each
+# right after activation. IINA and Keka had no stored answer either
+# (`defaults read <id> SUEnableAutomaticChecks` failed for both), so each
 # would have asked in turn.
 #
 # Declaring the answer here means no machine asks. Checks and installs both
@@ -26,7 +26,6 @@
         "com.aone.keka"
         "com.colliderli.iina"
         "com.lujjjh.LinearMouse"
-        "com.stonerl.Thaw"
       ]
       (_: {
         SUEnableAutomaticChecks = true;

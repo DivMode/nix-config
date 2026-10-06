@@ -30,10 +30,12 @@ settings to their defaults. See
 [the encoding note](../../docs/research/2026-08-13-defaults-library-enum-encoding.md)
 before touching them.
 
-Start-at-login is owned by LinearMouse's own setting, not by a Home Manager
-launch agent. There was an agent here until 2026-08-13; it raced LinearMouse's
-SMAppService login item, which Nix cannot switch off, so both could start the
-app and two processes would filter the same mouse events.
+Start-at-login is declared in `login-apps.nix`, which opens LinearMouse at
+login through LaunchServices when it is not already running. The agent removed
+on 2026-08-13 exec'd the binary and could race LinearMouse's own SMAppService
+login item into two processes; `open` reuses a running instance, so this one
+cannot. Relying on the in-app switch alone left a new home directory with no
+LinearMouse after its first restart (2026-10-06).
 
 The configuration does not guess model-specific device IDs, pointer tuning, or
 button mappings; the G502 X keeps those in its onboard memory.

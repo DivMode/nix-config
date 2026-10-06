@@ -76,6 +76,7 @@
   # section stays a GUI act: ⌘-drag icons across the divider Thaw adds.
   # Also manual, once: Thaw's permission prompts and its launch-at-login
   # toggle, both TCC/SMAppService state that Nix deliberately does not own.
+  # It is deliberately not in ./login-apps.nix.
   targets.darwin.defaults."com.stonerl.Thaw" = {
     # Hidden icons come back out only briefly: re-hide 15s (RehideInterval
     # default) after the pointer leaves the menu bar.

@@ -5,6 +5,7 @@ no service account, no desktop application and no fallback: a failure exits
 non-zero with the reason, and never prints a secret.
 """
 
+import http.client
 import json
 import re
 import sys
@@ -58,8 +59,9 @@ class Connect:
                 body = response.read(limit + 1)
         except urllib.error.HTTPError as error:
             raise ConnectError(f"Connect returned HTTP {error.code} for {path.split('?')[0]}") from None
-        except OSError:
-            raise ConnectError(f"Connect at {self.host} is unreachable") from None
+        except (OSError, http.client.HTTPException):
+            # Never echo the response: a malformed status line can carry its text.
+            raise ConnectError(f"Connect at {self.host} is unreachable or answered malformed HTTP") from None
         if len(body) > limit:
             raise ConnectError(f"Connect returned more than {limit} bytes for {path.split('?')[0]}")
         return body
@@ -70,24 +72,25 @@ class Connect:
         except ValueError:
             raise ConnectError(f"Connect returned invalid JSON for {path.split('?')[0]}") from None
 
-    def _single(self, path, what):
+    def _single(self, path, key, expected, what):
         results = self.get(path)
-        if not isinstance(results, list) or len(results) != 1 or not isinstance(results[0], dict):
+        if (not isinstance(results, list) or len(results) != 1 or not isinstance(results[0], dict)
+                or results[0].get(key) != expected or not ID.fullmatch(str(results[0].get("id", "")))):
             raise ConnectError(f"Connect cannot see exactly one {what}")
-        return results[0].get("id", "")
+        return results[0]["id"]
 
     def vault_id(self, vault):
         if ID.fullmatch(vault):
             return vault
         query = urllib.parse.quote(f'name eq "{vault}"')
-        return self._single(f"/v1/vaults?filter={query}", f"vault named {vault}")
+        return self._single(f"/v1/vaults?filter={query}", "name", vault, f"vault named {vault}")
 
     def item(self, vault, item):
         vault_id = self.vault_id(vault)
         item_id = item
         if not ID.fullmatch(item):
             query = urllib.parse.quote(f'title eq "{item}"')
-            item_id = self._single(f"/v1/vaults/{vault_id}/items?filter={query}", f"item titled {item}")
+            item_id = self._single(f"/v1/vaults/{vault_id}/items?filter={query}", "title", item, f"item titled {item}")
         value = self.get(f"/v1/vaults/{vault_id}/items/{item_id}")
         if not isinstance(value, dict) or value.get("id") != item_id or (value.get("vault") or {}).get("id") != vault_id:
             raise ConnectError("Connect returned an unexpected item")

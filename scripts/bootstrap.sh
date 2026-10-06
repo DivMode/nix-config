@@ -61,7 +61,12 @@ if [[ -d "$TARGET/.git" ]]; then
   [[ -z "$(git -C "$TARGET" status --porcelain --untracked-files=no)" ]] \
     || fail "$TARGET has uncommitted changes. Commit or stash them, then rerun."
   # Over HTTPS: the Connect-backed SSH transport is not configured yet.
-  git -C "$TARGET" pull --ff-only "$REPO_URL" main
+  git -C "$TARGET" fetch "$REPO_URL" main
+  git -C "$TARGET" merge-base --is-ancestor HEAD FETCH_HEAD \
+    || fail "$TARGET has local commits not on GitHub's main. Push or move them to a branch, then rerun."
+  git -C "$TARGET" merge --ff-only FETCH_HEAD
+  [[ "$(git -C "$TARGET" rev-parse HEAD)" == "$(git -C "$TARGET" rev-parse FETCH_HEAD)" ]] \
+    || fail "$TARGET is not at GitHub's main after updating."
 else
   mkdir -p "$(dirname "$TARGET")"
   git clone "$REPO_URL" "$TARGET"

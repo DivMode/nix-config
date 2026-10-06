@@ -27,8 +27,9 @@ prompts, clones or updates this repository at `/Volumes/Data/Developer/nix-confi
 and runs `scripts/setup-mac.sh`. The wizard writes the Connect environment
 (`~/.config/op/connect.env`, mode 600; the token never reaches `.setup-mac.env`),
 finds the stored `nix-config local.nix <hostname>` Secure Note through Connect
-(choosing automatically when there is one, or when one matches this Mac's
-name), checks that its account, home and architecture match this Mac, installs
+(automatically when there is one, or when one matches this Mac's name; when
+1Password holds several Macs and none has this name, it asks which one this Mac
+replaces), checks that its account, home and architecture match this Mac, installs
 everything declared, seeds the network-share password from Connect, and runs
 `scripts/rebuild.sh`. The Mac keeps the name macOS gave it: the restored
 `local.nix` gets this Mac's hostname, and the first rebuild saves a new note
@@ -38,9 +39,11 @@ under it. Nothing uses the 1Password desktop application, the
 ## Manual fallback
 
 For a brand-new host with no stored `local.nix` (the wizard stops with an
-error in that case), prepare a complete input from `local.example.nix` as
-below, place it in the clone, and run the one command again: the wizard keeps a
-complete `local.nix` that matches this Mac.
+error in that case), write a **complete** `local.nix` first: copy
+`local.example.nix` and fill every field with real values, including the Git
+signing key's public key and its `git.signingKeyReference` (the placeholders
+below are rejected). Place it in the clone and run the one command again; the
+wizard keeps a complete `local.nix` that matches this Mac.
 
 ### Create the local host input
 

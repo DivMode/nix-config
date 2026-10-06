@@ -343,11 +343,21 @@ adopt_local() {
     fi
   done
   if [[ "$(local_attr_of "$file" hostName)" != "$MAC_HOST" ]]; then
-    if [[ $(grep -c '^  hostName = ".*";$' "$file") -ne 1 ]]; then
-      warn "ERROR: local.nix does not have exactly one 'hostName = \"...\";' line."
+    # Rewrite only the quoted value of the one top-level hostName assignment,
+    # whatever its indentation or trailing comment; nix eval confirms it.
+    if ! MAC_HOST="$MAC_HOST" /usr/bin/python3 -I - "$file" <<'PY'
+import os, re, sys
+path = sys.argv[1]
+text = open(path).read()
+pattern = re.compile(r'(\bhostName\s*=\s*")[^"\n]*(")')
+if len(pattern.findall(text)) != 1:
+    sys.exit(1)
+open(path, "w").write(pattern.sub(lambda m: m.group(1) + os.environ["MAC_HOST"] + m.group(2), text))
+PY
+    then
+      warn "ERROR: local.nix does not have exactly one hostName = \"...\" assignment."
       return 1
     fi
-    /usr/bin/sed -i '' "s/^  hostName = \".*\";\$/  hostName = \"$MAC_HOST\";/" "$file"
     [[ "$(local_attr_of "$file" hostName)" == "$MAC_HOST" ]] \
       || { warn "ERROR: could not set hostName to $MAC_HOST in local.nix."; return 1; }
   fi

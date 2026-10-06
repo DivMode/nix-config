@@ -25,22 +25,11 @@ collected in a native dialog rather than from a controlling terminal — which i
 why it works from an editor-hosted or automated shell that has no TTY. It also
 installs the repository's Git hooks before building.
 
-Routine rebuilding is unattended credential maintenance. When a backup vault is
-configured, the shell must already have the configured service-account token;
-the script rejects missing credentials or a conflicting Connect environment
-before activation. It also downloads the existing backup document before
-activation, so invalid credentials, rate limits and unreadable documents stop
-the run before the system switch. It does not change authentication variables
-or sign in through the desktop app. The service account needs access to the
-backup vault. Credential bootstrap is an explicit step in the human setup
-wizard.
-
-After successful activation, the script compares `local.nix` with the downloaded
-setup-created Document item using exact bytes, updates it only when different,
-and downloads it again to verify an update. A failed read is not evidence that
-the item is missing: it stops without creating another document or changing
-accounts. Backup failure returns a failure status and explicitly reports that
-activation has already succeeded. No backup content or credential is logged.
+Routine rebuilding never touches 1Password: no `op` CLI, no service account,
+no desktop application, and no backup upload. Activation only checks that the
+Connect environment (`~/.config/op/connect.env`, mode 600) exists and fails
+loudly when it does not; everything that reads 1Password at run time uses
+Connect. Creating that file is a step in the human setup wizard.
 
 Do not hand-assemble the underlying command. It is recorded here only so the
 script's final step is reviewable:

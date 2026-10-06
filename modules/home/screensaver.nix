@@ -1,11 +1,14 @@
 { ... }:
 {
-  # Screen saver idle time. nix-darwin exposes `system.defaults.screensaver`
-  # options for the password prompt but none for the idle timer, and the timer
-  # is a per-host (`defaults -currentHost`) preference, so it is declared here
-  # through Home Manager's currentHostDefaults rather than in the system module.
+  # No screen saver. The display still turns off after 30 minutes
+  # (modules/darwin/power.nix), and the Mac never sleeps.
   #
-  # 20 minutes, deliberately shorter than the 30-minute display sleep in
-  # modules/darwin/power.nix, so the lock engages before the screen goes dark.
-  targets.darwin.currentHostDefaults."com.apple.screensaver".idleTime = 1200;
+  # The idle timer is a per-host (`defaults -currentHost`) preference, which
+  # nix-darwin has no option for, so it is declared through Home Manager's
+  # currentHostDefaults. 0 is what System Settings shows as "Start Screen
+  # Saver… Never": nix-plist-manager's `wallpaper.startScreenSaver` maps
+  # "Never" to ByHost com.apple.screensaver idleTime = 0, and its harness
+  # checks that against the real System Settings pane on macOS 27
+  # (github.com/sushydev/nix-plist-manager, coverage.json, commit 4ef635b).
+  targets.darwin.currentHostDefaults."com.apple.screensaver".idleTime = 0;
 }

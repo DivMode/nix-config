@@ -60,8 +60,8 @@
 
   # macOS has no single "default terminal" setting and nix-darwin exposes no
   # option for one. The closest mechanism is the LaunchServices document-type
-  # handler, which decides what opens an executable script. `duti` is the
-  # supported CLI for that; nothing else writes the handler database safely.
+  # handler, which decides what opens an executable script. `duti -x` and
+  # `duti -d` read that table back; ./default-handlers.nix writes it.
   home.packages = [ pkgs.duti ];
 
   # Roles mirror what Ghostty.app's own Info.plist declares, because
@@ -74,10 +74,17 @@
   # Ghostty also declares `public.directory` at LSHandlerRank = Alternate. That
   # is deliberately NOT claimed: it would make double-clicked folders open a
   # terminal instead of Finder.
-  home.activation.setDefaultTerminalHandler = lib.hm.dag.entryAfter [ "writeBoundary" ] ''
-    run ${pkgs.duti}/bin/duti -s com.mitchellh.ghostty public.unix-executable shell
-    run ${pkgs.duti}/bin/duti -s com.mitchellh.ghostty com.apple.terminal.shell-script editor
-  '';
+  # Applied by ./default-handlers.nix, which explains why not with `duti -s`.
+  nixConfig.defaultHandlers = {
+    "public.unix-executable" = {
+      bundleId = "com.mitchellh.ghostty";
+      role = "shell";
+    };
+    "com.apple.terminal.shell-script" = {
+      bundleId = "com.mitchellh.ghostty";
+      role = "editor";
+    };
+  };
 
   programs.starship = {
     enable = true;

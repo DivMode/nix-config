@@ -1,4 +1,4 @@
-{ lib, ... }:
+{ lib, pkgs, ... }:
 let
   # Apple exposes no typed nix-darwin option for individual symbolic hotkeys,
   # and nix-darwin#518 (the request for exactly this) is still unresolved.
@@ -61,12 +61,25 @@ in
 {
   # Only the two Spotlight shortcut IDs are touched, so input-source shortcuts,
   # Mission Control, and every unrelated symbolic hotkey survive untouched.
-  home.activation.disableSpotlightHotkeys = lib.hm.dag.entryAfter [ "writeBoundary" ] (
-    lib.concatStrings (lib.mapAttrsToList disableSpotlightHotkey spotlightHotkeys)
-    + ''
+  #
+  # Written, and `activateSettings -u` run, only when the stored entries differ
+  # from these: the owner's rule (2026-10-06) is that a rebuild refreshes
+  # nothing whose settings did not change. ./defaults-changed.py compares just
+  # the two declared IDs inside the shared AppleSymbolicHotKeys dictionary.
+  home.activation.disableSpotlightHotkeys = lib.hm.dag.entryAfter [ "writeBoundary" ] ''
+    spotlightHotkeysChanged=$(${pkgs.python3}/bin/python3 -I ${./defaults-changed.py} \
+      com.apple.symbolichotkeys ${
+        pkgs.writeText "spotlight-hotkeys.json" (
+          builtins.toJSON {
+            AppleSymbolicHotKeys = lib.mapAttrs (_: hotkeyEntry) spotlightHotkeys;
+          }
+        )
+      })
+    if [[ $spotlightHotkeysChanged == changed ]]; then
+      ${lib.concatStrings (lib.mapAttrsToList disableSpotlightHotkey spotlightHotkeys)}
       run /System/Library/PrivateFrameworks/SystemAdministration.framework/Resources/activateSettings -u
-    ''
-  );
+    fi
+  '';
 
   # The Spotlight menu-bar icon is NOT handled here. An earlier entry in this
   # file tried to remove it by disabling the com.apple.Spotlight LaunchAgent;
@@ -77,7 +90,6 @@ in
   # the gui-domain disable for this SIP-protected system agent, so the icon
   # returned at every login while the activation message promised otherwise.
   # The icon is owned by modules/home/menu-bar.nix now, via the ByHost
-  # MenuItemHidden preference that Spotlight itself honours; the stale disable
-  # flag is cleaned up there. Full evidence:
+  # MenuItemHidden preference that Spotlight itself honours. Full evidence:
   # docs/research/2026-09-01-menu-bar-status-items-sequoia.md.
 }

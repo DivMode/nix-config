@@ -46,6 +46,20 @@ let
   # briefly absent after every restart.
 
   chromePolicy = plist.generate "com.google.Chrome.plist" {
+    # Never send usage statistics or crash reports to Google, and the reason
+    # this must be mandatory rather than a recommended user preference: it is
+    # also what suppresses the "Welcome to Google Chrome" first-run dialog.
+    # chrome/browser/first_run/first_run_internal_posix.cc returns early from
+    # ShouldShowFirstRunDialog() when metrics::IsMetricsReportingPolicyManaged(),
+    # and that (chrome/browser/metrics/metrics_reporting_state.cc) is
+    # `pref->IsManaged()` on kMetricsReportingEnabled — true only for a forced
+    # value. The dialog's other checkbox, default browser, is
+    # modules/home/browser.nix. The policy's own definition
+    # (policy_definitions/Miscellaneous/MetricsReportingEnabled.yaml): "When
+    # this policy is Disabled, anonymous reporting is disabled and no usage or
+    # crash data is sent to Google. Users won't be able to change this setting."
+    MetricsReportingEnabled = false;
+
     WebAppInstallForceList = [
       {
         # Google publishes this endpoint specifically for managed Gmail PWA
@@ -73,7 +87,21 @@ let
       # 2026-09-06 (manifest name "Loom – Screen Recorder & Screen Capture"),
       # so the policy adopts that install rather than adding a second one.
       "liecbddmkiiihnedobmlmillhodjkdmb;https://clients2.google.com/service/update2/crx"
+
+      # 1Password – Password Manager, the browser half of the `1password` cask
+      # in ./homebrew.nix. The id is the one the Chrome Web Store serves that
+      # title under (chromewebstore.google.com/detail/aeblfdkhhhdcdjpifhhbdiojplfjncoa,
+      # checked 2026-10-05). Unlocking it, or linking it to the desktop app,
+      # stays a one-time step inside 1Password.
+      "aeblfdkhhhdcdjpifhhbdiojplfjncoa;https://clients2.google.com/service/update2/crx"
     ];
+
+    # Keeps 1Password's button on the toolbar rather than behind the puzzle
+    # menu. `force_pinned` is one of the three `toolbar_pin` values in the
+    # policy's schema (policy_definitions/Extensions/ExtensionSettings.yaml:
+    # force_pinned, default_unpinned, default_pinned); force means the user
+    # cannot unpin it.
+    ExtensionSettings.aeblfdkhhhdcdjpifhhbdiojplfjncoa.toolbar_pin = "force_pinned";
   };
   policyHash = builtins.hashFile "sha256" chromePolicy;
   policyPath = "/Library/Managed Preferences/com.google.Chrome.plist";
@@ -115,6 +143,25 @@ let
       receiptPath=${lib.escapeShellArg receiptPath}
       expectedHash=${lib.escapeShellArg policyHash}
 
+      # `activation` when run by a rebuild; the boot reconciler passes nothing.
+      mode="''${1:-reconcile}"
+
+      # cfprefsd caches managed preferences and does not notice a file written
+      # beside it: after the 1Password extension was added on 2026-10-05, the
+      # file listed it while CFPreferences still returned only Loom, and a
+      # Chrome restarted three minutes later installed nothing. Every cfprefsd
+      # is restarted, root's and each user's, because a user's instance hands
+      # out what it last received from root's. launchd restarts them on demand.
+      #
+      # ONLY during a rebuild someone started. The owner's rule (2026-10-06):
+      # nothing on this Mac is restarted by a background job, so the 5-minute
+      # reconciler never does this, even when the cache is stale.
+      flushPreferencesCache() {
+        if [ "$mode" = activation ]; then
+          /usr/bin/killall cfprefsd 2>/dev/null || true
+        fi
+      }
+
       if [ -L "$policyPath" ] || [ -L "$receiptPath" ]; then
         echo "Refusing to replace a symlink at $policyPath or $receiptPath" >&2
         exit 1
@@ -138,6 +185,14 @@ let
         fi
 
         if [ "$recordedHash" = "$expectedHash" ]; then
+          # The file is right, but Chrome reads it through cfprefsd's cache,
+          # which can still hold an earlier version (see
+          # ./chrome-policy-current.js). A rebuild flushes that too, or a
+          # policy written while the cache was warm never reaches Chrome.
+          if [ "$mode" = activation ] \
+            && [ "$(/usr/bin/osascript -l JavaScript ${./chrome-policy-current.js} "$policyPath")" != current ]; then
+            flushPreferencesCache
+          fi
           exit 0
         fi
       fi
@@ -150,6 +205,7 @@ let
       /usr/bin/printf '%s\n' "$expectedHash" > "$receiptPath.new"
       /bin/chmod 0644 "$receiptPath.new"
       /bin/mv -f "$receiptPath.new" "$receiptPath"
+      flushPreferencesCache
     '';
   };
 in
@@ -190,7 +246,7 @@ in
   # system state. The receipt keeps activation from overwriting a policy file
   # created or later changed by another administrator or management tool.
   system.activationScripts.extraActivation.text = lib.mkAfter ''
-    ${lib.getExe installPolicy}
+    ${lib.getExe installPolicy} activation
   '';
 
   # Re-assert at boot, because macOS has just thrown the policy away.

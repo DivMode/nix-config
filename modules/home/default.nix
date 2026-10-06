@@ -57,6 +57,7 @@ in
     ./retired-stillpane.nix
     ./screensaver.nix
     ./secrets.nix
+    ./sparkle.nix
     ./terminal.nix
   ];
 

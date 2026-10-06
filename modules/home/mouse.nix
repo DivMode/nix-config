@@ -149,7 +149,8 @@ in
 
   # These keys are LinearMouse's own documented Defaults values rather than part
   # of linearmouse.json. Only the values we own are declared, so Sparkle update
-  # state and other application-managed preferences remain intact.
+  # state and other application-managed preferences remain intact. The Sparkle
+  # update answer itself is declared in ./sparkle.nix.
   #
   # Declared as typed Nix values rather than hand-built `defaults write`
   # commands: Home Manager renders these with `lib.generators.toPlist` and

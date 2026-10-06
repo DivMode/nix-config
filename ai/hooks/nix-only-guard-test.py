@@ -80,18 +80,28 @@ CASES = [
     ("a doc mentioning the CLI inside a quoted heredoc", "cat > notes.md <<'EOF'\nNever run op by hand.\nEOF", "ALLOW"),
     ("grep for the variable name in source", "grep -rn OP_SERVICE_ACCOUNT_TOKEN scripts/", "ALLOW"),
     # ---- Actual machine mutation. Must stay denied. ----
-    ("bare invocation", f"/usr/bin/{KILL} -u {GENERIC_USER} Dock", "DENY"),
+    ("bare invocation", f"/usr/bin/{KILL} -u {GENERIC_USER} LinearMouse", "DENY"),
     (
         "invocation after a heredoc has ended",
-        f"cat > x <<'EOF'\nharmless\nEOF\n{KILL} Dock",
+        f"cat > x <<'EOF'\nharmless\nEOF\n{KILL} LinearMouse",
         "DENY",
     ),
     (
         "heredoc piped INTO a shell really does execute its body",
-        f"bash <<'EOF'\n{KILL} Dock\nEOF",
+        f"bash <<'EOF'\n{KILL} LinearMouse\nEOF",
         "DENY",
     ),
-    ("sudo-wrapped invocation", f"sudo {KILL} Dock", "DENY"),
+    ("sudo-wrapped invocation", f"sudo {KILL} LinearMouse", "DENY"),
+    # ---- The self-restarting UI agents the owner allowed (2026-10-06). ----
+    ("restart the Dock", f"{KILL} Dock", "ALLOW"),
+    ("restart Finder, quietly, as a named user", f"/usr/bin/{KILL} -qu {GENERIC_USER} Finder".replace("-qu", "-q -u"), "ALLOW"),
+    ("restart two UI agents at once", f"{KILL} SystemUIServer ControlCenter", "ALLOW"),
+    # ---- ...and nothing beyond them. ----
+    ("a UI agent next to an application", f"{KILL} Dock LinearMouse", "DENY"),
+    ("a signal flag", f"{KILL} -9 Dock", "DENY"),
+    ("pattern matching could hit anything", f"{KILL} -m Dock", "DENY"),
+    ("no process named", f"{KILL} -q", "DENY"),
+    ("pkill is never allowed", "p" + f"kill -x Dock", "DENY"),
     (
         "defaults write",
         f"{DEFAULTS_WRITE} com.apple.dock autohide -bool true",

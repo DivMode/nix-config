@@ -278,7 +278,11 @@ in
         "$configDirectory/karabiner.json"
 
       userId=$(/usr/bin/id -u)
-      service="gui/$userId/org.pqrs.service.agent.karabiner_console_user_server"
+      # The label Karabiner-Elements registers on macOS 27 (`launchctl print
+      # gui/$UID` on 2026-10-06). The older lowercase
+      # karabiner_console_user_server no longer exists, so the restart was
+      # silently skipped by the `launchctl print` guard below.
+      service="gui/$userId/org.pqrs.service.agent.Karabiner-Console-User-Server"
       if /bin/launchctl print "$service" >/dev/null 2>&1; then
         run /bin/launchctl kickstart -k "$service"
       fi

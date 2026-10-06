@@ -6,6 +6,7 @@
     ./dock.nix
     ./firewall.nix
     ./fonts.nix
+    ./github-ssh.nix
     ./homebrew.nix
     ./macos-defaults.nix
     ./nix.nix

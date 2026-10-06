@@ -46,6 +46,20 @@ let
   # briefly absent after every restart.
 
   chromePolicy = plist.generate "com.google.Chrome.plist" {
+    # Never send usage statistics or crash reports to Google, and the reason
+    # this must be mandatory rather than a recommended user preference: it is
+    # also what suppresses the "Welcome to Google Chrome" first-run dialog.
+    # chrome/browser/first_run/first_run_internal_posix.cc returns early from
+    # ShouldShowFirstRunDialog() when metrics::IsMetricsReportingPolicyManaged(),
+    # and that (chrome/browser/metrics/metrics_reporting_state.cc) is
+    # `pref->IsManaged()` on kMetricsReportingEnabled — true only for a forced
+    # value. The dialog's other checkbox, default browser, is
+    # modules/home/browser.nix. The policy's own definition
+    # (policy_definitions/Miscellaneous/MetricsReportingEnabled.yaml): "When
+    # this policy is Disabled, anonymous reporting is disabled and no usage or
+    # crash data is sent to Google. Users won't be able to change this setting."
+    MetricsReportingEnabled = false;
+
     WebAppInstallForceList = [
       {
         # Google publishes this endpoint specifically for managed Gmail PWA

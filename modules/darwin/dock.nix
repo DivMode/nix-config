@@ -5,7 +5,10 @@
     # Reorder Spaces by recent use instead of keeping fixed Space numbers.
     mru-spaces = true;
     persistent-apps = [
-      "/System/Applications/Launchpad.app"
+      # Apps.app replaced Launchpad.app; on macOS 27 (2026-10-05)
+      # /System/Applications/Launchpad.app does not exist and its pin rendered
+      # as a question mark.
+      "/System/Applications/Apps.app"
       "/Applications/Google Chrome.app"
       # Chrome creates this real app shim after a profile first processes the
       # declared policy. It may show a question mark until Chrome is opened.

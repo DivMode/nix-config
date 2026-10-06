@@ -1,6 +1,7 @@
 # Default document handlers: which application opens a file type when it is
-# double-clicked. ./archives.nix, ./media.nix and ./terminal.nix declare
-# entries in `nixConfig.defaultHandlers`; this module applies all of them.
+# double-clicked, and which one opens a URL scheme. ./archives.nix, ./media.nix
+# and ./terminal.nix declare `nixConfig.defaultHandlers`, ./browser.nix
+# declares `nixConfig.defaultURLHandlers`; this module applies all of them.
 #
 # Not with `duti -s`. On macOS 27 that call (LSSetDefaultRoleHandlerForContentType)
 # does not change a type another application already holds: it queues a
@@ -31,7 +32,13 @@
 }:
 let
   cfg = config.nixConfig.defaultHandlers;
-  desired = pkgs.writeText "default-handlers.json" (builtins.toJSON cfg);
+  urlCfg = config.nixConfig.defaultURLHandlers;
+  desired = pkgs.writeText "default-handlers.json" (
+    builtins.toJSON {
+      contentTypes = cfg;
+      urlSchemes = urlCfg;
+    }
+  );
 in
 {
   options.nixConfig.defaultHandlers = lib.mkOption {
@@ -58,7 +65,16 @@ in
     );
   };
 
-  config = lib.mkIf (cfg != { }) {
+  options.nixConfig.defaultURLHandlers = lib.mkOption {
+    description = ''
+      Default handler for each URL scheme, as a bundle identifier. The
+      application must list the scheme in its Info.plist CFBundleURLTypes.
+    '';
+    default = { };
+    type = lib.types.attrsOf lib.types.str;
+  };
+
+  config = lib.mkIf (cfg != { } || urlCfg != { }) {
     home.activation.setDefaultHandlers = lib.hm.dag.entryAfter [ "writeBoundary" ] ''
       handlersPlist=$(mktemp)
       # A plain assignment, so a failed merge aborts activation under set -e.

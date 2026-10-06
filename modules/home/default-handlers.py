@@ -1,13 +1,14 @@
-"""Merge declared document-type handlers into LaunchServices' preferences.
+"""Merge declared handlers into LaunchServices' preferences.
 
 Usage: default-handlers.py DESIRED_JSON OUTPUT_PLIST
 
-DESIRED_JSON maps a UTI to {"bundleId": ..., "role": ...}. The user's current
+DESIRED_JSON is {"contentTypes": {UTI: {"bundleId", "role"}},
+"urlSchemes": {scheme: bundleId}}. The user's current
 com.apple.launchservices.secure domain is read with `defaults export`, every
-LSHandlers entry for a declared UTI is replaced by the declared one, and every
-other entry (URL schemes, undeclared types) is kept as it is. When that changes
-anything, the merged domain is written to OUTPUT_PLIST and "changed" is
-printed; otherwise nothing is written.
+LSHandlers entry for a declared UTI or URL scheme is replaced by the declared
+one, and every other entry is kept as it is. When that changes anything, the
+merged domain is written to OUTPUT_PLIST and "changed" is printed; otherwise
+nothing is written.
 """
 
 import json
@@ -37,13 +38,37 @@ def current_domain():
     return plistlib.loads(exported.stdout)
 
 
-def declared_entry(uti, handler):
-    key = ROLE_KEYS[handler["role"]]
+def binding(target_key, target, role_key, bundle_id):
+    # LaunchServices stores bundle identifiers lowercased: the declared
+    # com.google.Chrome read back as com.google.chrome after lsd restarted
+    # (2026-10-05), so the declared case would never compare equal and every
+    # activation would rewrite the domain and restart lsd again.
     return {
-        "LSHandlerContentType": uti,
-        key: handler["bundleId"],
-        "LSHandlerPreferredVersions": {key: "-"},
+        target_key: target,
+        role_key: bundle_id.lower(),
+        "LSHandlerPreferredVersions": {role_key: "-"},
     }
+
+
+def declared(desired):
+    """Map (target key, target) to the entry that should be stored for it."""
+    entries = {}
+    for uti, handler in desired.get("contentTypes", {}).items():
+        key = ("LSHandlerContentType", uti)
+        entries[key] = binding(*key, ROLE_KEYS[handler["role"]], handler["bundleId"])
+    # The shape LaunchServices itself stored for the acrobat* schemes on this
+    # Mac: role All, preferred version "-".
+    for scheme, bundle_id in desired.get("urlSchemes", {}).items():
+        key = ("LSHandlerURLScheme", scheme)
+        entries[key] = binding(*key, "LSHandlerRoleAll", bundle_id)
+    return entries
+
+
+def target_of(entry):
+    for key in ("LSHandlerContentType", "LSHandlerURLScheme"):
+        if key in entry:
+            return (key, entry[key])
+    return None
 
 
 def matches(entry, wanted):
@@ -54,7 +79,7 @@ def matches(entry, wanted):
 def main():
     desired_path, output_path = sys.argv[1:]
     with open(desired_path) as f:
-        desired = json.load(f)
+        wanted = declared(json.load(f))
 
     domain = current_domain()
     handlers = domain.get("LSHandlers", [])
@@ -63,18 +88,15 @@ def main():
     merged = []
     unchanged = {}
     for entry in handlers:
-        uti = entry.get("LSHandlerContentType")
-        if uti not in desired:
+        target = target_of(entry)
+        if target not in wanted:
             merged.append(entry)
-        elif uti not in unchanged and matches(entry, declared_entry(uti, desired[uti])):
-            unchanged[uti] = entry
+        elif target not in unchanged and matches(entry, wanted[target]):
+            unchanged[target] = entry
 
-    changed = len(unchanged) != len(desired) or len(merged) + len(unchanged) != len(handlers)
-    for uti, handler in sorted(desired.items()):
-        if uti in unchanged:
-            merged.append(unchanged[uti])
-        else:
-            merged.append({**declared_entry(uti, handler), "LSHandlerModificationDate": now})
+    changed = len(unchanged) != len(wanted) or len(merged) + len(unchanged) != len(handlers)
+    for target, entry in sorted(wanted.items()):
+        merged.append(unchanged.get(target) or {**entry, "LSHandlerModificationDate": now})
 
     if changed:
         domain["LSHandlers"] = merged

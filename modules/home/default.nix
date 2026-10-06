@@ -38,6 +38,7 @@ in
     ./agent-reach
     ./ai
     ./archives.nix
+    ./browser.nix
     ./caches.nix
     ./cli-proxy.nix
     ./command-governor.nix

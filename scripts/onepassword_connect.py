@@ -158,6 +158,30 @@ class Connect:
                 return field
         raise ConnectError("the secure note has no notes field")
 
+    def vault_count(self):
+        """An authenticated read: fails unless the token is accepted."""
+        vaults = self.get("/v1/vaults")
+        if not isinstance(vaults, list) or not vaults:
+            raise ConnectError("the Connect token sees no vaults")
+        return len(vaults)
+
+    def notes_titled(self, prefix):
+        """(vault name, title) of every Secure Note whose title starts with
+        `prefix`, across the vaults this token can see."""
+        vaults = self.get("/v1/vaults")
+        if not isinstance(vaults, list):
+            raise ConnectError("Connect returned an invalid vault list")
+        found = []
+        for vault in vaults:
+            if not isinstance(vault, dict) or not ID.fullmatch(str(vault.get("id", ""))):
+                continue
+            items = self.get(f"/v1/vaults/{vault['id']}/items")
+            for item in items if isinstance(items, list) else []:
+                if (isinstance(item, dict) and item.get("category") == "SECURE_NOTE"
+                        and isinstance(item.get("title"), str) and item["title"].startswith(prefix)):
+                    found.append((str(vault.get("name", vault["id"])), item["title"]))
+        return sorted(found)
+
     def note_text(self, vault, title):
         item = self._note(self.vault_id(vault), title)
         if item is None:

@@ -268,7 +268,9 @@ in
       # silent. Chrome would just start writing downloads into a local directory
       # nobody looks in.
       launchd.agents.mount-network-shares = {
-        enable = true;
+        # Off in the setup wizard's install-only generation: mounting before the
+        # wizard seeds the Keychain password would raise Finder sign-in dialogs.
+        enable = !setupBootstrap;
         config = {
           ProgramArguments = [ "${mountScript}/bin/mount-network-shares" ];
           RunAtLoad = true;

@@ -285,16 +285,20 @@ The approved Connect interfaces are declarative and read the cached
   no `SSH_AUTH_SOCK`. The transport enforces host-key verification, disables
   agent and password authentication, and accepts only GitHub upload/receive-pack.
 - AWS `credential_process` reads its key pair from Connect.
-- `nix-config-connect-document` restores a stored document (the setup wizard's
-  `local.nix` restore).
+- `nix-config-connect-note` saves and restores the `local.nix` backup.
+- `nix-config-connect-rotate [--add-vault VAULT]... [--dry-run]` replaces this
+  Mac's Connect token (a new vault means a new token): it issues one with
+  `op connect` administration, installs it, and updates the stored copy. It
+  never deletes the old token; that stays a separate, deliberate
+  `op connect token delete` once nothing else uses it.
 
-1Password **writes** have no approved interface at present: the former
-`onepassword-sa` command depended on the disabled service account. When a task
-needs a credential stored, stop and ask; do not reach for `op` or write a client.
+Other 1Password **writes** have no approved interface. When a task needs a
+credential stored, stop and ask; do not reach for `op` or write a client.
 
-`scripts/rebuild.sh` is the declarative rebuild entry point. It does not touch
-1Password at all; activation only checks that the Connect environment exists
-and fails loudly when it does not. First-time Connect setup belongs to the
+`scripts/rebuild.sh` is the declarative rebuild entry point. Activation only
+checks that the Connect environment exists and fails loudly when it does not;
+after it, `rebuild.sh` saves the `local.nix` backup and warns when the stored
+token copy is stale, both through Connect. First-time Connect setup belongs to the
 human setup workflow (`scripts/setup-mac.sh`).
 
 ## Shell commands never prompt the owner

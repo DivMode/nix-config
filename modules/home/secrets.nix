@@ -39,6 +39,66 @@ let
   # token, `op read` bootstrap and SDK write command) were removed on
   # 2026-10-07; all three had been switched off since the move to Connect.
 
+  # Keep the 1Password copy of the token current, so a new Mac is set up
+  # with the token this one uses: `nix-config-connect-store-token ids`
+  # shows token IDs (never tokens), `... store` writes it and reads back.
+  connectStoreToken = pkgs.writeShellApplication {
+    name = "nix-config-connect-store-token";
+    text = ''
+      exec ${pkgs.python3}/bin/python3 ${../../scripts}/connect-store-token.py \
+        ${escapeShellArg cfg.connect.envPath} ${escapeShellArg local.onePassword.connectReference} "$@"
+    '';
+  };
+
+  # Replace the Connect token: `nix-config-connect-set-token TOKEN_FILE`.
+  # A Connect token's vaults are fixed when it is issued (`op connect
+  # token create --vault ...`), so granting a vault means issuing a new
+  # token, and the setup wizard keeps any token that still works. Same
+  # steps as the wizard's: write a 0600 candidate beside the env file,
+  # publish it only after Connect accepts it. The host is local.nix's
+  # connectHost; the token is read from a file, never an argument, so it
+  # appears in no process list.
+  connectSetToken = pkgs.writeShellApplication {
+    name = "nix-config-connect-set-token";
+    text = ''
+      tokenFile="''${1:?usage: nix-config-connect-set-token TOKEN_FILE}"
+      envPath=${escapeShellArg cfg.connect.envPath}
+      if [[ ! -s "$tokenFile" ]]; then
+        printf '%s\n' "ERROR: $tokenFile is empty or missing." >&2
+        exit 1
+      fi
+      token="$(tr -d '[:space:]' < "$tokenFile")"
+      mkdir -p "$(dirname "$envPath")"
+      chmod 700 "$(dirname "$envPath")"
+      candidate="$(umask 077; mktemp "$envPath.tmp.XXXXXX")"
+      trap 'rm -f "$candidate"' EXIT
+      printf 'OP_CONNECT_HOST=%s\nOP_CONNECT_TOKEN=%s\n' \
+        ${escapeShellArg local.onePassword.connectHost} "$token" > "$candidate"
+      unset token
+      chmod 600 "$candidate"
+      if ! ${pkgs.python3}/bin/python3 ${../../scripts}/onepassword-connect-note.py "$candidate" check; then
+        printf '%s\n' "ERROR: Connect did not accept the new token; the current one is unchanged." >&2
+        exit 1
+      fi
+      mv "$candidate" "$envPath"
+      trap - EXIT
+      printf '%s\n' "Connect accepted the new token; it is now in use."
+    '';
+  };
+
+  # Replace the Connect token, optionally granting more vaults, in one step:
+  # `nix-config-connect-rotate [--add-vault VAULT]... [--dry-run]`. See
+  # scripts/connect-rotate.py; it never deletes the previous token.
+  connectRotate = pkgs.writeShellApplication {
+    name = "nix-config-connect-rotate";
+    text = ''
+      exec ${pkgs.python3}/bin/python3 ${../../scripts}/connect-rotate.py \
+        ${escapeShellArg cfg.connect.envPath} ${escapeShellArg local.onePassword.connectHost} \
+        ${escapeShellArg (local.onePassword.connectServer or "")} \
+        ${getExe connectSetToken} ${getExe connectStoreToken} "$@"
+    '';
+  };
+
   # AWS reads credentials by EXECUTING this and parsing its stdout
   # (`credential_process`). Nothing is cached to disk: the keys stay in
   # 1Password and are fetched per invocation through Connect
@@ -128,52 +188,9 @@ in
           '';
         })
 
-        # Keep the 1Password copy of the token current, so a new Mac is set up
-        # with the token this one uses: `nix-config-connect-store-token ids`
-        # shows token IDs (never tokens), `... store` writes it and reads back.
-        (pkgs.writeShellApplication {
-          name = "nix-config-connect-store-token";
-          text = ''
-            exec ${pkgs.python3}/bin/python3 ${../../scripts}/connect-store-token.py \
-              ${escapeShellArg cfg.connect.envPath} ${escapeShellArg local.onePassword.connectReference} "$@"
-          '';
-        })
-
-        # Replace the Connect token: `nix-config-connect-set-token TOKEN_FILE`.
-        # A Connect token's vaults are fixed when it is issued (`op connect
-        # token create --vault ...`), so granting a vault means issuing a new
-        # token, and the setup wizard keeps any token that still works. Same
-        # steps as the wizard's: write a 0600 candidate beside the env file,
-        # publish it only after Connect accepts it. The host is local.nix's
-        # connectHost; the token is read from a file, never an argument, so it
-        # appears in no process list.
-        (pkgs.writeShellApplication {
-          name = "nix-config-connect-set-token";
-          text = ''
-            tokenFile="''${1:?usage: nix-config-connect-set-token TOKEN_FILE}"
-            envPath=${escapeShellArg cfg.connect.envPath}
-            if [[ ! -s "$tokenFile" ]]; then
-              printf '%s\n' "ERROR: $tokenFile is empty or missing." >&2
-              exit 1
-            fi
-            token="$(tr -d '[:space:]' < "$tokenFile")"
-            mkdir -p "$(dirname "$envPath")"
-            chmod 700 "$(dirname "$envPath")"
-            candidate="$(umask 077; mktemp "$envPath.tmp.XXXXXX")"
-            trap 'rm -f "$candidate"' EXIT
-            printf 'OP_CONNECT_HOST=%s\nOP_CONNECT_TOKEN=%s\n' \
-              ${escapeShellArg local.onePassword.connectHost} "$token" > "$candidate"
-            unset token
-            chmod 600 "$candidate"
-            if ! ${pkgs.python3}/bin/python3 ${../../scripts}/onepassword-connect-note.py "$candidate" check; then
-              printf '%s\n' "ERROR: Connect did not accept the new token; the current one is unchanged." >&2
-              exit 1
-            fi
-            mv "$candidate" "$envPath"
-            trap - EXIT
-            printf '%s\n' "Connect accepted the new token; it is now in use."
-          '';
-        })
+        connectStoreToken
+        connectSetToken
+        connectRotate
       ];
 
       # Activation never reads 1Password and never refreshes the token: the

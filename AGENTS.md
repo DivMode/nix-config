@@ -62,9 +62,8 @@ today and is intentionally structured to add NixOS servers later.
   `modules/home/development.nix` that execs the app's bundled
   `Contents/Resources/codex-cli/bin/codex`; that launcher is the only provider
   of `bin/codex`, so never also install a Nix or Homebrew codex package.
-- Exactly one thing may provide `bin/claude`. `development.nix` withholds the
-  unwrapped package whenever the 1Password launcher in `secrets.nix` is enabled,
-  because that launcher installs its own executable of the same name.
+- Exactly one thing provides `bin/claude`: the launcher in `development.nix`,
+  wrapped by `programs.claude-code` with the plugin directories.
 - Karabiner-Elements exclusively owns keyboard remapping; Raycast's native Hyper
   Key stays disabled and LinearMouse exclusively owns mouse behavior. Home
   Manager owns LinearMouse's documented JSON; never automate TCC approval.

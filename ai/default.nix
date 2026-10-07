@@ -28,6 +28,9 @@
   # pane. Refresh it by re-running that command when Herdr updates.
   skills = {
     herdr = ./skills/herdr;
+    # Hands work to a fresh agent in a new Herdr pane: reconcile live sessions,
+    # checkpoint durably, write the handoff, transfer scheduled jobs, start it.
+    session-handoff = ./skills/session-handoff;
   };
 
   # Local additions to the codex-orchestrator Claude Code plugin: the

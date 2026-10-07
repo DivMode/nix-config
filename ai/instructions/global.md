@@ -251,7 +251,8 @@ it on purpose.
 ## Credentials
 
 The owner's credentials are not the repository's. Never invoke the 1Password
-CLI (`op`) directly or through an improvised wrapper, never unset, strip or
+CLI (`op`) directly or through an improvised wrapper, except for the
+owner-approved administration below; never unset, strip or
 override an `OP_*` variable, never read `~/.config/op/`, and never reach for the
 desktop app, biometric, or signed-in session. Secrets come only through the repository's
 own loader, which uses the self-hosted Connect server; if that loader fails
@@ -291,6 +292,12 @@ The approved Connect interfaces are declarative and read the cached
   `op connect` administration, installs it, and updates the stored copy. It
   never deletes the old token; that stays a separate, deliberate
   `op connect token delete` once nothing else uses it.
+
+**Owner-approved `op` administration** (2026-10-07) touches no secret value,
+and the guard allows exactly this: Connect administration (`op connect` server
+and vault list, vault grant, token create, list and delete), `op vault create`,
+and `op item move` without `--reveal` and with its output sent to `/dev/null`
+(it prints the moved item).
 
 Other 1Password **writes** have no approved interface. When a task needs a
 credential stored, stop and ask; do not reach for `op` or write a client.

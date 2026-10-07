@@ -53,6 +53,9 @@
   # Prefer item IDs over titles; IDs survive retitling.
   onePassword.connectReference = "op://ExampleVault/bbbbbbbbbbbbbbbbbbbbbbbbbb/access-token";
   onePassword.connectHost = "http://198.51.100.10:8091";
+  # The Connect server's name in 1Password, which `op connect` administration
+  # takes (`nix-config-connect-rotate` issues tokens for it).
+  onePassword.connectServer = "example-connect";
 
   # AWS profiles resolved from 1Password at call time via credential_process.
   # `item` is a TITLE passed as an argument to `op item get`, so punctuation

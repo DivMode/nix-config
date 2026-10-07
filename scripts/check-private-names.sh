@@ -109,6 +109,7 @@ if ! LOCAL_PATH="$local_file" REPO_PATH="$repository" CANONICAL_REPO_PATH="$cano
         (local.git.email or "")
         (local.onePassword.vault or "")
         (local.onePassword.connectHost or "")
+        (local.onePassword.connectServer or "")
       ]
       ++ (local.privateTerms or [ ]);
 

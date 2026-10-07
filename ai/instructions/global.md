@@ -239,6 +239,15 @@ in the place it was applied.
 
 Never expose secrets or private user data.
 
+**uv is the only owner of Python on this Mac.** A project pins its version in
+`.python-version` (and `requires-python`), never in `mise.toml` or
+`.tool-versions`; mise owns Node and other repository-pinned tools only. Run
+Python that needs packages through uv (`uv run`, a project venv,
+`uv run --with PKG`, or PEP 723 script metadata) so it behaves the same in an
+interactive terminal and an agent's shell. Never `pip install` into an
+interpreter and never pass `--break-system-packages`: uv's interpreters refuse
+it on purpose.
+
 ## Credentials
 
 The owner's credentials are not the repository's. Never invoke the 1Password

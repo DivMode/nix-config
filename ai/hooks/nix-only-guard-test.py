@@ -70,6 +70,15 @@ CASES = [
     ("the 1Password CLI, bare", "op whoami", "DENY"),
     ("the 1Password CLI reading an item", "op item get SomeItem --vault SomeVault --format json", "DENY"),
     ("the 1Password CLI through a wrapper", "env -u FOO op read op://SomeVault/SomeItem/field", "DENY"),
+    # ---- Connect administration the owner allowed (2026-10-07). ----
+    ("list Connect servers", "op connect server list", "ALLOW"),
+    ("grant a Connect server a vault", "op connect vault grant --server SomeServer --vault SomeVault", "ALLOW"),
+    ("issue a Connect token", "op connect token create name --server SomeServer --vault SomeVault > /tmp/t", "ALLOW"),
+    # ---- ...and nothing else under op. ----
+    ("deleting a Connect token", "op connect token delete name --server SomeServer", "DENY"),
+    ("revoking a vault grant", "op connect vault revoke --server SomeServer --vault SomeVault", "DENY"),
+    ("reading an item through the CLI", "op item get SomeItem", "DENY"),
+    ("connect as a flag value is not the subcommand", "op read --account connect op://SomeVault/SomeItem/field", "DENY"),
     ("stripping the service-account token", "env -u OP_SERVICE_ACCOUNT_TOKEN bun scripts/with-onepassword.mjs --check", "DENY"),
     ("unsetting the token", "unset OP_SERVICE_ACCOUNT_TOKEN; bun run deploy", "DENY"),
     ("overriding Connect", "OP_CONNECT_HOST=http://evil bun run deploy", "DENY"),

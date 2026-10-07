@@ -1,6 +1,6 @@
 ---
 name: delegate
-description: Hand a large, mechanical coding job to a Codex CLI worker (gpt-6.1-sol at an effort Claude chooses per job; Fast tier only when the user asks for fast mode) while Claude plans, splits big jobs into up to 4 parallel pieces, supervises, and accepts. Invoke this yourself, without being asked, when a planned change is large and mechanical with its decisions already made (many files, repetitive edits, long edit-test-fix loops), and whenever the user mentions Codex for doing work ("use Codex", "have Codex do it"). Small fixes are done directly unless the user explicitly hands that change to Codex. The user never types this command.
+description: Hand a large, mechanical coding job to a Codex CLI worker (gpt-6.1-sol at an effort Claude chooses per job; Fast tier only when the user asks for fast mode) while Claude plans, splits big jobs into as many parallel pieces as genuinely help, supervises, and accepts. Invoke this yourself, without being asked, when a planned change is large and mechanical with its decisions already made (many files, repetitive edits, long edit-test-fix loops), and whenever the user mentions Codex for doing work ("use Codex", "have Codex do it"). Small fixes are done directly unless the user explicitly hands that change to Codex. The user never types this command.
 ---
 
 # Delegate an implementation to Codex
@@ -60,8 +60,9 @@ widens product scope, introduces architecture, or decides unrelated improvements
 
 ## Defaults that narrow upstream
 
-- Split a big job into independent pieces yourself and run them together, up to 4 Codex jobs at
-  once (the user's choice, 2026-10-03). See "Running several jobs at once" below.
+- Split a big job into independent pieces yourself and run them together. There is no fixed cap on
+  concurrent Codex jobs (the user's choice, 2026-10-06, replacing the 2026-10-03 cap of 4): run as
+  many as there are genuinely independent pieces. See "Running several jobs at once" below.
 - No `planning` or `planning_review` agents. No Codex reviewer unless material risk or a specific
   unresolved question justifies one; say which.
 - For each piece: one implementation execution, then Claude's verification. At most one targeted correction, by
@@ -220,12 +221,16 @@ by default for any job that splits cleanly; the user should not have to ask.
    2026-10-03), compacted at about 95%, and Codex's own instructions use part of it. A piece that
    needs most of a package read, or dozens of files changed, is too big; split it again. Pieces
    that are small fixes stay with Claude, per the routing rule above.
-2. **Limit.** Run at most 4 Codex jobs at once. On this 16 GB machine, at most 2 of them may run
-   heavy work at the same time: Rust builds, full test suites, bundlers. Hold the rest until one
-   finishes. Parallel Rust pieces need separate cargo target dirs, which some repositories' worktree
-   recipes create per worktree. Without separate dirs they queue on cargo's build lock.
+2. **Scale.** No fixed cap on concurrent jobs or on how many of them run heavy work (Rust builds,
+   test suites, bundlers): the machine has 96 GB of memory and Codex usage is effectively
+   unlimited (the user, 2026-10-06). The number of pieces is set by how the work splits, not by a
+   quota; do not split work that is not independent just to run more jobs. If memory pressure
+   actually appears (`memory_pressure`, swap growth), hold new heavy jobs until it clears. A
+   repository's own instructions may set a tighter limit for its own reasons. Parallel Rust pieces
+   need separate cargo target dirs, which some repositories' worktree recipes create per worktree.
+   Without separate dirs they queue on cargo's build lock.
 3. **Isolate.** Give each piece its own worktree from the repository's mechanism, its own agent name
-   in the same run (`codex-impl-01` … `codex-impl-04`), its own task and `files`, its own scope
+   in the same run (`codex-impl-01`, `codex-impl-02`, …), its own task and `files`, its own scope
    baseline, and its own background task. The one-correction limit applies per piece.
 4. **Announce.** Before launching, tell the user in one line per piece what it does, which files it
    owns, and the effort chosen with its reason.

@@ -7,15 +7,15 @@
 }:
 let
   signingReference = local.git.signingKeyReference or "";
-  signingPublicKey = pkgs.writeText "git-service-account-public-key" local.git.signingKey;
-  serviceAccountSigner = pkgs.writeShellScript "git-service-account-sign" ''
-    exec ${pkgs.python3}/bin/python3 ${../../scripts}/git-service-account-sign.py \
+  signingPublicKey = pkgs.writeText "git-connect-public-key" local.git.signingKey;
+  connectSigner = pkgs.writeShellScript "git-connect-sign" ''
+    exec ${pkgs.python3}/bin/python3 ${../../scripts}/git-connect-sign.py \
       sign ${lib.escapeShellArg config.nixConfig.secrets.onePassword.connect.envPath} \
       ${pkgs.openssh}/bin/ssh-keygen ${pkgs.openssh}/bin/ssh \
       ${lib.escapeShellArg signingReference} ${signingPublicKey} "$@"
   '';
-  serviceAccountTransport = pkgs.writeShellScript "git-service-account-ssh" ''
-    exec ${pkgs.python3}/bin/python3 ${../../scripts}/git-service-account-sign.py \
+  connectTransport = pkgs.writeShellScript "git-connect-ssh" ''
+    exec ${pkgs.python3}/bin/python3 ${../../scripts}/git-connect-sign.py \
       transport ${lib.escapeShellArg config.nixConfig.secrets.onePassword.connect.envPath} \
       ${pkgs.openssh}/bin/ssh-keygen ${pkgs.openssh}/bin/ssh \
       ${lib.escapeShellArg signingReference} ${signingPublicKey} "$@"
@@ -103,11 +103,11 @@ in
       };
       init.defaultBranch = "main";
       pull.rebase = true;
-      core.sshCommand = "${serviceAccountTransport}";
+      core.sshCommand = "${connectTransport}";
       ssh.variant = "ssh";
       gpg = {
         format = "ssh";
-        ssh.program = "${serviceAccountSigner}";
+        ssh.program = "${connectSigner}";
 
         # Without this, git SIGNS correctly and then cannot verify what it just
         # signed: `git log --show-signature` reports "No signature" and %G?
@@ -183,24 +183,10 @@ in
   # PreToolUse guard that enforces Nix-only machine changes. They are enabled
   # so that directory is reproducible: an agent, or anything else, can delete
   # ~/.claude and `darwin-rebuild switch` restores it from this repository.
-  #
-  # API-secret runtime injection stays dormant. SSH authentication and Git
-  # signing are a separate 1Password capability.
   nixConfig.ai.enable = true;
-  nixConfig.secrets.onePassword.enable = false;
-  # Off: the desktop application's agent socket made every SSH and ssh-keygen
-  # call reach the 1Password app. Git uses the Connect-backed signer instead.
-  nixConfig.secrets.onePassword.sshAgent.enable = false;
 
-  # Off: everything that reads 1Password goes through Connect only. The service
-  # account's `op` path reached the desktop application and spent a 1,000
-  # request/24h cap; nothing falls back to it.
-  nixConfig.secrets.onePassword.serviceAccount.enable = false;
-
-  # Connect credentials for the deploy path only. Cached to a 0600 env file that
-  # the work monorepo's sst-connect-env.sh sources at the sst invocation seam, so
-  # deploys use Connect — which does not spend the service account's rolling 24h
-  # request cap — while interactive `op` keeps working with `--fields`.
+  # Every 1Password read on this Mac goes through Connect, from a 0600 env
+  # file each consumer reads at its own seam (modules/home/secrets.nix).
   nixConfig.secrets.onePassword.connect.enable = true;
 
   # AWS profiles for the SST state bucket, resolved from 1Password per call.

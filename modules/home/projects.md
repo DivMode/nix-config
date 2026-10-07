@@ -26,9 +26,8 @@ function name. A project called `git` fails the build instead of silently
 breaking the shell.
 
 `claude` is invoked by name inside the functions, never by store path. The
-Home Manager claude-code module wraps the package with `--plugin-dir`, and
-`secrets.nix` may replace `bin/claude` with a 1Password launcher; a hard-coded
-store path would bypass whichever is active.
+Home Manager claude-code module wraps the package with `--plugin-dir`; a
+hard-coded store path would bypass that wrapping.
 
 ## Why these are not the alias collection terminal.md rejects
 

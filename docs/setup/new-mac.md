@@ -66,9 +66,6 @@ After the first switch, replace them (copy the values from the old Mac's
 - `git.signingKey`: Ed25519 SSH **public** key used for signing;
 - `git.signingKeyReference`: reference to that same item's private key, ending
   in `/private key?ssh-format=openssh`, readable by the Connect token;
-- `onePassword.sshAgentKeyIds`: still a required, non-empty list of SSH Key
-  item IDs (the Git signing key first). The 1Password SSH agent is disabled, so
-  nothing offers these keys; the list only satisfies evaluation.
 
 The email is not secret: Git embeds it in every commit and local Nix evaluation
 places it in the Nix store. Use a GitHub privacy address if public commits must

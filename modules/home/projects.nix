@@ -68,8 +68,7 @@ let
   #
   # `claude` is called by NAME, deliberately, not by store path. The Home
   # Manager claude-code module wraps the package with `--plugin-dir` to install
-  # plugins, and secrets.nix may replace bin/claude with a 1Password launcher.
-  # A hard-coded store path would silently bypass whichever of those is active.
+  # plugins; a hard-coded store path would silently bypass that wrapping.
   #
   # `"$@"` forwards arguments, so `<name> -c` continues that project's last
   # conversation and `<name> -p "..."` runs one non-interactively.

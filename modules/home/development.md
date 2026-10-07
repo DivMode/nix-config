@@ -30,11 +30,9 @@ long since the last `nixup` (2026-09-17: 2.1.269 against 2.1.276). A store path
 cannot update itself, so that package also had to disable Claude Code's
 updater and its "update available" notice.
 
-Exactly one thing may provide `bin/claude`. When the 1Password launcher in
-`secrets.nix` is enabled it installs its own executable of that name, wrapping
-this same launcher by absolute store path, so this module withholds the
-unwrapped launcher to avoid a collision. `nixConfig.claudeCode.package` is the
-single source both modules read.
+Exactly one thing provides `bin/claude`: this launcher, wrapped by
+`programs.claude-code` with the plugin directories. `nixConfig.claudeCode.package`
+is the single source that module reads.
 
 Runtime ownership is deliberately single-purpose:
 

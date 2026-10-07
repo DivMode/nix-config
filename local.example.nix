@@ -12,7 +12,7 @@
     email = "replace-me@example.invalid";
     # Structurally valid public-only placeholder so generic flake checks work.
     signingKey = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
-    # Reference only: the matching private key is read by the service account.
+    # Reference only: the matching private key is read through Connect.
     signingKeyReference = "op://Automation/Git signing/private key?ssh-format=openssh";
   };
 
@@ -41,25 +41,16 @@
   # person, employer, client, host, or private path belongs in privateTerms.
   publicTerms = [ ];
 
-  # 1Password item IDs are local metadata, not secret values. IDs avoid
-  # publishing private item or vault names in this reusable repository.
-  onePassword.sshAgentKeyIds = [ "aaaaaaaaaaaaaaaaaaaaaaaaaa" ];
-
   # The vault holding the "nix-config local.nix" Secure Note that
   # scripts/rebuild.sh saves through Connect. Read from here rather than
   # hard-coded, which keeps a private vault name out of the tracked scripts;
   # scripts/setup-mac.sh finds the note by title in any vault it can see.
   onePassword.vault = "ExampleVault";
 
-  # Where the service-account token is read from, as an op:// reference. This
-  # is a NAME, not a value; the token itself never appears in Nix. Prefer the
-  # item ID over its title — op rejects a reference containing '(' outright,
-  # and IDs survive retitling.
-  onePassword.serviceAccountReference = "op://ExampleVault/aaaaaaaaaaaaaaaaaaaaaaaaaa/token";
-
-  # A 1Password Connect server, if one is reachable. Read by the deploy path
-  # only — never exported to shells, because with OP_CONNECT_HOST set the op
-  # CLI refuses every non-JSON output format and `op item get --fields` breaks.
+  # The 1Password Connect server every 1Password read on this Mac goes
+  # through, and the item holding its access token. Names, not values: the
+  # token itself lives only in the 0600 Connect env file the setup writes.
+  # Prefer item IDs over titles; IDs survive retitling.
   onePassword.connectReference = "op://ExampleVault/bbbbbbbbbbbbbbbbbbbbbbbbbb/access-token";
   onePassword.connectHost = "http://198.51.100.10:8091";
 

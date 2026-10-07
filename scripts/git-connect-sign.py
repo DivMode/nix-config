@@ -106,7 +106,7 @@ except ConnectError as error:
 
 # TemporaryDirectory is private (0700), and the key is created as 0600. Nothing
 # is added to an agent or cached after signing. The private bytes never reach logs.
-with tempfile.TemporaryDirectory(prefix="git-service-account-sign-") as directory:
+with tempfile.TemporaryDirectory(prefix="git-connect-sign-") as directory:
     private = Path(directory) / "key"
     descriptor = os.open(private, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
     with os.fdopen(descriptor, "wb") as output:

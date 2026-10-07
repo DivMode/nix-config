@@ -120,22 +120,11 @@
           "signingKey"
           "signingKeyReference"
         ];
-      sshAgentKeyIdsPresent =
-        rawLocal ? onePassword
-        && builtins.isAttrs rawLocal.onePassword
-        && rawLocal.onePassword ? sshAgentKeyIds
-        && builtins.isList rawLocal.onePassword.sshAgentKeyIds
-        && rawLocal.onePassword.sshAgentKeyIds != [ ]
-        && builtins.all (
-          itemId: builtins.isString itemId && builtins.match "^[a-z0-9]{26}$" itemId != null
-        ) rawLocal.onePassword.sshAgentKeyIds;
       local =
         if missingLocalFields != [ ] then
           throw "local.nix is missing one or more required top-level fields; compare it with local.example.nix"
         else if !gitFieldsPresent then
-          throw "local.nix git must define name, email, signingKey, and signingKeyReference; preserve existing fields and add the service-account key reference from local.example.nix"
-        else if !sshAgentKeyIdsPresent then
-          throw "local.nix onePassword.sshAgentKeyIds must contain one or more 26-character 1Password item IDs"
+          throw "local.nix git must define name, email, signingKey, and signingKeyReference; preserve existing fields and add the signing key reference from local.example.nix"
         else if
           !(builtins.all (value: builtins.isString value && value != "") [
             rawLocal.user

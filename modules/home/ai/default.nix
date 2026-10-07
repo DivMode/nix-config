@@ -459,9 +459,6 @@ in
       ccc = "claude --continue --dangerously-skip-permissions";
     };
 
-    # Both would install an executable named `claude`. The 1Password launcher
-    # is currently disabled, so this cannot fire today; it exists so that
-    # enabling it fails with an explanation rather than an opaque collision.
     assertions = [
       # The two global instruction files must carry the same bytes.
       #
@@ -525,15 +522,6 @@ in
           same wrong bytes in both files is still the wrong policy in both
           clients. Edit the tracked sources under ai/instructions/ instead, and
           put a client-specific addition in that client's own configuration.
-        '';
-      }
-      {
-        assertion = !config.nixConfig.secrets.onePassword.enable;
-        message = ''
-          Both programs.claude-code and the 1Password launcher would provide
-          bin/claude. Point the launcher at
-          config.programs.claude-code.finalPackage — which carries the plugin
-          wrapper — and set programs.claude-code.package to null.
         '';
       }
     ];

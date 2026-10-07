@@ -128,6 +128,17 @@ in
           '';
         })
 
+        # Keep the 1Password copy of the token current, so a new Mac is set up
+        # with the token this one uses: `nix-config-connect-store-token ids`
+        # shows token IDs (never tokens), `... store` writes it and reads back.
+        (pkgs.writeShellApplication {
+          name = "nix-config-connect-store-token";
+          text = ''
+            exec ${pkgs.python3}/bin/python3 ${../../scripts}/connect-store-token.py \
+              ${escapeShellArg cfg.connect.envPath} ${escapeShellArg local.onePassword.connectReference} "$@"
+          '';
+        })
+
         # Replace the Connect token: `nix-config-connect-set-token TOKEN_FILE`.
         # A Connect token's vaults are fixed when it is issued (`op connect
         # token create --vault ...`), so granting a vault means issuing a new

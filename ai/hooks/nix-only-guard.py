@@ -64,6 +64,29 @@ def restarts_only_ui_agents(args):
     return bool(names) and all(name in SELF_RESTARTING_UI_AGENTS for name in names)
 
 
+# uv is the only owner of Python (global policy). Its interpreters refuse pip
+# installs (EXTERNALLY-MANAGED); these are the agent commands that install into
+# an interpreter anyway, or defeat that refusal, as a project recipe's
+# `pip3 install --break-system-packages` did on 2026-10-06.
+PIP_PROGRAM_RE = re.compile(r"pip(?:3(?:\.\d+)?)?")
+PYTHON_PROGRAM_RE = re.compile(r"python(?:3(?:\.\d+)?)?")
+
+
+def installs_python_packages_outside_uv(prog, args, raw):
+    if PYTHON_PROGRAM_RE.fullmatch(prog):
+        if "-m" not in args or args[args.index("-m") + 1:args.index("-m") + 2] != ["pip"]:
+            return False
+        args = args[args.index("-m") + 2:]
+    elif not PIP_PROGRAM_RE.fullmatch(prog) and prog != "uv":
+        return False
+    if "--break-system-packages" in args or "PIP_BREAK_SYSTEM_PACKAGES" in raw:
+        return True
+    flagless = [a for a in args if not a.startswith("-")]
+    if prog == "uv":
+        return flagless[:2] == ["pip", "install"] and "--system" in args
+    return flagless[:1] == ["install"]
+
+
 def deny(reason):
     print(json.dumps({
         "hookSpecificOutput": {
@@ -263,8 +286,11 @@ def check(segment):
     if prog in {"npm", "pnpm", "yarn", "bun"} and sub in {"install", "i", "add"} \
             and any(a in ("-g", "--global") for a in args):
         return blocked(f"`{prog}` global install")
-    if prog in {"pip", "pip3"} and sub == "install":
-        return blocked("`pip install`")
+    if installs_python_packages_outside_uv(prog, args, raw):
+        return (f"Blocked: `{raw.strip()}`\n\nuv owns Python on this Mac: never install into an "
+                "interpreter or pass --break-system-packages. Use `uv run --with PKG`, PEP 723 "
+                "script metadata with `uv run`, or a project venv (`uv venv`, `uv pip install`, "
+                "`uv sync`).")
     if prog in {"cargo", "gem", "go"} and sub == "install":
         return blocked(f"`{prog} install`")
     if prog == "softwareupdate":

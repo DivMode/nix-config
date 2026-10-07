@@ -92,7 +92,10 @@ in
           if [[ ! -v DRY_RUN ]]; then
             printf '%s\n' ${lib.escapeShellArg rev} > ${lib.escapeShellArg marker}
           fi
-          warnEcho "Installed Herdr Server.app ${version}. Allow \"Herdr Server\" when macOS asks about the local network."
+          # Full Disk Access is granted to the app too. Its new ad-hoc
+          # signature may not carry the earlier grant (unverified: no rev bump
+          # has happened since the grant), so the warning asks for a check.
+          warnEcho "Installed Herdr Server.app ${version}. Allow \"Herdr Server\" when macOS asks about the local network, and check it is still enabled under Privacy & Security > Full Disk Access."
         fi
       '';
 

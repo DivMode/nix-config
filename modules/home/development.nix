@@ -340,12 +340,22 @@ in
     # `trusted_config_paths = ["/"]` trusts every project's mise.toml without a
     # per-repository `mise trust` (owner's decision, 2026-10-06). Untrusted
     # configs made mise refuse to run at all in a fresh checkout on a new Mac.
+    #
+    # `disable_tools = ["python"]`: uv is the only owner of Python. Without it,
+    # trusting every config let a project's `python = "3.12"` in mise.toml
+    # install a second interpreter (2026-10-06), so the same repository ran
+    # mise's 3.12 in an interactive shell — where `mise activate` puts it ahead
+    # of the uv launcher — and uv's 3.14 in an agent's shell. mise now ignores
+    # a project's python pin (measured with MISE_DISABLE_TOOLS=python: it drops
+    # out of `mise ls --current`); a project pins Python in `.python-version`,
+    # which the uv launcher reads.
     xdg.configFile."mise/config.toml".text = ''
       [tools]
       node = "24"
 
       [settings]
       trusted_config_paths = ["/"]
+      disable_tools = ["python"]
     '';
 
     # Codex computer use: allow the targets it otherwise refuses, so it stops

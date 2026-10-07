@@ -127,6 +127,42 @@ in
               ${escapeShellArg cfg.connect.envPath} "$@"
           '';
         })
+
+        # Replace the Connect token: `nix-config-connect-set-token TOKEN_FILE`.
+        # A Connect token's vaults are fixed when it is issued (`op connect
+        # token create --vault ...`), so granting a vault means issuing a new
+        # token, and the setup wizard keeps any token that still works. Same
+        # steps as the wizard's: write a 0600 candidate beside the env file,
+        # publish it only after Connect accepts it. The host is local.nix's
+        # connectHost; the token is read from a file, never an argument, so it
+        # appears in no process list.
+        (pkgs.writeShellApplication {
+          name = "nix-config-connect-set-token";
+          text = ''
+            tokenFile="''${1:?usage: nix-config-connect-set-token TOKEN_FILE}"
+            envPath=${escapeShellArg cfg.connect.envPath}
+            if [[ ! -s "$tokenFile" ]]; then
+              printf '%s\n' "ERROR: $tokenFile is empty or missing." >&2
+              exit 1
+            fi
+            token="$(tr -d '[:space:]' < "$tokenFile")"
+            mkdir -p "$(dirname "$envPath")"
+            chmod 700 "$(dirname "$envPath")"
+            candidate="$(umask 077; mktemp "$envPath.tmp.XXXXXX")"
+            trap 'rm -f "$candidate"' EXIT
+            printf 'OP_CONNECT_HOST=%s\nOP_CONNECT_TOKEN=%s\n' \
+              ${escapeShellArg local.onePassword.connectHost} "$token" > "$candidate"
+            unset token
+            chmod 600 "$candidate"
+            if ! ${pkgs.python3}/bin/python3 ${../../scripts}/onepassword-connect-note.py "$candidate" check; then
+              printf '%s\n' "ERROR: Connect did not accept the new token; the current one is unchanged." >&2
+              exit 1
+            fi
+            mv "$candidate" "$envPath"
+            trap - EXIT
+            printf '%s\n' "Connect accepted the new token; it is now in use."
+          '';
+        })
       ];
 
       # Activation never reads 1Password and never refreshes the token: the

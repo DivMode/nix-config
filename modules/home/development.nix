@@ -366,6 +366,24 @@ in
       eval "$(${lib.getExe pkgs.mise} activate zsh)"
     '';
 
+    # Non-interactive shells — an agent's Bash tool, Codex, a hook — never run
+    # the prompt hook `mise activate` installs, so a tool only mise provides
+    # (on 2026-10-06, a project pinning an OpenTelemetry code generator for its
+    # gate) was "not found" there while interactive shells had it. mise's
+    # shims resolve each project's pins by working directory without a hook.
+    #
+    # APPENDED, unlike `mise activate --shims` (which prepends): the shims
+    # directory also holds python, python3 and node, and in front they would
+    # shadow the Nix-provided launchers. Last on PATH, they only answer for
+    # names nothing earlier provides. ~/.zshenv runs for every zsh, so this
+    # also lands in interactive shells, where `mise activate` above manages
+    # PATH itself.
+    programs.zsh.envExtra = ''
+      if [[ ":$PATH:" != *":${config.xdg.dataHome}/mise/shims:"* ]]; then
+        path+=("${config.xdg.dataHome}/mise/shims")
+      fi
+    '';
+
     # This is a public fallback policy, not a project lock. Exact project runtime
     # versions belong in each project's repository.
     #

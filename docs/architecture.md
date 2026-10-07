@@ -54,8 +54,9 @@ reusable user choices belong in `profiles/`. Future NixOS servers should add
   which Calibre had claimed for comic books.
 - **mise** owns Node runtime installation and selection; the global fallback is
   Node 24, while exact production pins belong to project repositories.
-- **uv** owns Python interpreters, environments, dependencies, and tools. Python
-  is not selected by the global mise configuration.
+- **uv** owns Python interpreters, environments, dependencies, and tools. mise
+  is configured with `disable_tools = ["python"]`, so it ignores a project's
+  mise `python` pin; a project pins Python in `.python-version`.
 - **rustup** owns Rust toolchains, targets, and components. Mise does not select
   Rust; Home Manager installs the rustup executable and proxies from nixpkgs.
 - **Applications/providers** own mutable histories, auth sessions, and databases.

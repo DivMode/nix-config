@@ -57,8 +57,9 @@ in
   # create. Missing volumes are a normal offline/bootstrap state, not a reason
   # to block installation. Chrome and the Dock keep the declared path; no
   # alternate destination or symlink is introduced while storage is offline.
-  home.activation.validateDownloadsDirectory = lib.hm.dag.entryBefore [ "writeBoundary" ]
-    checkDownloadsDirectory;
+  home.activation.validateDownloadsDirectory = lib.hm.dag.entryBefore [
+    "writeBoundary"
+  ] checkDownloadsDirectory;
 
   home.activation.ensureDownloadsDirectory = lib.hm.dag.entryAfter [ "writeBoundary" ] ''
     ${checkDownloadsDirectory}

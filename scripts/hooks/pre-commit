@@ -17,4 +17,12 @@ repository="$(git rev-parse --show-toplevel)"
 # edited from this repository like anything else.
 python3 "$repository/ai/hooks/nix-only-guard-test.py"
 
+# Formatting, the same check `nix fmt` would apply: an unformatted file reached
+# main on 2026-10-06 and every later branch's `nix fmt` rewrote it. `--ci`
+# fails when anything would change (and leaves the fix in the working tree).
+if ! (cd "$repository" && nix fmt -- --ci >/dev/null 2>&1); then
+  echo "pre-commit: files are not formatted; run \`nix fmt\` and stage the result." >&2
+  exit 1
+fi
+
 exec "$repository/scripts/check-private-names.sh" --staged

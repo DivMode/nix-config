@@ -31,6 +31,11 @@
     # Hands work to a fresh agent in a new Herdr pane: reconcile live sessions,
     # checkpoint durably, write the handoff, transfer scheduled jobs, start it.
     session-handoff = ./skills/session-handoff;
+    # End-of-work review in one pass: confirm merged/deployed/observed, then
+    # product, agent-environment and architecture lenses (the latter two adapted
+    # from Matt Pocock's user-invoked retro and improve-codebase-architecture,
+    # which a skill cannot start); file what the user accepts.
+    wrap-up = ./skills/wrap-up;
   };
 
   # Local additions to the codex-orchestrator Claude Code plugin: the

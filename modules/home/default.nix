@@ -57,6 +57,7 @@ in
     ./network-shares.nix
     ./privacy.nix
     ./projects.nix
+    ./python.nix
     ./screensaver.nix
     ./secrets.nix
     ./sparkle.nix

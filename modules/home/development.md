@@ -43,8 +43,9 @@ Runtime ownership is deliberately single-purpose:
   fallback is CPython 3.14 (`pythonDefault`, written to
   `~/.config/uv/.python-version`); `python3` and `python` on PATH are a launcher
   that runs the interpreter uv picks for the current directory, installing it
-  on first use. uv is set to `only-managed`, so macOS's `/usr/bin/python3`
-  (3.9) is never chosen. uv's downloaded CPython builds run on macOS as-is; a
+  on first use, and `pip3`/`pip` are that interpreter's pip, which refuses to
+  install into it. uv is set to `only-managed`, so macOS's `/usr/bin/python3`
+  (3.9) is never chosen. All of this lives in `python.nix`. uv's downloaded CPython builds run on macOS as-is; a
   future NixOS host would need `programs.nix-ld` for them.
 - `rustup` owns Rust toolchains, targets, and components. Rust projects should
   commit `rust-toolchain.toml` when a specific toolchain is required.

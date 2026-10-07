@@ -91,3 +91,10 @@ echo "==> local.nix backup in 1Password: $outcome and verified"
 
 # Warn, never fail, about a declared kubeconfig this Mac lacks; setup-mac.sh restores them.
 "$repository/scripts/kubeconfigs.sh" --check || true
+
+# Warn, never fail, when the 1Password copy of the Connect token is not the one
+# in use: a new Mac is set up from that copy, so a replaced token that was never
+# stored leaves the next setup with a token that may no longer work.
+if ! "/etc/profiles/per-user/$(id -un)/bin/nix-config-connect-store-token" ids >/dev/null; then
+  echo "warning: the stored Connect token copy is not the token in use; run: nix-config-connect-store-token store" >&2
+fi

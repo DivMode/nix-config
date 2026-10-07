@@ -25,17 +25,16 @@ let
       # /System/Applications/Launchpad.app does not exist and its pin rendered
       # as a question mark.
       "/System/Applications/Apps.app"
+      # The shim Chrome creates from ./chrome.nix's WebAppInstallForceList; its
+      # dark icon is a Finder custom icon (../home/chrome-app-icons.nix). After
+      # signing in to Google and reopening Chrome once, the real app's shim
+      # takes this same path.
+      "${local.homeDirectory}/Applications/Chrome Apps.localized/Gmail.app"
+      "/Applications/Google Chrome.app"
       # Home Manager owns Ghostty (modules/home/terminal.nix) and, from
       # stateVersion 25.11 onward, copies rather than symlinks bundles into
       # this directory so Spotlight and LaunchServices resolve them.
       "${local.homeDirectory}/Applications/Home Manager Apps/Ghostty.app"
-      "/Applications/Google Chrome.app"
-      # The shim Chrome creates from ./chrome.nix's WebAppInstallForceList.
-      # Before the profile is signed in to Google it belongs to a placeholder
-      # app, which now carries the Gmail name and icon (custom_icon), so the
-      # tile is right from the first login; after signing in and reopening
-      # Chrome once, the real app's shim takes the same path.
-      "${local.homeDirectory}/Applications/Chrome Apps.localized/Gmail.app"
       "/Applications/ChatGPT.app"
     ];
 

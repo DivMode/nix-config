@@ -29,6 +29,8 @@ spec.loader.exec_module(guard)
 KILL = "kill" + "all"
 DEFAULTS_WRITE = "defaults " + "write"
 GENERIC_USER = "someuser"
+PIP = "pi" + "p"
+BREAK = "--break-" + "system-packages"
 
 
 def verdict(command):
@@ -122,6 +124,19 @@ CASES = [
         "DENY",
     ),
     ("brew install", "brew install some-cask", "DENY"),
+    # ---- uv owns Python (2026-10-06): installs into an interpreter. ----
+    ("pip install", PIP + " install requests", "DENY"),
+    ("pip through the interpreter", "python3 -m " + PIP + " install requests", "DENY"),
+    ("a versioned pip by absolute path", "/usr/bin/" + PIP + "3.9 install --user requests", "DENY"),
+    ("defeating PEP 668", PIP + "3 install --quiet " + BREAK + " websocket-client", "DENY"),
+    ("defeating PEP 668 through the environment", "PIP_BREAK_SYSTEM_PACKAGES=1 " + PIP + " install x", "DENY"),
+    ("uv installing into the base interpreter", "uv " + PIP + " install --system requests", "DENY"),
+    # ...while uv's own ways, and reading about pip, stay allowed.
+    ("a project venv through uv", "uv " + PIP + " install -r requirements.txt", "ALLOW"),
+    ("a one-off dependency through uv", "uv run --with websocket-client python script.py", "ALLOW"),
+    ("pip's version", PIP + "3 --version", "ALLOW"),
+    ("listing what is installed", "python3 -m " + PIP + " list", "ALLOW"),
+    ("grep for the flag", "grep -rn -- " + BREAK + " justfile", "ALLOW"),
     ("launchctl bootstrap", "launchctl bootstrap gui/501 some.plist", "DENY"),
 ]
 

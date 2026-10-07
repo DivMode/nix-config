@@ -191,6 +191,20 @@ in
         connectStoreToken
         connectSetToken
         connectRotate
+
+        # Vault creation and item moves with no approval prompt, as a
+        # service account whose token is read through Connect per call:
+        # `nix-config-op-admin vault create NAME`, `... item move ...`.
+        # See scripts/op-admin.py.
+        (pkgs.writeShellApplication {
+          name = "nix-config-op-admin";
+          text = ''
+            exec ${pkgs.python3}/bin/python3 ${../../scripts}/op-admin.py \
+              ${escapeShellArg cfg.connect.envPath} ${
+                escapeShellArg (local.onePassword.opAdminReference or "")
+              } "$@"
+          '';
+        })
       ];
 
       # Activation never reads 1Password and never refreshes the token: the

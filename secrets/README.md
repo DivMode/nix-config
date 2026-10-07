@@ -49,6 +49,20 @@ owner's 1Password approval). The previous token is never deleted
 automatically: clusters or other machines may still use it. The command prints
 the `op connect token delete` to run once nothing does.
 
+### Vault administration without a prompt
+
+`op` through the desktop app needs the owner's approval for each session.
+`nix-config-op-admin` runs `vault create`, `vault delete` (vaults it created)
+and `item move` as the "nix-config vault admin" service account instead. Its
+token is the item `local.nix` `onePassword.opAdminReference` names, read
+through Connect per call and given only to the `op` child. It was created once
+by `nix-config-op-admin setup VAULT NAME`: allowed to create vaults, with read
+and write access to the vaults this Mac's Connect token saw on 2026-10-07. A
+service account keeps the access it was created with, cannot reach the
+built-in Personal, Private, Employee or default Shared vaults, and cannot
+grant Connect a vault; that last step stays `nix-config-connect-rotate
+--add-vault`, with the owner's approval.
+
 ## Local metadata
 
 Git identity and the signing key's public half belong in ignored `local.nix`,

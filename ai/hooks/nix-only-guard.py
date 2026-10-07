@@ -182,13 +182,20 @@ OP_CONFIG_RE = re.compile(
 # reads or writes secret data stays blocked — data goes through Connect only.
 # Listing and deleting tokens were added the same day, at the owner's request,
 # to retire a replaced token; deleting a server or revoking vault access stays
-# blocked.
-OP_CONNECT_ADMIN = {("server", "list"), ("vault", "list"), ("vault", "grant"),
-                    ("token", "create"), ("token", "list"), ("token", "delete")}
+# blocked. Creating a vault was added on 2026-10-07, also at the owner's
+# request: an empty vault holds no secret, and a new vault is what
+# `nix-config-connect-rotate --add-vault` then grants. Editing or deleting a
+# vault stays blocked. Moving an item between vaults was added the same day
+# (owner request): the agent never sees the secret, only where it lives.
+OP_ADMIN = {("connect", "server", "list"), ("connect", "vault", "list"),
+            ("connect", "vault", "grant"), ("connect", "token", "create"),
+            ("connect", "token", "list"), ("connect", "token", "delete"),
+            ("vault", "create"), ("item", "move"), ("item", "mv")}
+MOVE_OUTPUT_DISCARDED_RE = re.compile(r"(?:^|\s)(?:1|&)?>\s*/dev/null(?:\s|$)")
 
 
-def is_connect_administration(raw):
-    """True for `op connect <noun> <verb>` where (noun, verb) is allowed."""
+def is_op_administration(raw):
+    """True for an `op` command whose leading subcommand words are in OP_ADMIN."""
     try:
         words = shlex.split(raw)
     except ValueError:
@@ -200,14 +207,21 @@ def is_connect_administration(raw):
                 if rest.startswith("-"):
                     break
                 positional.append(rest)
-            return (len(positional) >= 3 and positional[0] == "connect"
-                    and (positional[1], positional[2]) in OP_CONNECT_ADMIN)
+            command = next((tuple(positional[:n]) for n in (3, 2) if tuple(positional[:n]) in OP_ADMIN), None)
+            if command is None:
+                return False
+            if command[0] == "item":
+                # `op item move` prints the moved item: usernames and URLs,
+                # and every concealed field too with --reveal. Allowed only
+                # without --reveal and with that output discarded.
+                return "--reveal" not in words and MOVE_OUTPUT_DISCARDED_RE.search(raw) is not None
+            return True
     return False
 
 
 def credential_boundary(raw, prog):
     """Deny commands that reach past the repository's secrets loader."""
-    if prog == "op" and is_connect_administration(raw):
+    if prog == "op" and is_op_administration(raw):
         return None
     if prog == "op":
         return ("Blocked: the 1Password CLI (`op`) is never invoked from an agent command. "

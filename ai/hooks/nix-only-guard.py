@@ -156,9 +156,12 @@ OP_CONFIG_RE = re.compile(
 # servers and their vaults, grant a server a vault, and issue a token. Connect
 # itself cannot grant access, and neither the SDK nor a service account can,
 # so this is the only path besides the 1Password website. Everything that
-# reads or writes secret data stays blocked — data goes through Connect only —
-# and so does anything destructive (deleting a token, server or vault access).
-OP_CONNECT_ADMIN = {("server", "list"), ("vault", "list"), ("vault", "grant"), ("token", "create")}
+# reads or writes secret data stays blocked — data goes through Connect only.
+# Listing and deleting tokens were added the same day, at the owner's request,
+# to retire a replaced token; deleting a server or revoking vault access stays
+# blocked.
+OP_CONNECT_ADMIN = {("server", "list"), ("vault", "list"), ("vault", "grant"),
+                    ("token", "create"), ("token", "list"), ("token", "delete")}
 
 
 def is_connect_administration(raw):

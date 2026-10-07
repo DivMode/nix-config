@@ -56,6 +56,9 @@
   # The Connect server's name in 1Password, which `op connect` administration
   # takes (`nix-config-connect-rotate` issues tokens for it).
   onePassword.connectServer = "example-connect";
+  # Item holding the vault-admin service account token (`nix-config-op-admin
+  # setup` prints it). Optional.
+  onePassword.opAdminReference = "op://ExampleVault/cccccccccccccccccccccccccc/credential";
 
   # AWS profiles resolved from 1Password at call time via credential_process.
   # `item` is a TITLE passed as an argument to `op item get`, so punctuation

@@ -149,10 +149,25 @@ let
     '';
   };
 
+  # `pip3` and `pip` are the pip of that same interpreter. Without them, bare
+  # `pip3` fell through to macOS's /usr/bin/pip3 and installed into Apple's
+  # Python 3.9 while `python3` ran uv's, so the package silently landed in a
+  # different interpreter (a project recipe on 2026-10-06 did
+  # `pip3 install --break-system-packages` and its import still failed). uv
+  # marks its interpreters EXTERNALLY-MANAGED, so `pip3 install` now refuses
+  # loudly ("This Python installation is managed by uv", measured) and points
+  # at a venv or `uv run --with`.
+  pipLauncher = pkgs.writeShellApplication {
+    name = "pip3";
+    text = ''exec ${lib.getExe pythonLauncher} -m pip "$@"'';
+  };
+
   python = pkgs.runCommand "python-launcher" { } ''
     mkdir -p $out/bin
     ln -s ${lib.getExe pythonLauncher} $out/bin/python3
     ln -s ${lib.getExe pythonLauncher} $out/bin/python
+    ln -s ${lib.getExe pipLauncher} $out/bin/pip3
+    ln -s ${lib.getExe pipLauncher} $out/bin/pip
   '';
 
   # The machine-wide default minor version: the newest stable CPython uv

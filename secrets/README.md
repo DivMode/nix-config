@@ -31,6 +31,24 @@ The service account, the `op run` launcher for `claude` and the 1Password SSH
 agent were removed on 2026-10-07; all three had been switched off since the
 move to Connect.
 
+### Replacing the token
+
+A Connect token's vaults are fixed when it is issued, so giving this Mac a new
+vault means a new token. `nix-config-connect-rotate --add-vault VAULT` does the
+whole replacement (`--dry-run` shows the plan first):
+
+1. grants the Connect server (`local.nix` `onePassword.connectServer`) the vault;
+2. issues a token for the current vaults plus the new ones, by vault ID, into a
+   private file;
+3. checks through Connect that it sees exactly those vaults;
+4. installs it (`nix-config-connect-set-token`) and updates the stored copy
+   (`nix-config-connect-store-token store`).
+
+Steps 1–2 are the only `op` use on this Mac (Connect administration, with the
+owner's 1Password approval). The previous token is never deleted
+automatically: clusters or other machines may still use it. The command prints
+the `op connect token delete` to run once nothing does.
+
 ## Local metadata
 
 Git identity and the signing key's public half belong in ignored `local.nix`,

@@ -152,8 +152,37 @@ OP_CONFIG_RE = re.compile(
 )
 
 
+# Connect ADMINISTRATION the owner allowed agents to run on 2026-10-07: list
+# servers and their vaults, grant a server a vault, and issue a token. Connect
+# itself cannot grant access, and neither the SDK nor a service account can,
+# so this is the only path besides the 1Password website. Everything that
+# reads or writes secret data stays blocked — data goes through Connect only —
+# and so does anything destructive (deleting a token, server or vault access).
+OP_CONNECT_ADMIN = {("server", "list"), ("vault", "list"), ("vault", "grant"), ("token", "create")}
+
+
+def is_connect_administration(raw):
+    """True for `op connect <noun> <verb>` where (noun, verb) is allowed."""
+    try:
+        words = shlex.split(raw)
+    except ValueError:
+        return False
+    for i, word in enumerate(words):
+        if os.path.basename(word) == "op":
+            positional = []
+            for rest in words[i + 1:]:
+                if rest.startswith("-"):
+                    break
+                positional.append(rest)
+            return (len(positional) >= 3 and positional[0] == "connect"
+                    and (positional[1], positional[2]) in OP_CONNECT_ADMIN)
+    return False
+
+
 def credential_boundary(raw, prog):
     """Deny commands that reach past the repository's secrets loader."""
+    if prog == "op" and is_connect_administration(raw):
+        return None
     if prog == "op":
         return ("Blocked: the 1Password CLI (`op`) is never invoked from an agent command. "
                 "Secrets come only through the repository's own loader (Connect). "

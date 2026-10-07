@@ -41,13 +41,16 @@ Load the `writing-for-agents` skill before proposing any change to instructions 
 
 - **Guardrails:** read the repository's own check commands and CI first.
   - Each mistake this session made that an automated check (lint, types, tests, a hook) would have caught is a finding.
+  - For each such mistake, and each one this session was asked to fix, check that the guard covers every way to perform the same action, not only the spelling that occurred.
   - So is a check that exists but doesn't run automatically.
   - So is a repository with no CI or pre-commit guardrail at all.
   - A mechanical rule gets a deterministic check rather than written guidance.
 - **Navigation:** information that took the session long to find, where a short pointer in the repository's docs or instruction file would have led straight to it.
 - **Information access:** evidence the session needed but couldn't reach (logs, history, read access to a service), or could only reach through a workaround.
 - **Tool economy:** expensive or repeated tool calls that a script or a better command would replace.
-- **Instructions:** steering text that changed nothing (a no-op), or a rule that belongs in a check or in review standards instead of an always-loaded file.
+- **Toil:** a multi-step manual procedure this session ran that will happen again (a rotation, an onboarding, an "add X"), especially one that failed partway. It gets a declared command, even if it ran only once here.
+- **Human dependency:** every point where the work waited on the owner: an approval prompt, a timeout, a GUI click, "run this yourself". For each, can it run unattended within the trust boundary? If not, say what still needs them.
+- **Instructions:** steering text that changed nothing (a no-op), a rule that belongs in a check or in review standards instead of an always-loaded file, or a statement in an instruction or doc this work touched that the current code, config or guard contradicts.
 
 ### Code architecture: where is the touched code fighting us?
 

@@ -1,4 +1,4 @@
-{ inputs, ... }:
+{ inputs, lib, ... }:
 {
   nix.channel.enable = false;
   nix.settings.experimental-features = [
@@ -30,6 +30,32 @@
   ];
 
   nix.registry.nixpkgs.flake = inputs.nixpkgs;
+
+  # The Android SDK that ../home/android.nix composes. nixpkgs refuses to build
+  # it until its license is accepted (androidenv's license.nix reads
+  # `android_sdk.accept_license`), and marks every SDK component unfree. Both
+  # are allowed for the Android SDK only: the predicate names exactly the
+  # components that composition instantiates (each appears twice, once with an
+  # `android-sdk-` prefix and once bare, measured 2026-10-08 by tracing
+  # `lib.getName` through this predicate). A new component, such as the NDK,
+  # fails evaluation naming itself until it is added here.
+  nixpkgs.config = {
+    android_sdk.accept_license = true;
+    allowUnfreePredicate =
+      pkg:
+      builtins.elem (lib.getName pkg) [
+        "android-sdk-build-tools"
+        "android-sdk-cmdline-tools"
+        "android-sdk-platform-tools"
+        "android-sdk-platforms"
+        "android-sdk-tools"
+        "build-tools"
+        "cmdline-tools"
+        "platform-tools"
+        "platforms"
+        "tools"
+      ];
+  };
 
   # Garbage collection was never declared, so nothing ever removed anything:
   # measured 2026-09-02, /nix/store held 50.7 GB with 134 system generations

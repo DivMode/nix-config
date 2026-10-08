@@ -49,6 +49,13 @@ Runtime ownership is deliberately single-purpose:
   future NixOS host would need `programs.nix-ld` for them.
 - `rustup` owns Rust toolchains, targets, and components. Rust projects should
   commit `rust-toolchain.toml` when a specific toolchain is required.
+- `android.nix` owns the JDK (Temurin 25) and Android SDK (platform 36,
+  build-tools 36.0.0) that a local Gradle build reads through `JAVA_HOME` and
+  `ANDROID_HOME`/`ANDROID_SDK_ROOT`. Unlike the runtimes above, the SDK is a
+  read-only store path, so the Android Gradle Plugin cannot download a missing
+  component into it: a project that moves to a new compileSdk or build-tools
+  fails naming the component, which is then added there. Its license acceptance
+  and unfree allowance are in `../darwin/nix.nix`, scoped to the SDK components.
 
 Language runtimes are mutable developer state downloaded on first use, not
 during a Nix activation. mise trusts every project's configuration

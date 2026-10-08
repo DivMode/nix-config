@@ -48,6 +48,9 @@ in
       HOMEBREW_CACHE = cacheDir "homebrew";
       CARGO_HOME = cacheDir "cargo";
       RUSTUP_HOME = cacheDir "rustup";
+      # Gradle's wrapper distributions and dependency cache (~/.gradle by
+      # default), which the Android build in android.nix fills by gigabytes.
+      GRADLE_USER_HOME = cacheDir "gradle";
 
       # macOS gives each user a TMPDIR under /private/var/folders, on the
       # internal volume. On 2026-10-04 one release-publish script's mktemp work

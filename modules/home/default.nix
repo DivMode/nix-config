@@ -37,6 +37,7 @@ in
   imports = [
     ./agent-reach
     ./ai
+    ./android.nix
     ./archives.nix
     ./browser.nix
     ./caches.nix

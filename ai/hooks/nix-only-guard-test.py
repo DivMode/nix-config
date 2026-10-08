@@ -86,7 +86,9 @@ CASES = [
     ("create a vault with a description", "op vault create 'Some Vault' --description x", "ALLOW"),
     ("delete a vault", "op vault delete SomeVault", "DENY"),
     ("edit a vault", "op vault edit SomeVault --name Other", "DENY"),
-    ("grant a person a vault", "op vault user grant --vault SomeVault --user someone", "DENY"),
+    # Granting a person a vault (owner request 2026-10-08); revoking stays blocked.
+    ("grant a person a vault", "op vault user grant --vault SomeVault --user someone", "ALLOW"),
+    ("revoke a person's vault access", "op vault user revoke --vault SomeVault --user someone", "DENY"),
     ("create an item", "op item create --vault SomeVault --category login", "DENY"),
     # ---- Moving an item between vaults (owner request 2026-10-07). ----
     ("move an item to another vault", "op item move SomeItem --current-vault A --destination-vault B > /dev/null", "ALLOW"),

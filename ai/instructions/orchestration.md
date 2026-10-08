@@ -111,6 +111,8 @@ that the recipient received or read them.
     short-lived read-only health probe is exceptional, justified only when the
     semantic state itself looks inconsistent or stuck, and is
     **closed immediately afterwards**.
+    **Never message an idle session whose prompt cache has gone cold**: it
+    re-reads its whole context uncached. Record it on GitHub or brief a fresh agent.
 
 11. **Checkpoint durably.** Read the relevant issue, pull request, and its
     latest comments before acting — they usually already contain the decision

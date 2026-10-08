@@ -98,7 +98,10 @@ CASES = [
     ("a move that reveals concealed fields", "op item move SomeItem --current-vault A --destination-vault B --reveal > /dev/null", "DENY"),
     ("a move whose output goes to a file", "op item move SomeItem --current-vault A --destination-vault B > /tmp/item", "DENY"),
     ("reading an item through the CLI", "op item get SomeItem", "DENY"),
-    ("editing an item through the CLI", "op item edit SomeItem --vault SomeVault field=value", "DENY"),
+    ("editing an item through the CLI, output shown", "op item edit SomeItem --vault SomeVault field=value", "DENY"),
+    # Editing an item (owner request 2026-10-08), under the move rule.
+    ("editing an item, output discarded", "op item edit SomeItem --vault SomeVault field=value > /dev/null", "ALLOW"),
+    ("editing an item with --reveal", "op item edit SomeItem --vault SomeVault field=value --reveal > /dev/null", "DENY"),
     ("deleting an item", "op item delete SomeItem", "DENY"),
     ("connect as a flag value is not the subcommand", "op read --account connect op://SomeVault/SomeItem/field", "DENY"),
     ("stripping the service-account token", "env -u OP_SERVICE_ACCOUNT_TOKEN bun scripts/with-onepassword.mjs --check", "DENY"),

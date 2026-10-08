@@ -29,6 +29,10 @@ let
       includeSystemImages = false;
       includeNDK = false;
       includeCmake = false;
+      # The legacy "tools" package (26.1.1) is included by default and ships
+      # an x86_64 emulator plus a JDK 8 dependency; nothing in a Gradle build
+      # uses it (cmdline-tools replaces it).
+      toolsVersion = null;
     }).androidsdk;
   androidHome = "${androidSdk}/libexec/android-sdk";
 in

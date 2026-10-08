@@ -296,7 +296,8 @@ The approved Connect interfaces are declarative and read the cached
 **Owner-approved `op` administration** (2026-10-07) touches no secret value,
 and the guard allows exactly this: Connect administration (`op connect` server
 and vault list, vault grant, token create, list and delete), `op vault create`,
-and `op item move` without `--reveal` and with its output sent to `/dev/null`
+`op vault user grant` (added 2026-10-08, so the owner's account can be given
+access to a project vault), and `op item move` without `--reveal` and with its output sent to `/dev/null`
 (it prints the moved item). When the owner is away, run vault creation and
 item moves as `nix-config-op-admin vault create NAME` or `nix-config-op-admin
 item move ITEM --current-vault A --destination-vault B`: a service account

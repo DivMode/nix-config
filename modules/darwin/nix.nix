@@ -48,12 +48,10 @@
         "android-sdk-cmdline-tools"
         "android-sdk-platform-tools"
         "android-sdk-platforms"
-        "android-sdk-tools"
         "build-tools"
         "cmdline-tools"
         "platform-tools"
         "platforms"
-        "tools"
       ];
   };
 

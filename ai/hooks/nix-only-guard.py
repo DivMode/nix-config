@@ -187,10 +187,14 @@ OP_CONFIG_RE = re.compile(
 # `nix-config-connect-rotate --add-vault` then grants. Editing or deleting a
 # vault stays blocked. Moving an item between vaults was added the same day
 # (owner request): the agent never sees the secret, only where it lives.
+# Granting a person a vault was added on 2026-10-08 (owner request): the
+# owner's own account had no access to a project vault the Connect token
+# uses. Revoking access stays blocked.
 OP_ADMIN = {("connect", "server", "list"), ("connect", "vault", "list"),
             ("connect", "vault", "grant"), ("connect", "token", "create"),
             ("connect", "token", "list"), ("connect", "token", "delete"),
-            ("vault", "create"), ("item", "move"), ("item", "mv")}
+            ("vault", "create"), ("vault", "user", "grant"),
+            ("item", "move"), ("item", "mv")}
 MOVE_OUTPUT_DISCARDED_RE = re.compile(r"(?:^|\s)(?:1|&)?>\s*/dev/null(?:\s|$)")
 
 

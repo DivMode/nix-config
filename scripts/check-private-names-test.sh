@@ -6,6 +6,11 @@
 
 set -euo pipefail
 
+# Run from a hook, git exports GIT_DIR, GIT_INDEX_FILE and friends; they would
+# point every fixture command below at the real repository.
+# shellcheck disable=SC2046
+unset $(git rev-parse --local-env-vars)
+
 repository="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 work_dir=$(mktemp -d)
 trap 'rm -rf "$work_dir"' EXIT
@@ -65,4 +70,23 @@ if (
 fi
 
 grep -F 'fixture-private-name' "$blocked_output" >/dev/null
+
+# A linked worktree has no local.nix of its own (it is ignored), so the staged
+# check must read the main checkout's and still catch a private name there.
+git -C "$fixture" add scripts
+git -C "$fixture" commit -m "track the guard" >/dev/null
+linked="$work_dir/linked"
+git -C "$fixture" worktree add -b linked "$linked" >/dev/null 2>&1
+printf '%s\n' "fixture-private-name" > "$linked/staged-leak.txt"
+git -C "$linked" add staged-leak.txt
+linked_output="$work_dir/linked-output"
+if (cd "$linked" && ./scripts/check-private-names.sh --staged >"$linked_output" 2>&1); then
+  echo "error: private name staged in a linked worktree was not rejected" >&2
+  exit 1
+fi
+if ! grep -F 'fixture-private-name' "$linked_output" >/dev/null; then
+  echo "error: linked-worktree check failed for the wrong reason:" >&2
+  cat "$linked_output" >&2
+  exit 1
+fi
 echo "check-private-names range tests passed"

@@ -59,7 +59,12 @@ case "$mode" in
     ;;
 esac
 
+# local.nix is ignored, so a linked worktree has none of its own: read the main
+# checkout's, which is the same machine's same file.
 local_file="${NIX_CONFIG_LOCAL:-$repository/local.nix}"
+if [[ -z "${NIX_CONFIG_LOCAL:-}" && ! -f "$local_file" ]]; then
+  local_file="$canonical_repository/local.nix"
+fi
 if [[ ! -f "$local_file" ]]; then
   cat >&2 <<EOF
 error: cannot check for private names — $local_file is missing.

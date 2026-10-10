@@ -13,12 +13,19 @@ set -euo pipefail
 repository="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$repository"
 
-if [[ ! -f local.nix ]]; then
+# local.nix is ignored, so a linked worktree has none of its own: use the main
+# checkout's, the same machine's same file (as check-private-names.sh does).
+local_file="$repository/local.nix"
+if [[ ! -f "$local_file" ]]; then
+  common_dir="$(git -C "$repository" rev-parse --path-format=absolute --git-common-dir)"
+  local_file="$(dirname "$common_dir")/local.nix"
+fi
+if [[ ! -f "$local_file" ]]; then
   echo "error: $repository/local.nix is missing; see docs/setup/new-mac.md" >&2
   exit 1
 fi
 
-export NIX_CONFIG_LOCAL="$repository/local.nix"
+export NIX_CONFIG_LOCAL="$local_file"
 export SUDO_ASKPASS="$repository/scripts/sudo-askpass.sh"
 
 if [[ -n "${NIX_CONFIG_SETUP_BOOTSTRAP:-}" ]]; then
@@ -83,7 +90,7 @@ if [[ -z "$vault" ]]; then
   exit 1
 fi
 note_bin="/etc/profiles/per-user/$(id -un)/bin/nix-config-connect-note"
-if ! outcome=$("$note_bin" save "$vault" "nix-config local.nix" "$repository/local.nix"); then
+if ! outcome=$("$note_bin" save "$vault" "nix-config local.nix" "$local_file"); then
   echo "ERROR: activation succeeded, but the local.nix backup in 1Password could not be saved through Connect (see above)." >&2
   exit 1
 fi

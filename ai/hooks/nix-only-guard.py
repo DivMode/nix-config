@@ -242,6 +242,68 @@ def credential_boundary(raw, prog):
     return None
 
 
+# Writes to GitHub go through gh, which this configuration wraps so that text
+# naming a private project never posts to the public repository
+# (scripts/gh-private-names-guard.sh, 2026-10-09). An agent keeps its token, so
+# it could still post with its own HTTP request; these rules deny the obvious
+# shapes of that in Claude Code. They match command text, so a client written
+# to evade them is not stopped — the residual the wrapper's commit names.
+GITHUB_API_RE = re.compile(r"(?:api|uploads)\.github\.com|github\.com/api/", re.I)
+HTTP_CLIENTS = {"curl", "wget", "http", "https", "httpie", "xh", "xhs"}
+WRITE_METHODS = {"POST", "PUT", "PATCH", "DELETE"}
+INTERPRETERS_RE = re.compile(r"(?:python[0-9.]*|node|nodejs|deno|bun|ruby|perl|php)")
+SCRIPT_WRITE_RE = re.compile(r"\b(?:post|put|patch|delete)\b|method\s*[:=]", re.I)
+RAW_GITHUB_WRITE = ("Blocked: a write to the GitHub API outside gh. Use `gh` (`gh api` for "
+                    "anything without a subcommand): it is wrapped to refuse private project "
+                    "names in text posted to the public repository, and a raw request skips that.")
+
+
+def raw_github_write(prog, args, raw):
+    """True for an HTTP client sending a write to the GitHub API."""
+    if prog not in HTTP_CLIENTS or not GITHUB_API_RE.search(raw):
+        return False
+    if prog == "curl":
+        for i, arg in enumerate(args):
+            if arg in ("-X", "--request") and i + 1 < len(args):
+                if args[i + 1].upper() != "GET":
+                    return True
+            elif arg.startswith("-X") and len(arg) > 2 and arg[2:].upper() != "GET":
+                return True
+            elif arg.startswith(("--data", "--json", "--form", "--upload-file")) or \
+                    arg in ("-d", "-F", "-T") or (arg[:2] in ("-d", "-F", "-T") and len(arg) > 2):
+                return True
+        return False
+    if prog == "wget":
+        return any(a.startswith(("--post-data", "--post-file", "--body-data", "--body-file", "--method"))
+                   for a in args)
+    # httpie and xh: an explicit write method, or any request item that sends
+    # data (field=value, field:=json, field@file) — not a query (name==value)
+    # or a header (Name:value).
+    positional = [a for a in args if not a.startswith("-")]
+    if positional and positional[0].upper() in WRITE_METHODS:
+        return True
+    return any(re.match(r"[^=:@\s]+(?::=|=(?!=)|@)", a) for a in positional[1:])
+
+
+def check_command(command):
+    """Rules that need the whole command, heredoc bodies included.
+
+    split_segments() drops a heredoc fed to an interpreter as data, which is
+    right for its other rules and wrong for this one: `python3 - <<PY` with a
+    requests.post() to the GitHub API is a write that never appears as a
+    segment of its own."""
+    if not GITHUB_API_RE.search(command) or not SCRIPT_WRITE_RE.search(command):
+        return None
+    for segment in re.split(r"&&|\|\||[;&|\n]", command):
+        try:
+            words = shlex.split(segment)
+        except ValueError:
+            words = segment.split()
+        if any(INTERPRETERS_RE.fullmatch(os.path.basename(w)) for w in words[:3]):
+            return RAW_GITHUB_WRITE
+    return None
+
+
 def check(segment):
     raw = segment.strip()
     try:
@@ -280,6 +342,9 @@ def check(segment):
 
     if prog in ALLOWED_PROGRAMS:
         return None
+
+    if raw_github_write(prog, args, raw):
+        return RAW_GITHUB_WRITE
 
     def blocked(what):
         return (f"Blocked: `{raw.strip()}`\n\n{what} changes the machine outside Nix. "
@@ -346,6 +411,10 @@ def main():
     command = (payload.get("tool_input") or {}).get("command") or ""
     if not command:
         sys.exit(0)
+
+    reason = check_command(command)
+    if reason:
+        deny(reason)
 
     for segment in split_segments(command):
         reason = check(segment)

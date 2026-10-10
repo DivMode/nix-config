@@ -72,16 +72,15 @@ that the recipient received or read them.
    After resumption or context loss, re-read the applicable instructions and
    durable acceptance criteria; do not restart implementation from a summary.
 
-7. **Model routing for Claude workers.** Default to **Opus 5** (`opus`) for
-   implementation, hard debugging, architecture, and substantive review.
-   `sonnet` (currently Sonnet 5) is for narrow read-only inspection,
-   monitoring, simple mechanical edits, and cheap helpers — pick it because the
-   work is genuinely small, and say why. Haiku only for genuinely trivial
-   low-risk helper work. Older or smaller models only as a deliberate
-   compatibility or fallback choice, said out loud. **Never use Fable unless
+7. **Model routing for Claude workers.** **A worker never runs the
+   coordinator's model.** Each worker gets its own model and its own effort,
+   chosen for its task from the table in the `opus-delegate` skill. The `opus`
+   alias resolves to an Opus coordinator's own model, so an Opus coordinator
+   never passes it. Read the model a worker actually ran from its transcript
+   rather than assuming it. Raise effort, not the model, when a piece is hard.
+   **Never use Fable unless
    the user explicitly asks for Fable by name.** It is opt-in only and is never
-   an automatic or default choice. Do not downgrade important work to save
-   usage; if cost is the reason, say so and let the user decide.
+   an automatic or default choice.
 
 8. **Implementation and review stay separate** for anything significant or
    risky, whenever that is practical. A worker's own account of its work is not

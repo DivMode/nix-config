@@ -1,9 +1,9 @@
 ---
 name: opus-delegate
-description: Opus sub-agents — hand implementation, debugging, or review to Claude workers through the Agent tool, each writing in its own worktree, while Claude plans, supervises, reviews the real diff, and merges. Use when the user says Opus, sub-agents, or Claude agents for doing work, and for any large planned change the user has not handed to Codex.
+description: The Opus coordinator's sub-agents — hand implementation, debugging, review or research to Claude workers through the Agent tool, each on its own model and effort (never the coordinator's) and writing in its own worktree, while the coordinator plans, supervises, reviews the real diff, and merges. Use when the user says Opus, sub-agents, or Claude agents for doing work, and for any large planned change the user has not handed to Codex.
 ---
 
-# Delegate work to Opus sub-agents
+# Delegate work from the Opus coordinator to Claude sub-agents
 
 The Agent tool is the whole mechanism. Each worker is a Claude sub-agent that you, the coordinator,
 start, wait on through its completion notification, and correct with `SendMessage`. The sibling
@@ -40,27 +40,39 @@ checks, and an accurate report of evidence and blockers. The worker leaves its c
 
 ## Choose the worker for each piece
 
-Model, effort, and tooling are your choice for each piece (the user, 2026-10-09: "you decide what
-effort it needs and what tooling it needs, what model"). Pass `subagent_type`, `model`, and
-`effort` on every dispatch.
+**A worker never runs the coordinator's model.** The user, 2026-10-09: "They should not be using
+the same model as the main thread. They should be using their own model and their own effort
+level depending on the task." The `opus` alias resolves to the newest Opus, which is the
+coordinator's own model when the coordinator runs Opus: on 2026-10-09 every worker dispatched
+with `model: opus` ran `claude-opus-5-5`, the coordinator's model. Read your own model from the
+system prompt ("You are powered by …") and never pass its alias. Pass `subagent_type`, `model`,
+and `effort` on every dispatch.
+
+With an Opus coordinator:
 
 | Piece | `subagent_type` | `model` | `effort` |
 | --- | --- | --- | --- |
-| Implementation, hard debugging | `implementation` | `opus` | `high`; `xhigh` for subtle logic, concurrency, tricky types, or a correction; `medium` for a fully specified mechanical edit |
-| Independent review of a diff | `general-purpose` | `opus` | `high`; `xhigh` for security, Nix or system state, concurrency |
-| Research against primary sources | `research` | `opus` | `high` |
-| Narrow read-only search or inspection | `Explore` | `sonnet` | `low` or `medium` |
+| Fully specified mechanical edit | `implementation` | `sonnet` | `medium` |
+| Bounded implementation, debugging | `implementation` | `sonnet` | `high` |
+| Subtle logic, security guards, concurrency, tricky types, or a correction | `implementation` | `sonnet` | `xhigh` |
+| Independent review of a diff | `general-purpose` | `sonnet` | `xhigh` |
+| Plan, or research against primary sources | `Plan` / `research` | `sonnet` | `high` |
+| Narrow read-only search or inspection | `Explore` | `haiku` | `low` or `medium` |
 
-- `model` is always explicit: omitted, it falls back to the agent definition's or the session's
-  model. `opus` for anything
-  substantive, `sonnet` only for genuinely small read-only work, `haiku` only for trivial helpers,
-  and `fable` only when the user names Fable (global rule 7).
+With a Sonnet or Haiku coordinator, `opus` takes the substantive rows instead, and the
+coordinator's own model is still skipped.
+
+- `model` is always explicit: omitted, it inherits the coordinator's model, which this rule
+  forbids. `fable` only when the user names Fable (global rule 7).
+- Verify the routing after each first dispatch:
+  `grep -o '"model":"[^"]*"' <the task's output file> | sort | uniq -c` prints the model the
+  worker really ran. Say it in the dispatch report.
 - `effort` is the lowest level the piece needs. `max` is rare: a wrong answer is expensive and the
   reasoning genuinely hard.
 - Tooling follows the type. A read-only piece goes to `Explore`, which has no edit tools; it still
   has Bash, so read-only remains an instruction for anything it runs.
 - Start every worker fresh, with the assignment as its whole brief. A `fork` carries the entire
-  conversation and always runs on the session's model.
+  conversation and always runs on the session's model, so never use one for delegated work.
 - Workers run on this Mac. `isolation: "remote"` runs one in the cloud, where this machine's
   instructions and tools are absent; use it only when the user asks.
 
@@ -118,8 +130,8 @@ piece still fails, stop and bring the unresolved issue back for a fresh decision
    Account for every exception before going further.
 3. Read the actual diff, new untracked files included. Evaluate every acceptance criterion by
    observation and run the verification commands yourself.
-4. For significant or risky work, add an independent reviewer (global rules 8 and 9): a fresh `opus`
-   worker given the diff, the original requirement, and the worktree's absolute path to run any
+4. For significant or risky work, add an independent reviewer (global rules 8 and 9): a fresh worker
+   on the review row's model (never the coordinator's), given the diff, the original requirement, and the worktree's absolute path to run any
    checks in, never the implementer's summary.
 5. Integrate through the repository's workflow: commit in the worktree on a branch named for the
    change, push, open the pull request, merge, and record the outcome on the issue or pull request.

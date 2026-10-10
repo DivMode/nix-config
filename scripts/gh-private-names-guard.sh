@@ -36,13 +36,16 @@ group=${args[0]:-}
 
 # The action is the first word after the group that is not a flag, since gh
 # takes flags before it too (`gh pr -R <repo> create`). -R/--repo is skipped
-# with its value; any other flag given a value there makes that value look
-# like the action, which then is not a read and gets checked.
+# with its value. Any other flag there could be taking the next word as its
+# value — `gh pr -t list create` is `pr create` titled "list" — so the command
+# is then never treated as a read.
 action=""
+flag_before_action=false
 for (( i = 1; i < ${#args[@]}; i++ )); do
   case "${args[i]}" in
     -R | --repo) i=$(( i + 1 )) ;;
-    -*) ;;
+    --repo=* | -R?*) ;;
+    -*) flag_before_action=true ;;
     *) action=${args[i]}; break ;;
   esac
 done
@@ -66,12 +69,15 @@ case "$group" in
     ;;
   api) ;;
   *)
-    case "$action" in
-      "" | list | ls | view | status | diff | checks | checkout | co | download | \
-        verify | verify-asset | watch | get | clone | set-default | gitignore | license)
-        exec "$real_gh" "$@"
-        ;;
-    esac
+    if ! $flag_before_action; then
+      case "$group:$action" in
+        *: | *:list | *:ls | *:view | *:status | *:diff | *:checks | *:checkout | *:co | \
+          *:download | *:verify | *:verify-asset | *:watch | *:get | *:set-default | \
+          *:gitignore | *:license | repo:clone | gist:clone)
+          exec "$real_gh" "$@"
+          ;;
+      esac
+    fi
     ;;
 esac
 
@@ -103,9 +109,11 @@ if [[ "$group" == api ]]; then
   endpoint=$(lower "${endpoint#/}")
 
   # A GraphQL call is a mutation unless it is shown to be a query: a query
-  # field given inline or in a readable file, with no operation that starts
-  # `mutation`. A body sent with --input, or anything read from stdin, is not
-  # inspected here, so it counts as a mutation and is checked.
+  # field given inline or in a readable file that never says `mutation` as a
+  # word. Locating the operation keyword exactly means parsing comments,
+  # commas, and strings; a query that merely mentions the word is checked
+  # instead, which costs a second and blocks nothing clean. A body sent with
+  # --input, or anything read from stdin, counts as a mutation too.
   if [[ "$endpoint" == graphql ]]; then
     query="" known=false
     for (( i = 1; i < ${#args[@]}; i++ )); do
@@ -129,7 +137,7 @@ if [[ "$group" == api ]]; then
       query=$value
       known=true
     done
-    if $known && ! printf '%s' "$query" | tr '\n' ' ' | grep -Eq '(^|\})[[:space:]]*mutation([^A-Za-z0-9_]|$)'; then
+    if $known && ! printf '%s\n' "$query" | grep -Eq '(^|[^A-Za-z0-9_])mutation([^A-Za-z0-9_]|$)'; then
       exec "$real_gh" "$@"
     fi
   fi

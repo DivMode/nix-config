@@ -169,6 +169,18 @@ fi
 passed "a private repository's comment linking the public repository" \
   "$private" "" pr comment 5 -b "see https://github.com/fixture-owner/public-repo/pull/3 for the fixture-private-name fix"
 
+# Third review: a write named like a read, a flag hiding the action, and a
+# mutation keyword after a comment or a comma.
+blocked "label clone, which copies another repository's labels in" \
+  "$public" "" label clone "fixture-owner/$leak"
+blocked "a value-taking flag before a read-named word" \
+  "$public" "" pr -t list create -b "$leak"
+blocked "a GraphQL mutation after a comment line" \
+  "$private" "" api graphql -f "query=# note
+mutation { x(body: \"$leak\") { y } }"
+blocked "a GraphQL mutation after a comma" \
+  "$private" "" api graphql -f "query=query{a},mutation{x(body: \"$leak\"){y}}"
+
 # A body file's PATH is never posted, and a session's scratch path can name a
 # private checkout; only the contents count.
 named_dir="$work_dir/fixture-private-name-scratch"

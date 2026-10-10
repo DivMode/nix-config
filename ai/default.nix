@@ -45,6 +45,8 @@
     delegateSkill = ./codex-orchestrator/delegate;
     scopeCheck = ./codex-orchestrator/codex-scope.sh;
     guardHook = ./codex-orchestrator/codex-guard.sh;
+    journal = ./codex-orchestrator/codex-journal.sh;
+    journalTest = ./codex-orchestrator/codex-journal-test.sh;
   };
 
   # Client hook programs. These are declared here, rather than written into a

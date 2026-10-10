@@ -113,7 +113,8 @@ let
   # what that name resolves to.
   #
   # Local additions are the delegation policy (skills/delegate), its scope check
-  # (local/codex-scope), and its guard hook (local/codex-guard). The skill
+  # (local/codex-scope), its guard hook (local/codex-guard), and journal writer
+  # (local/codex-journal). The skill
   # reaches all of them through ${CLAUDE_PLUGIN_ROOT}, and they go away with the
   # plugin.
   codexScope = pkgs.writeShellApplication {
@@ -130,6 +131,8 @@ let
     text = builtins.readFile ai.codexOrchestrator.guardHook;
   };
 
+  codexJournal = import ../../../ai/codex-orchestrator/codex-journal.nix { inherit pkgs; };
+
   codexOrchestratorPlugin = pkgs.runCommand "codex-orchestrator-claude-plugin" { } ''
     cp -r ${inputs.codex-orchestrator} $out
     chmod -R u+w $out
@@ -144,6 +147,7 @@ let
     cp -r ${ai.codexOrchestrator.delegateSkill} $out/skills/delegate
     install -Dm755 ${lib.getExe codexScope} $out/local/codex-scope
     install -Dm755 ${lib.getExe codexGuard} $out/local/codex-guard
+    install -Dm755 ${lib.getExe codexJournal} $out/local/codex-journal
   '';
 
   # The same gcx skills for Codex. Upstream's official cross-agent path is

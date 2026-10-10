@@ -124,6 +124,21 @@ git -C "$fixture" add merge-leak.txt
 git -C "$fixture" commit -q -m "merge side"
 expect blocked "a private name added by a merge commit itself" refs/heads/evil-merger "$(git -C "$fixture" rev-parse HEAD)"
 
+# Merging main into a branch brings its published history along, old leaks
+# included; that history is already public and must not block the push. A
+# first-parent diff of the merge would show it, the --cc diff does not.
+git -C "$fixture" switch -q main
+printf '%s\n' "fixture-private-name" > "$fixture/published.txt"
+git -C "$fixture" add published.txt
+git -C "$fixture" commit -q -m "published before the guard"
+git -C "$fixture" push -q origin main
+git -C "$fixture" switch -q -c behind main~1
+printf 'clean behind\n' > "$fixture/behind.txt"
+git -C "$fixture" add behind.txt
+git -C "$fixture" commit -q -m "clean behind"
+git -C "$fixture" merge -q --no-ff -m "merge main" main
+expect passed "a merge bringing in published history that names a private term" refs/heads/behind "$(git -C "$fixture" rev-parse HEAD)"
+
 git -C "$fixture" switch -q main
 git -C "$fixture" tag -a -m "release notes naming fixture-private-name" leaky-tag
 expect blocked "a private name in a tag message" refs/tags/leaky-tag "$(git -C "$fixture" rev-parse leaky-tag)"

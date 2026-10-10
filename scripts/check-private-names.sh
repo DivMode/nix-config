@@ -48,6 +48,11 @@
 
 set -euo pipefail
 
+# Byte matching. In a UTF-8 locale macOS grep finds nothing on a line holding
+# one invalid byte, even with -a, so "caf\xe9 <name>" passed (2026-10-09).
+# The terms are names and paths, for which ASCII case-folding is enough.
+export LC_ALL=C
+
 repository="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 git_common_dir="$(git -C "$repository" rev-parse --path-format=absolute --git-common-dir)"
 canonical_repository="$(cd "$(dirname "$git_common_dir")" && pwd)"
@@ -180,6 +185,9 @@ report() {
 }
 
 # Report every line of $2 that names a private term, as "$1:<line>".
+#
+# -a, not -I: -I skips whatever grep calls binary, and a name inside a binary
+# file, or text with one stray byte, is published just the same.
 scan_lines() {
   local match line_number line_text term
   while IFS= read -r match; do
@@ -188,7 +196,7 @@ scan_lines() {
     line_text=${match#*:}
     term=$(printf '%s\n' "$line_text" | grep -oiF -f "$terms_file" | head -n1)
     report "$1:$line_number — \"$term\""
-  done < <(printf '%s\n' "$2" | grep -inIF -f "$terms_file" || true)
+  done < <(printf '%s\n' "$2" | grep -inaF -f "$terms_file" || true)
 }
 
 if [[ "$mode" == "--text" ]]; then

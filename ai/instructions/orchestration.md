@@ -24,8 +24,10 @@ that the recipient received or read them.
   for, rather than leaving a finished pull request open. Ask first only when
   the repository requires another reviewer or the merge is hard to reverse.
   Claude Code is also the default implementation and review worker.
-- **Codex** is a delegated implementation worker, dispatched and supervised by
-  Claude through the delegate skill.
+- **Workers** are Claude sub-agents (the `opus-delegate` skill) and Codex (the
+  `delegate` skill), dispatched and supervised by the coordinator.
+  **The user's most recent instruction picks the worker:** "Codex" means
+  `delegate`; "Opus", "sub-agents", or no instruction means `opus-delegate`.
 - **GitHub** is the durable source of truth. Issues, pull requests, and commits
   outlive every session.
 
@@ -48,10 +50,9 @@ that the recipient received or read them.
    for real work. Follow the same worker using the current client's status tools
    and the continuation cursor when one is available. Never resend the task
    because a soft wait expired or a prompt-stalled signal appeared — that
-   signal is a heuristic, it is
-   wrong often enough to matter, and a resend duplicates work already in
-   flight. Do not hammer output reads; rely on the reported working/idle state
-   and space the polls out.
+   signal is a heuristic, it is wrong often enough to matter, and a resend
+   duplicates work already in flight. Do not hammer output reads; rely on the
+   reported working/idle state and space the polls out.
 
 5. **Interrupting the coordinator does not stop the workers.** A new user message
    interrupts the conversation you are having; it does not cancel a worker
@@ -87,8 +88,7 @@ that the recipient received or read them.
    an independent review, and it must not be the only one. Give the reviewer
    the diff and the original requirement, not the implementer's summary.
    **Implementation workers do not self-approve**: a delegated worker hands its
-   evidence to the coordinating session, which reviews it and decides what
-   merges.
+   evidence to the coordinator, which reviews it and decides what merges.
    **Review necessity before correctness.** For each new test group or support
    subsystem, check the required behavior, distinct failure it detects, and
    cheaper existing alternative. Reject unjustified additions even when all
@@ -100,8 +100,7 @@ that the recipient received or read them.
    security, protocol and MCP behaviour, Nix and system state, migrations,
    concurrency and shared state, large refactors. Its verdict is **evidence for
    the coordinator, not a substitute for its review and merge decision**.
-   Skip it for small, low-risk, plainly correct work, and say that you skipped
-   it.
+   Skip it for small, low-risk, plainly correct work, and say you skipped it.
 
 10. **Never open a Claude session solely to watch another one.** Routine
     progress comes from the current client's status and wait tools for the
@@ -120,8 +119,8 @@ that the recipient received or read them.
     completed work, and never leave an important finding only in a terminal
     transcript that closes with the session. Preserve unrelated worktrees and
     files. Never commit secrets or private local state. Exception: a delegated
-    worker, such as a Codex job dispatched by Claude, leaves its changes
-    uncommitted, and its supervisor reviews, commits, and pushes them.
+    worker, Claude sub-agent or Codex job, leaves its changes uncommitted, and
+    its coordinator reviews, commits, and pushes them.
 
 12. **This machine is declarative.** Environment, settings, and configuration
     changes belong in the Nix configuration repository — Home Manager or

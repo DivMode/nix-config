@@ -38,6 +38,20 @@
     wrap-up = ./skills/wrap-up;
   };
 
+  # This repository's own skills for Claude Code only, because they drive a
+  # tool Codex does not have. Linked under ~/.claude/skills beside the shared
+  # ones above.
+  claudeSkills = {
+    # Delegation to Claude sub-agents through the Agent tool. The sibling of
+    # codexOrchestrator.delegateSkill; the global Roles rule picks between the
+    # two by the user's words.
+    opus-delegate = ./claude-skills/opus-delegate;
+  };
+
+  # The worker brief both delegation skills write from. modules/home/ai puts a
+  # copy beside each skill's SKILL.md, so the two skills cannot drift apart.
+  delegationAssignment = ./delegation/assignment.md;
+
   # Local additions to the codex-orchestrator Claude Code plugin: the
   # delegation policy skill, the post-run scope check, and the guard hook it passes to Codex. Claude
   # Code only; modules/home/ai layers them into the plugin tree.

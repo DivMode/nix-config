@@ -112,7 +112,8 @@ let
   # (`Counter.total`). The uv-backed `python3` launcher in ../development.nix is
   # what that name resolves to.
   #
-  # Local additions are the delegation policy (skills/delegate), its scope check
+  # Local additions are the delegation policy (skills/delegate) with its copy of
+  # the shared worker brief, its scope check
   # (local/codex-scope), its guard hook (local/codex-guard), and journal writer
   # (local/codex-journal). The skill
   # reaches all of them through ${CLAUDE_PLUGIN_ROOT}, and they go away with the
@@ -145,6 +146,8 @@ let
       grep -qx 'disable-model-invocation: true' $out/skills/$skill/SKILL.md
     done
     cp -r ${ai.codexOrchestrator.delegateSkill} $out/skills/delegate
+    chmod u+w $out/skills/delegate
+    cp ${ai.delegationAssignment} $out/skills/delegate/assignment.md
     install -Dm755 ${lib.getExe codexScope} $out/local/codex-scope
     install -Dm755 ${lib.getExe codexGuard} $out/local/codex-guard
     install -Dm755 ${lib.getExe codexJournal} $out/local/codex-journal
@@ -440,7 +443,7 @@ in
       # Directory paths, which the module links as whole trees under
       # ~/.claude/skills/<name>/ — so a skill that grows references/ or
       # rules/ beside its SKILL.md needs no change here.
-      skills = ai.skills // anthropicClaudeSkills;
+      skills = ai.skills // ai.claudeSkills // anthropicClaudeSkills;
     };
 
     # Session launchers, declared beside the client they launch.
@@ -543,6 +546,13 @@ in
         # $CODEX_HOME/AGENTS.md — $CODEX_HOME being ~/.codex unless the
         # environment overrides it, which nothing here does.
         ".codex/AGENTS.md".text = instructions.text;
+
+        # opus-delegate's copy of the shared worker brief, linked beside the
+        # skill's own files. Not a combined derivation handed to
+        # `programs.claude-code.skills`: that option tests its value with
+        # `lib.pathIsDirectory`, which would build a derivation during evaluation.
+        "${config.programs.claude-code.configDir}/skills/opus-delegate/assignment.md".source =
+          ai.delegationAssignment;
 
         # The same document as a single reviewable artifact, so the identity of
         # what the two clients were given can be checked without reading either

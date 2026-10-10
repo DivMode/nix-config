@@ -2,6 +2,7 @@
   config,
   inputs,
   lib,
+  local,
   pkgs,
   ...
 }:
@@ -144,6 +145,34 @@ let
     };
   });
 
+  # gh, wrapped so nothing posts a private name to this public repository: PR
+  # and issue text never passes the pre-push hook. The checkout local.nix
+  # declares as projects.nixconfig is the one public repository, so without it
+  # there is nothing to guard and gh is installed as it is. The wrapper comes
+  # first in the join, so its bin/gh shadows the real one while completions
+  # and man pages still come from gh. See scripts/gh-private-names-guard.sh.
+  ghCheckout = (local.projects or { }).nixconfig or null;
+  ghGuard = pkgs.writeShellApplication {
+    name = "gh";
+    runtimeInputs = [ pkgs.git ];
+    runtimeEnv = {
+      GH_GUARD_REAL_GH = lib.getExe pkgs.gh;
+      GH_GUARD_CHECKOUT = ghCheckout;
+    };
+    text = builtins.readFile ../../scripts/gh-private-names-guard.sh;
+  };
+  gh =
+    if ghCheckout == null then
+      pkgs.gh
+    else
+      pkgs.symlinkJoin {
+        name = "gh-guarded-${pkgs.gh.version}";
+        paths = [
+          ghGuard
+          pkgs.gh
+        ];
+      };
+
 in
 {
   options.nixConfig.claudeCode.package = lib.mkOption {
@@ -165,6 +194,7 @@ in
     # are installed by their Home Manager program modules in default.nix.
     home.packages =
       (with pkgs; [
+        # The guarded gh from the let block: a let binding shadows `with pkgs`.
         gh
         fd
         jq

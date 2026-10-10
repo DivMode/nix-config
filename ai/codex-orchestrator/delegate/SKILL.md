@@ -1,6 +1,6 @@
 ---
 name: delegate
-description: Hand a large, mechanical coding job to a Codex CLI worker (gpt-6.1-sol at an effort Claude chooses per job; Fast tier only when the user asks for fast mode) while Claude plans, splits big jobs into as many parallel pieces as genuinely help, supervises, and accepts. Invoke this yourself, without being asked, when a planned change is large and mechanical with its decisions already made (many files, repetitive edits, long edit-test-fix loops), and whenever the user mentions Codex for doing work ("use Codex", "have Codex do it"). Small fixes are done directly unless the user explicitly hands that change to Codex. The user never types this command.
+description: Codex workers — hand a coding job to a Codex CLI worker (gpt-6.1-sol at an effort Claude chooses per job; Fast tier only when the user asks for fast mode) while Claude plans, splits it into parallel pieces, supervises, and accepts. Use when the user names Codex for doing work ("use Codex", "have Codex do it", "Codex fast mode"). Delegation the user has not given to Codex goes through opus-delegate.
 ---
 
 # Delegate an implementation to Codex
@@ -13,10 +13,8 @@ monitoring, and handoff format are upstream's. Before the first dispatch in a se
 `${CLAUDE_PLUGIN_ROOT}/docs/orchestration-contract.md`.
 
 Repository rules outrank this skill on their own ground. Codex reads a repository's `AGENTS.md`
-itself but not `CLAUDE.md`, so copy every repository rule the assignment depends on (worktree
-mechanism, test runner, forbidden commands) into its IMPLEMENTATION DECISIONS, NON-GOALS, or
-VERIFICATION. A repository that needs different delegation defaults (timeout, checks) states them
-in its own instruction file.
+itself but not `CLAUDE.md`, so the assignment carries every rule it depends on. A repository that
+needs different delegation defaults (timeout, checks) states them in its own instruction file.
 
 Run records live outside every repository, at `$HOME/.claude/codex-runs/<repo-name>/<run-id>/`,
 in upstream's layout (`journal.jsonl`, `<agent>/execution-NN/{prompt.md,events.jsonl,handoff.md}`).
@@ -28,7 +26,8 @@ repository baseline in `run_started` as upstream describes.
 
 ## Codex or Claude: decide per piece of work
 
-Upstream says to prefer Codex as the first mover for bounded coding tasks. Here that is narrowed:
+Upstream says to prefer Codex as the first mover for bounded coding tasks. Here Codex runs only when
+the user has named it (global Roles); other delegation goes through `opus-delegate`. Even then,
 Codex gets only work where delegating saves Claude more than writing and checking the assignment
 costs. Decide for each piece, even inside a project the user said to "use Codex" for.
 
@@ -129,10 +128,12 @@ Codex login unchanged.
    BASE_TREE="$("${CLAUDE_PLUGIN_ROOT}/local/codex-scope" snapshot "$WORKTREE")"
    ```
 
-5. Write `prompt.md` from the template below. Do not dispatch while any section is empty or vague.
-   Point at source with paths and symbols; do not paste whole files, long logs, or this
-   conversation. Before launch, append the execution (the helper captures worktree HEAD and
-   branch); add `--service-tier fast` only when Fast is on:
+5. Write `prompt.md` from [assignment.md](assignment.md), the worker brief `opus-delegate` uses
+   too. Every launch attempt gets a new `execution-NN` directory: the runner creates
+   `events.jsonl` exclusively and refuses one that exists (`could not create events file …
+   File exists`), so a relaunch after a failed start is the next number, never a reuse. Before
+   launch, append the execution (the helper captures worktree HEAD and branch); add
+   `--service-tier fast` only when Fast is on:
 
    ```bash
    "$JOURNAL" execution --run-dir "$RUN_DIR" --agent codex-impl-01 --execution execution-01 \
@@ -141,57 +142,6 @@ Codex login unchanged.
      --prompt "$EXECUTION_DIR/prompt.md" --events "$EXECUTION_DIR/events.jsonl" \
      --handoff "$EXECUTION_DIR/handoff.md"
    ```
-
-## Assignment template
-
-```markdown
-# Assignment: <one-line objective>
-
-## OBJECTIVE
-<One concrete feature or behavior.>
-
-## ACCEPTANCE CRITERIA
-<Observable requirements that show the feature works. Passing tests alone is not sufficient.>
-
-## REPOSITORY AND WORKTREE
-<Absolute worktree path, branch, HEAD, and expected starting state.>
-
-## ALLOWED WRITE SCOPE
-<Files or narrow paths you may change. Nothing else.>
-
-## IMPLEMENTATION DECISIONS
-<Interfaces, patterns, and components to reuse; decisions already made.>
-
-## NON-GOALS
-<What must not change; tempting additions that are out of scope.>
-
-## VERIFICATION
-<Commands or evidence required for acceptance.>
-
-## ESCALATION
-<Missing decisions or obstacles that mean: stop and report instead of choosing.>
-
-## RULES
-- Implement the requested behavior first; optional polish only if the assignment asks.
-- Reuse the existing patterns named above. No unrelated refactoring or cleanup.
-- No new dependencies unless authorized above.
-- No speculative compatibility layers, generic frameworks, retry systems, fallbacks, or config
-  options.
-- Keep required security, authorization, validation, and data-integrity behavior. Simple does not
-  mean removing safeguards.
-- Add tests only for the requested behavior and its material failure risks.
-- Never weaken assertions, skip checks, or replace real behavior with mocks to get a pass.
-- Never change orchestration policy, sandbox, or permissions to unblock yourself.
-- Do not spawn sub-agents. Do not commit, push, ship, deploy, or change cluster or cloud state.
-  Leave your changes uncommitted. Do not touch files outside ALLOWED WRITE SCOPE.
-- When a required decision is missing, stop and report it rather than expanding the work.
-- Stop when the acceptance criteria are met.
-
-## HANDOFF
-End with exactly these headings: Status, Summary, Files Changed, Claims / Findings,
-Commands Reported, Caveats / Blockers. Under them give changed files, acceptance evidence, checks
-actually run with their results, deviations from this assignment, remaining gaps, and blockers.
-```
 
 ## Dispatch
 
@@ -224,7 +174,10 @@ practice means the repository's own guardrails apply to Codex too.
 
 After each execution, append its result. The helper reads `session_id` from the recorded events
 path's `thread.started` event and carries forward the task and handoff paths. Repeat
-`--changed-file` and `--caveat` as needed; use `blocked` or `failed` for those outcomes:
+`--changed-file` and `--caveat` as needed. The status vocabulary is fixed: an execution result is
+`complete`, `blocked`, or `failed`, a task also takes `pending` and `active`, and validation rejects
+anything else (`accepted`, `needs_correction`). Your verdict on the work goes in `verify` records
+and `close --judgment`, never in a status:
 
 ```bash
 "$JOURNAL" result --run-dir "$RUN_DIR" --agent codex-impl-01 --execution execution-01 \
@@ -269,11 +222,33 @@ by default for any job that splits cleanly; the user should not have to ask.
   Use `blocked` when unresolved; repeat `--risk` and `--follow-up` for remaining items. It appends
   terminal updates for open tasks (`complete` for passed, `blocked` for blocked), preserves existing
   terminal states, validates, appends `run_closed` with that output, and validates again. A validation
-  failure is reported and earlier records are never rewritten.
-- Correction: the one allowed correction is upstream's resume command as `execution-02` under the
-  same agent, with that session id, the same `-C "$WORKTREE"`, and the same `-m`, `service_tier`,
-  `agents.max_threads`, sandbox, approval, guard hook, and `gtimeout` settings. Choose its effort
-  again; a correction after a failure usually warrants `xhigh`. Never `--last`.
+  failure is reported and earlier records are never rewritten. `run_closed` requires `judgment`
+  (`passed` or `blocked`) and `validation`, the pre-close validation output; `close` writes both.
+  Every record's fields are in `${CLAUDE_PLUGIN_ROOT}/docs/orchestration-contract.md`.
+- Correction: the one allowed correction resumes the same session as the next `execution-NN` under
+  the same agent, with its own `prompt.md`, `execution` entry, and scope baseline. Choose its effort
+  again; a correction after a failure usually warrants `xhigh`. Add `-c service_tier="fast"` only
+  when Fast is on, and never use `--last`. `codex exec resume` rejects `-s` and `-C` (`error:
+  unexpected argument '-s' found`), and upstream's resume example in `monitoring.md` does not carry
+  the guard, so use this one: the sandbox goes in as `-c`, and `env -C` makes the worktree its
+  working directory, and `SESSION_ID` comes from the previous execution's `thread.started` event.
+  Verified on codex-cli 0.160.1 (2026-10-09): the resumed turn's rollout
+  recorded the worktree as `cwd` and `danger-full-access` as its sandbox.
+
+  ```bash
+  SESSION_ID="$(jq -r 'select(.type=="thread.started").thread_id' "$RUN_DIR/codex-impl-01/execution-01/events.jsonl")"
+  EXECUTION_DIR="$RUN_DIR/codex-impl-01/execution-02"
+  gtimeout --foreground --signal=TERM --kill-after=60s 45m \
+    env -C "$WORKTREE" python3 "${CLAUDE_PLUGIN_ROOT}/scripts/codex_orch_tools.py" run \
+      --label codex-impl-01 --repo "$REPO" --role implementation \
+      --events "$EXECUTION_DIR/events.jsonl" --prompt "$EXECUTION_DIR/prompt.md" \
+    -- codex exec resume --json --output-last-message "$EXECUTION_DIR/handoff.md" \
+       -m gpt-6.1-sol -c model_reasoning_effort="<effort>" -c agents.max_threads=1 \
+       -c 'sandbox_mode="danger-full-access"' -c approval_policy=never \
+       --dangerously-bypass-hook-trust \
+       -c "hooks.PreToolUse=[{matcher=\"Bash\", hooks=[{type=\"command\", command=\"${CLAUDE_PLUGIN_ROOT}/local/codex-guard\"}]}]" \
+       "$SESSION_ID" -
+  ```
 - Cancel: stop the background task. The runner exits 143 after stopping Codex. A timeout exits 124.
 - A timeout stops Codex but not the command Codex was running: its shell commands run in their
   own process group, and a `sleep` outlived a timeout as an orphan (observed 2026-10-03; stopping

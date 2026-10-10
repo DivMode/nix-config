@@ -31,10 +31,14 @@ DEFAULTS_WRITE = "defaults " + "write"
 GENERIC_USER = "someuser"
 PIP = "pi" + "p"
 BREAK = "--break-" + "system-packages"
+GH_API = "https://api." + "github.com"
+GH_UPLOADS = "https://uploads." + "github.com"
 
 
 def verdict(command):
     """The guard's decision for a command, without running anything."""
+    if guard.check_command(command):
+        return "DENY"
     for segment in guard.split_segments(command):
         if guard.check(segment):
             return "DENY"
@@ -157,6 +161,30 @@ CASES = [
     ("listing what is installed", "python3 -m " + PIP + " list", "ALLOW"),
     ("grep for the flag", "grep -rn -- " + BREAK + " justfile", "ALLOW"),
     ("launchctl bootstrap", "launchctl bootstrap gui/501 some.plist", "DENY"),
+    # ---- GitHub writes go through the wrapped gh (2026-10-09). ----
+    ("curl POST to the API", "curl -X POST -H 'Authorization: token x' " + GH_API + "/repos/o/r/issues -d '{}'", "DENY"),
+    ("curl with an attached method", "curl -XPATCH " + GH_API + "/repos/o/r/issues/1", "DENY"),
+    ("curl sending JSON, method implied", "curl --json '{\"body\":\"x\"}' " + GH_API + "/repos/o/r/issues/1/comments", "DENY"),
+    ("curl with a token from gh", "curl -d @body.json -H \"Authorization: Bearer $(gh auth token)\" " + GH_API + "/graphql", "DENY"),
+    ("wget posting", "wget --post-data='x=1' " + GH_API + "/repos/o/r/issues", "DENY"),
+    ("httpie with a write method", "http POST " + GH_API + "/repos/o/r/issues title=x", "DENY"),
+    ("httpie sending a field", "xh " + GH_API + "/repos/o/r/issues title=x", "DENY"),
+    ("an uploads host write", "curl -T asset.tar " + GH_UPLOADS + "/repos/o/r/releases/1/assets", "DENY"),
+    ("a python heredoc posting to the API",
+     "python3 - <<'PY'\nimport requests\nrequests.post('" + GH_API + "/repos/o/r/issues', json={})\nPY",
+     "DENY"),
+    ("a node one-liner patching the API",
+     "node -e \"fetch('" + GH_API + "/repos/o/r/issues/1', {method: 'PATCH'})\"", "DENY"),
+    # ...while reads, other hosts, gh itself, and prose stay allowed.
+    ("curl GET from the API", "curl -s " + GH_API + "/repos/o/r/releases/latest", "ALLOW"),
+    ("curl with an explicit GET", "curl -X GET " + GH_API + "/rate_limit", "ALLOW"),
+    ("httpie reading with a query", "http " + GH_API + "/search/issues q==label:bug", "ALLOW"),
+    ("curl POST to another host", "curl -X POST https://example.com/hook -d x", "ALLOW"),
+    ("gh api write, which the wrapper checks", "gh api -X POST repos/o/r/issues -f title=x", "ALLOW"),
+    ("python reading the API", "python3 -c \"import requests; print(requests.get('" + GH_API + "/rate_limit').json())\"", "ALLOW"),
+    ("a commit message describing the rule",
+     "git commit -F - <<'MSG'\nguard: deny curl -X POST to " + GH_API + "\nMSG", "ALLOW"),
+    ("grep for the host", "grep -rn " + GH_API + " scripts", "ALLOW"),
 ]
 
 

@@ -70,7 +70,8 @@ widens product scope, introduces architecture, or decides unrelated improvements
   decision. Never loop.
 - Do not run `config init` or create `.codex-orchestrator/config.ini`: its generated policy is
   `gpt-5.6-sol`, Fast tier, and `xhigh`+. Worker settings are the explicit flags below.
-- No `report.md` unless asked. Close a run with `validate` then `run_closed`.
+- No `report.md` unless asked. Close a run with `local/codex-journal close`, which validates and
+  appends `run_closed`.
 
 ## Worker settings
 
@@ -110,8 +111,17 @@ Codex login unchanged.
 1. Establish the repository root from the checkout (`pwd`, `git rev-parse --show-toplevel`).
 2. Create a worktree for the worker with the repository's own mechanism when it has one, otherwise
    `git worktree add`. Never let a worker write in the user's main checkout.
-3. Create the run directory under `$HOME/.claude/codex-runs/`, append `run_started` with the
-   repository baseline, and record the task with its allowed `files`.
+3. Create the run under `$HOME/.claude/codex-runs/` with the journal helper; it captures the
+   repository baseline and Codex version. Record the task and repeat `--file` and `--acceptance`
+   for each allowed path and criterion. Only one writer may journal a run directory at a time;
+   each record atomically replaces the journal while preserving all existing bytes:
+
+   ```bash
+   JOURNAL="${CLAUDE_PLUGIN_ROOT}/local/codex-journal"
+   "$JOURNAL" start --run-dir "$RUN_DIR" --run-id "$RUN_ID" --repo "$REPO" --goal "<run goal>"
+   "$JOURNAL" task --run-dir "$RUN_DIR" --id task-01 --status active --goal "<task goal>" \
+     --acceptance "<criterion>" --file "<allowed path>"
+   ```
 4. Take the scope baseline after the worktree is ready and before launch, and record it as
    `baseline_tree` in the `execution` entry:
 
@@ -121,7 +131,16 @@ Codex login unchanged.
 
 5. Write `prompt.md` from the template below. Do not dispatch while any section is empty or vague.
    Point at source with paths and symbols; do not paste whole files, long logs, or this
-   conversation.
+   conversation. Before launch, append the execution (the helper captures worktree HEAD and
+   branch); add `--service-tier fast` only when Fast is on:
+
+   ```bash
+   "$JOURNAL" execution --run-dir "$RUN_DIR" --agent codex-impl-01 --execution execution-01 \
+     --task task-01 --role implementation --model gpt-6.1-sol --effort "<effort>" \
+     --effort-reason "<one-line reason>" --worktree "$WORKTREE" --baseline-tree "$BASE_TREE" \
+     --prompt "$EXECUTION_DIR/prompt.md" --events "$EXECUTION_DIR/events.jsonl" \
+     --handoff "$EXECUTION_DIR/handoff.md"
+   ```
 
 ## Assignment template
 
@@ -203,11 +222,13 @@ Reads such as `gh pr view`, `git stash push`, and `rg` searches stay allowed. `-
 review. It also runs any hooks the repository ships in `.codex/` without that review, which in
 practice means the repository's own guardrails apply to Codex too.
 
-Record `model`, `effort` with its reason, and `service_tier` (when Fast is on) as requested values in the `execution` entry. The session id is the
-`thread_id` of the stream's `thread.started` event:
+After each execution, append its result. The helper reads `session_id` from the recorded events
+path's `thread.started` event and carries forward the task and handoff paths. Repeat
+`--changed-file` and `--caveat` as needed; use `blocked` or `failed` for those outcomes:
 
 ```bash
-jq -r 'select(.type=="thread.started") | .thread_id' "$EXECUTION_DIR/events.jsonl"
+"$JOURNAL" result --run-dir "$RUN_DIR" --agent codex-impl-01 --execution execution-01 \
+  --status complete --summary "<observed outcome>" --changed-file "<path>"
 ```
 
 ## Running several jobs at once
@@ -244,7 +265,11 @@ by default for any job that splits cleanly; the user should not have to ask.
 - Progress: the background task in `/tasks`, and upstream's `state` command. Use `monitor --log
   "$EXECUTION_DIR/events.jsonl"`; its `--repo --run-id` form looks inside the repository. Keep raw
   `events.jsonl` out of context unless diagnosing a specific failure.
-- Close: `validate "$RUN_DIR"`, then `run_closed`.
+- Close: `"$JOURNAL" close --run-dir "$RUN_DIR" --judgment passed --summary "<acceptance summary>"`.
+  Use `blocked` when unresolved; repeat `--risk` and `--follow-up` for remaining items. It appends
+  terminal updates for open tasks (`complete` for passed, `blocked` for blocked), preserves existing
+  terminal states, validates, appends `run_closed` with that output, and validates again. A validation
+  failure is reported and earlier records are never rewritten.
 - Correction: the one allowed correction is upstream's resume command as `execution-02` under the
   same agent, with that session id, the same `-C "$WORKTREE"`, and the same `-m`, `service_tier`,
   `agents.max_threads`, sandbox, approval, guard hook, and `gtimeout` settings. Choose its effort
@@ -264,7 +289,7 @@ by default for any job that splits cleanly; the user should not have to ask.
   the process list as well if a command was running when the job stopped.
 
 - After a cancel, timeout, or failure, keep the worktree exactly as it is. Do not reset, discard,
-  or accept. Run the scope check, record `execution_result` as `blocked` or `failed` with what
+  or accept. Run the scope check, use `"$JOURNAL" result` with `--status blocked` or `failed` and what
   exists, and report the state.
 
 ## Accept
@@ -279,7 +304,15 @@ by default for any job that splits cleanly; the user should not have to ask.
 
 3. Confirm `git -C "$WORKTREE" rev-parse HEAD` still equals the recorded `head`.
 4. Read the actual diff. Evaluate every acceptance criterion by observation, and run the
-   verification commands yourself. Record each as `verification`.
+   verification commands yourself. Record each with the helper (`--result` is `passed`, `failed`,
+   `inconclusive`, or `skipped`; repeat optional `--evidence` for files):
+
+   ```bash
+   "$JOURNAL" verify --run-dir "$RUN_DIR" --id check-01 --task task-01 \
+     --criterion "<criterion>" --method command --check "<exact command>" \
+     --result passed --observation "<what you observed>"
+   "$JOURNAL" task --run-dir "$RUN_DIR" --id task-01 --status complete
+   ```
 5. Integrate through the repository's own workflow. The worker's changes are uncommitted edits in
    the worktree, and the handoff says what it did. The worker never commits or ships.
 

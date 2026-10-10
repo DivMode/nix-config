@@ -285,13 +285,128 @@ def raw_github_write(prog, args, raw):
     return any(re.match(r"[^=:@\s]+(?::=|=(?!=)|@)", a) for a in positional[1:])
 
 
+# An unquoted heredoc body is expanded by the shell before it is written:
+# every `...` and $(...) in it runs as a command. On 2026-10-09 a project
+# session wrote a prompt file with `cat > prompt.md <<EOF`, and the Markdown
+# code spans in its body ran a test suite, hit a zsh glob error, and left the
+# prompt silently garbled. Quoting the delimiter keeps the body literal.
+HEREDOC_SUBSTITUTION = ("Blocked: this heredoc's delimiter is unquoted, so the shell runs every "
+                        "backtick span and `$(...)` in its body while writing it. Quote the "
+                        "delimiter (`<<'EOF'`) so the body stays literal, or write the file with "
+                        "the Write tool; to insert a command's output, set a variable first and "
+                        "expand `$VAR`.")
+HEREDOC_WORD_END = set(" \t\n;&|<>()")
+SUBSTITUTION_RE = re.compile(r"`|\$\((?!\()")  # $(( )) is arithmetic, not a command
+
+
+def heredoc_word(command, i):
+    """Read the heredoc word at i: (delimiter after quote removal, quoted, end).
+    Any quoting in the word — 'EOF', "EOF", \\EOF — makes the body literal."""
+    word, quoted = [], False
+    while i < len(command) and command[i] not in HEREDOC_WORD_END:
+        if command[i] == "\\":
+            word.append(command[i + 1:i + 2])
+            quoted, i = True, i + 2
+        elif command[i] in "'\"":
+            close = command.find(command[i], i + 1)
+            close = len(command) if close == -1 else close
+            word.append(command[i + 1:close])
+            quoted, i = True, close + 1
+        else:
+            word.append(command[i])
+            i += 1
+    return "".join(word), quoted, i
+
+
+def unquoted_heredoc_substitution(command):
+    """True when an unquoted heredoc's body contains a backtick or `$(`.
+
+    HEREDOC_RE reads lines without quote context, which would take a `<<EOF`
+    that is only named inside a quoted --body or -m string for a real heredoc.
+    So this walks the command the way the shell tokenises it: quoted strings,
+    $( ... ) nesting (where quoting starts afresh, as in "$(cat <<'EOF' ...)"),
+    arithmetic (( )) where << is a shift, and comments. Each pending heredoc's
+    body is the lines after the next unquoted newline, up to the line equal to
+    its delimiter (leading tabs stripped for <<-)."""
+    stack = []  # open contexts: '"' string, '(' $( or subshell, '((' arithmetic
+    pending = []
+    i, n = 0, len(command)
+    while i < n:
+        c = command[i]
+        if c == "\\":
+            i += 2
+            continue
+        if stack and stack[-1] == '"':
+            if c == '"':
+                stack.pop()
+            elif command.startswith("$(", i):
+                stack.append("(")
+                i += 1
+            i += 1
+            continue
+        if c == "'":
+            close = command.find("'", i + 1)
+            i = n if close == -1 else close + 1
+            continue
+        if c == '"':
+            stack.append('"')
+        elif command.startswith("((", i):
+            stack.append("((")
+            i += 1
+        elif c == "(":
+            stack.append("(")
+        elif c == ")" and stack:
+            if stack.pop() == "((":
+                i += 1  # the second ) of ))
+        elif c == "#" and (i == 0 or command[i - 1] in " \t\n;&|("):
+            close = command.find("\n", i)
+            i = n if close == -1 else close
+            continue
+        elif command.startswith("<<<", i):
+            i += 3
+            continue
+        elif command.startswith("<<", i) and "((" not in stack:
+            i += 2
+            strip_tabs = command.startswith("-", i)
+            i += strip_tabs
+            while i < n and command[i] in " \t":
+                i += 1
+            delimiter, quoted, i = heredoc_word(command, i)
+            if delimiter:
+                pending.append((delimiter, strip_tabs, quoted))
+            continue
+        elif c == "\n" and pending:
+            i += 1
+            for delimiter, strip_tabs, quoted in pending:
+                body = []
+                while i < n:
+                    end = command.find("\n", i)
+                    end = n if end == -1 else end
+                    line = command[i:end]
+                    i = end + 1
+                    if (line.lstrip("\t") if strip_tabs else line) == delimiter:
+                        break
+                    body.append(line)
+                # \\, \` and \$ are literal in an unquoted body.
+                text = re.sub(r"\\[\\`$]", "", "\n".join(body))
+                if not quoted and SUBSTITUTION_RE.search(text):
+                    return True
+            pending = []
+            continue
+        i += 1
+    return False
+
+
 def check_command(command):
     """Rules that need the whole command, heredoc bodies included.
 
     split_segments() drops a heredoc fed to an interpreter as data, which is
-    right for its other rules and wrong for this one: `python3 - <<PY` with a
+    right for its other rules and wrong for these: `python3 - <<PY` with a
     requests.post() to the GitHub API is a write that never appears as a
-    segment of its own."""
+    segment of its own, and an unquoted heredoc runs the substitutions in its
+    body whatever program reads it."""
+    if unquoted_heredoc_substitution(command):
+        return HEREDOC_SUBSTITUTION
     if not GITHUB_API_RE.search(command) or not SCRIPT_WRITE_RE.search(command):
         return None
     for segment in re.split(r"&&|\|\||[;&|\n]", command):

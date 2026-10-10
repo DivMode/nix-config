@@ -93,9 +93,15 @@ in
     # `**/.claude/.cc-writes/` was already in the unmanaged file this replaces.
     # It is carried over deliberately rather than dropped: taking ownership of
     # a file must not silently discard what it already contained.
+    #
+    # `.claude/worktrees/` is where the Agent tool's `isolation: "worktree"`
+    # puts a sub-agent's checkout (the opus-delegate skill uses it). A worktree
+    # kept because the worker changed something showed in the main checkout as
+    # `?? .claude/worktrees/<name>/` (git status, 2026-10-09).
     ignores = [
       "**/.claude/.cc-writes/"
       ".claude/settings.local.json"
+      ".claude/worktrees/"
     ];
 
     settings = {

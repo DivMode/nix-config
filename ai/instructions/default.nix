@@ -78,11 +78,15 @@ let
   # found inside a named section of orchestration.md.
   #
   # Who merges belongs in Roles because it is a standing fact about the
-  # coordinator, not a step to follow. The five under Binding rules are
-  # obligations, and an obligation that is not a binding rule is a suggestion.
+  # coordinator, not a step to follow; so does which worker the user's words
+  # pick, with both halves pinned so the default cannot quietly flip back to
+  # Codex. The five under Binding rules are obligations, and an obligation that
+  # is not a binding rule is a suggestion.
   sectionPhrases = {
     "## Roles" = [
       "delegates, verifies, and **merges verified work** for changes the user asked"
+      "**The user's most recent instruction picks the worker:**"
+      "\"Opus\", \"sub-agents\", or no instruction means `opus-delegate`."
     ];
     "## Binding rules" = [
       "**Reconcile before you open.**"

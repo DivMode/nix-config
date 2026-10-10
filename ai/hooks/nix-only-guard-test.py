@@ -185,6 +185,38 @@ CASES = [
     ("a commit message describing the rule",
      "git commit -F - <<'MSG'\nguard: deny curl -X POST to " + GH_API + "\nMSG", "ALLOW"),
     ("grep for the host", "grep -rn " + GH_API + " scripts", "ALLOW"),
+    # ---- Unquoted heredocs run the substitutions in their body (2026-10-09). ----
+    ("the incident: Markdown code spans in an unquoted prompt heredoc",
+     "cat > prompt.md <<EOF\n# Review\nRun `just test` in the checkout.\n"
+     "Check that `items.map(x => x.id)` is unchanged.\nEOF", "DENY"),
+    ("$( in an unquoted body", "cat > notes.md <<EOF\nBuilt on $(date)\nEOF", "DENY"),
+    ("a space before the delimiter", "cat << EOF > notes.md\nRun `ls`\nEOF", "DENY"),
+    ("<<- with a tab-indented terminator", "cat <<-EOF > notes.md\n\tRun `ls`\n\tEOF", "DENY"),
+    ("an unquoted heredoc inside a commit-message substitution",
+     "git commit -m \"$(cat <<EOF\nRun `just test`\nEOF\n)\"", "DENY"),
+    ("the second of two heredocs is unquoted",
+     "cat > a <<'A'; cat > b <<B\n`literal`\nA\n$(date)\nB", "DENY"),
+    # ...while literal bodies, plain $VAR, and text naming the pattern stay allowed.
+    ("single-quoted delimiter", "cat > prompt.md <<'EOF'\nRun `just test` and $(date)\nEOF", "ALLOW"),
+    ("double-quoted delimiter", "cat > prompt.md <<\"EOF\"\nRun `just test`\nEOF", "ALLOW"),
+    ("backslash-quoted delimiter", "cat > prompt.md <<\\EOF\nRun `just test`\nEOF", "ALLOW"),
+    ("plain variable expansion", "cat > notes.md <<EOF\nHome is $HOME and ${USER}\nEOF", "ALLOW"),
+    ("arithmetic expansion in an unquoted body", "cat > notes.md <<EOF\nTotal $((1 + 2))\nEOF", "ALLOW"),
+    ("escaped substitutions are literal", "cat > notes.md <<EOF\nUse \\`ls\\` and \\$(pwd)\nEOF", "ALLOW"),
+    ("only the quoted one of two heredocs has backticks",
+     "cat > a <<A; cat > b <<'B'\nplain $HOME\nA\n`literal`\nB", "ALLOW"),
+    ("a here-string", "tr a-z A-Z <<<hello\necho \"$(date)\"", "ALLOW"),
+    ("the common quoted commit-message heredoc",
+     "git commit -m \"$(cat <<'EOF'\nRun `just test` before $(merging)\nEOF\n)\"", "ALLOW"),
+    ("a commit message naming the pattern",
+     "git commit -F - <<'MSG'\nguard: refuse cat <<EOF bodies\n\nA body with `just test` ran it.\nMSG", "ALLOW"),
+    ("a quoted --body naming the pattern",
+     "gh issue comment 1 --body 'An agent wrote cat > p.md <<EOF and the\n`just test` span ran.'", "ALLOW"),
+    ("a one-line message naming the pattern",
+     "git commit -m \"guard: refuse <<EOF bodies\"\necho \"$(git log -1 --format=%h)\"", "ALLOW"),
+    ("grep for the pattern", "grep -n '<<EOF' ai/hooks/nix-only-guard.py\ngrep -n '$(' README.md", "ALLOW"),
+    ("an arithmetic shift", "echo $((1 << 4))\necho \"$(date)\"", "ALLOW"),
+    ("a comment naming the pattern", "# write it with <<EOF\necho \"$(date)\"", "ALLOW"),
 ]
 
 

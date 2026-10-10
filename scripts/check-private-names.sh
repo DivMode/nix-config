@@ -22,7 +22,17 @@
 #   --tree             audit every tracked file in the working tree
 #   --commits <rev-list-args...>
 #                      check what each commit in the supplied `git rev-list`
-#                      arguments ADDS (what the pre-push hook runs)
+#                      arguments ADDS, and its message (what the pre-push hook
+#                      runs)
+#   --text <label>     check text on stdin: a ref name or tag message the
+#                      pre-push hook publishes, or a PR/issue body the gh
+#                      wrapper is about to post (modules/home/development.nix)
+#
+# Diffs are not the only public text. On 2026-10-09 an audit of the GitHub
+# pages found private project names in six commit messages and nine pull
+# request titles and bodies, all from after this guard existed: it read only
+# added lines and paths, so a message, a branch name, a merge commit's own
+# changes, and anything posted through `gh` all went past it.
 #
 # --commits exists because a pre-commit hook only ever sees the commit being
 # made. On 2026-08-14 this script blocked three commits successfully and then
@@ -47,17 +57,20 @@ mode="${1:---staged}"
 commit_args=("${@:2}")
 case "$mode" in
   --staged | --tree) ;;
-  --commits)
+  --commits | --text)
     if (( ${#commit_args[@]} == 0 )); then
-      echo "usage: ${BASH_SOURCE[0]##*/} --commits <rev-list-args...>" >&2
+      echo "usage: ${BASH_SOURCE[0]##*/} --commits <rev-list-args...> | --text <label>" >&2
       exit 1
     fi
     ;;
   *)
-    echo "usage: ${BASH_SOURCE[0]##*/} [--staged|--tree|--commits <range>]" >&2
+    echo "usage: ${BASH_SOURCE[0]##*/} [--staged|--tree|--commits <range>|--text <label>]" >&2
     exit 1
     ;;
 esac
+
+# Read the text before anything below can touch stdin.
+[[ "$mode" == "--text" ]] && text=$(cat)
 
 # local.nix is ignored, so a linked worktree has none of its own: read the main
 # checkout's, which is the same machine's same file.
@@ -166,10 +179,33 @@ report() {
   printf '  %s\n' "$1" >&2
 }
 
-if [[ "$mode" == "--commits" ]]; then
+# Report every line of $2 that names a private term, as "$1:<line>".
+scan_lines() {
+  local match line_number line_text term
+  while IFS= read -r match; do
+    [[ -n "$match" ]] || continue
+    line_number=${match%%:*}
+    line_text=${match#*:}
+    term=$(printf '%s\n' "$line_text" | grep -oiF -f "$terms_file" | head -n1)
+    report "$1:$line_number — \"$term\""
+  done < <(printf '%s\n' "$2" | grep -inIF -f "$terms_file" || true)
+}
+
+if [[ "$mode" == "--text" ]]; then
+  scan_lines "${commit_args[*]}" "$text"
+elif [[ "$mode" == "--commits" ]]; then
   while IFS= read -r commit; do
     [[ -n "$commit" ]] || continue
     subject=$(git log -1 --format='%h %s' "$commit")
+    scan_lines "$subject — commit message" "$(git log -1 --format=%B "$commit")"
+
+    # A merge commit's --cc diff holds only what the merge itself introduced
+    # (lines that match no parent), so merging an already-published branch
+    # adds nothing here while an edit made during the merge does. Each line
+    # carries one +/-/space column per parent; it is added when those columns
+    # hold a + and no -.
+    parents=$(( $(git rev-list --parents -n1 "$commit" | wc -w) - 1 ))
+    (( parents > 0 )) || parents=1
     file="?"
     while IFS= read -r line; do
       case "$line" in
@@ -180,14 +216,14 @@ if [[ "$mode" == "--commits" ]]; then
           fi
           continue
           ;;
-        '+++'* | '+'*) ;;
-        *) continue ;;
       esac
-      added=${line#+}
+      columns=${line:0:parents}
+      [[ "$columns" == *+* && "$columns" != *-* && "$columns" =~ ^[\ +]+$ ]] || continue
+      added=${line:parents}
       term=$(printf '%s\n' "$added" | grep -oiF -f "$terms_file" | head -n1) || true
       [[ -n "$term" ]] && report "$subject — $file adds \"$term\""
-    done < <(git show --format= --unified=0 "$commit")
-  done < <(git rev-list --no-merges "${commit_args[@]}")
+    done < <(git show --cc --format= --unified=0 "$commit")
+  done < <(git rev-list "${commit_args[@]}")
 else
   if [[ "$mode" == "--staged" ]]; then
     files=$(git diff --cached --name-only --diff-filter=ACMR)
@@ -209,13 +245,7 @@ else
       content=$(cat "$file")
     fi
 
-    while IFS= read -r match; do
-      [[ -n "$match" ]] || continue
-      line_number=${match%%:*}
-      line_text=${match#*:}
-      term=$(printf '%s\n' "$line_text" | grep -oiF -f "$terms_file" | head -n1)
-      report "$file:$line_number — \"$term\""
-    done < <(printf '%s\n' "$content" | grep -inIF -f "$terms_file" || true)
+    scan_lines "$file" "$content"
   done <<< "$files"
 fi
 
@@ -227,6 +257,8 @@ ignored precisely so these stay off GitHub.
 
   Comments   — describe the thing generically ("the work monorepo"), or cite
                the evidence without naming the repository.
+  Messages   — the same for commit messages, branch and tag names, and PR or
+               issue text: reword the commit or the text, then retry.
   Values     — move them into local.nix and read them from there at run time,
                the way scripts/rebuild.sh reads the 1Password vault.
   Misfire    — a term that is genuinely public (this repository's own name)

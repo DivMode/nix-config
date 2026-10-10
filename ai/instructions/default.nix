@@ -123,7 +123,8 @@ let
 
     # Model routing. The Fable rule is the one most likely to be softened by a
     # well-meaning reword, so both halves of it are pinned.
-    "Default to **Opus 5** (`opus`)"
+    "**A worker never runs the"
+    "coordinator's model.**"
     "**Never use Fable unless"
     "the user explicitly asks for Fable by name.**"
 

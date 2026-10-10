@@ -56,8 +56,9 @@ before you changed anything, in your handoff.
 - Never change orchestration policy, sandbox, hooks, or permissions to unblock yourself.
 - Do not spawn sub-agents. Do not commit, push, open pull requests, ship, deploy, or change cluster
   or cloud state. Leave your changes uncommitted. Do not touch files outside ALLOWED WRITE SCOPE.
-- Never put `rm` inside `sh -c`/`bash -c` strings, heredocs, `eval`, or command substitutions;
-  write a multi-step script to a file and run it with `bash <file>`.
+- Never run `sh -c`, `bash -c`, `zsh -c` or `eval` with a script string, and never put `rm` inside
+  heredocs or command substitutions: each puts a permission prompt in front of the owner, who must
+  never see one. Write a multi-step script to a file and run it with `bash <file>`.
 - When a required decision is missing, stop and report it rather than expanding the work.
 - Stop when the acceptance criteria are met.
 

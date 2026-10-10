@@ -194,6 +194,33 @@
                 touch "$out"
               '';
             agent-instructions = (import ./ai/instructions { pkgs = nixpkgs.legacyPackages.${system}; }).tests;
+            codex-journal =
+              let
+                pkgs = nixpkgs.legacyPackages.${system};
+                journal = import ./ai/codex-orchestrator/codex-journal.nix { inherit pkgs; };
+              in
+              pkgs.runCommand "codex-journal-tests"
+                {
+                  nativeBuildInputs = [
+                    pkgs.bash
+                    pkgs.git
+                    pkgs.jq
+                    pkgs.python3
+                  ];
+                }
+                ''
+                  repo="$TMPDIR/example-repo"
+                  git init --initial-branch=example-branch "$repo"
+                  git -C "$repo" -c user.name=Example -c user.email=example@example.invalid \
+                    commit --allow-empty -m 'Example baseline'
+                  if ! bash ${ai.codexOrchestrator.journalTest} \
+                    ${pkgs.lib.getExe journal} ${inputs.codex-orchestrator} \
+                    "$repo" "$TMPDIR/evidence"; then
+                    find "$TMPDIR/evidence" -type f ! -path '*/plugin/*' -print -exec cat {} \;
+                    exit 1
+                  fi
+                  echo 'codex-journal tests passed' > "$out"
+                '';
             orchestration-docs = (import ./docs/links.nix { pkgs = nixpkgs.legacyPackages.${system}; }).tests;
             codex-config-merge = (import ./ai/codex { pkgs = nixpkgs.legacyPackages.${system}; }).tests;
             command-governor-settings =

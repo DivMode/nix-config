@@ -12,15 +12,26 @@
 # A zero local sha is a deletion (nothing to inspect); a zero remote sha is a
 # new remote branch, so the range is everything not already published on any
 # remote-tracking ref.
+#
+# The ref's own name is published too (a branch name shows on every PR page),
+# and so is an annotated tag's message.
 
 set -euo pipefail
 
 repository="$(git rev-parse --show-toplevel)"
+check="$repository/scripts/check-private-names.sh"
 zero="0000000000000000000000000000000000000000"
 status=0
 
-while read -r _local_ref local_sha _remote_ref remote_sha; do
+while read -r _local_ref local_sha remote_ref remote_sha; do
   [[ "$local_sha" == "$zero" ]] && continue
+
+  printf '%s\n' "$remote_ref" | "$check" --text "ref name" || status=1
+  if [[ "$(git cat-file -t "$local_sha")" == tag ]]; then
+    # The message only: the header's tagger line is the Git identity, which
+    # the denylist holds and every tag carries.
+    git cat-file tag "$local_sha" | sed '1,/^$/d' | "$check" --text "tag $remote_ref" || status=1
+  fi
 
   if [[ "$remote_sha" == "$zero" ]]; then
     range="$local_sha --not --remotes"
@@ -29,7 +40,7 @@ while read -r _local_ref local_sha _remote_ref remote_sha; do
   fi
 
   # shellcheck disable=SC2086 # $range is deliberately word-split into rev-list args
-  "$repository/scripts/check-private-names.sh" --commits $range || status=1
+  "$check" --commits $range </dev/null || status=1
 done
 
 exit "$status"

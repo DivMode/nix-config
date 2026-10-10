@@ -25,9 +25,10 @@ if ! (cd "$repository" && nix fmt -- --ci >/dev/null 2>&1); then
   exit 1
 fi
 
-# The private-name guard's own regression test, when the guard is what changed.
-if git diff --cached --name-only | grep -q '^scripts/check-private-names\|^scripts/hooks/'; then
+# The private-name guards' own regression tests, when a guard is what changed.
+if git diff --cached --name-only | grep -q '^scripts/check-private-names\|^scripts/gh-private-names\|^scripts/hooks/'; then
   bash "$repository/scripts/check-private-names-test.sh" >/dev/null
+  bash "$repository/scripts/gh-private-names-guard-test.sh" >/dev/null
 fi
 
 exec "$repository/scripts/check-private-names.sh" --staged

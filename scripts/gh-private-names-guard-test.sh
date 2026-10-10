@@ -102,6 +102,51 @@ blocked "an API write to the public repository" \
 blocked "an API write with a {owner}/{repo} placeholder in the public checkout" \
   "$public" "" api 'repos/{owner}/{repo}/issues/1/comments' -F "body=@$body_file"
 
+# Ways past the first version, found in review: aliases and commands a list
+# of writes did not name, a URL from another checkout, attached short flags,
+# GraphQL from anywhere, and a byte that made grep call the text binary.
+blocked "gh's own alias pr new" \
+  "$public" "" pr new -t x -b "$leak"
+blocked "pr revert, which takes a body" \
+  "$public" "" pr revert 3 -b "$leak"
+blocked "issue develop, which names a branch on GitHub" \
+  "$public" "" issue develop 3 --name "$leak"
+blocked "a release asset label" \
+  "$public" "" release upload v1 "$body_file#$leak"
+blocked "a PR URL naming the public repository, from a private checkout" \
+  "$private" "" pr comment https://github.com/fixture-owner/public-repo/pull/5 -b "$leak"
+blocked "an attached -R" \
+  "$private" "" issue create -Rfixture-owner/public-repo -t t -b "$leak"
+blocked "an attached -F body file" \
+  "$public" "" pr create -t x "-F$body_file"
+blocked "an attached api -F field file" \
+  "$work_dir" "" api repos/fixture-owner/public-repo/issues "-Fbody=@$body_file"
+blocked "a GraphQL mutation from a private checkout" \
+  "$private" "" api graphql -f "query=mutation { addComment(input: {subjectId: \"x\", body: \"$leak\"}) { clientMutationId } }"
+blocked "an API write that names no repository" \
+  "$private" "" api -X POST repositories/123/issues -f "title=$leak"
+binary_body="$work_dir/binary.md"
+printf 'caf\xe9 %s\n' "$leak" > "$binary_body"
+blocked "a body with an invalid UTF-8 byte" \
+  "$public" "" pr create -t x --body-file "$binary_body"
+if (
+  cd "$public" && GH_GUARD_REAL_GH="$work_dir/gh" GH_GUARD_CHECKOUT="$public" \
+    bash "$public/scripts/gh-private-names-guard.sh" issue create -t x --editor >/dev/null 2>&1
+) || [[ -f "$calls" ]]; then
+  echo "error: text from an editor reached gh unchecked" >&2
+  exit 1
+fi
+
+# A body file's PATH is never posted, and a session's scratch path can name a
+# private checkout; only the contents count.
+named_dir="$work_dir/fixture-private-name-scratch"
+mkdir -p "$named_dir"
+printf 'clean body\n' > "$named_dir/body.md"
+passed "a clean body file under a path naming a private term" \
+  "$public" "" pr create -t x --body-file "$named_dir/body.md"
+passed "a GraphQL query (not a mutation) naming a private term, from a private checkout" \
+  "$private" "" api graphql -f "query={ repository(owner: \"o\", name: \"fixture-private-name\") { id } }"
+
 passed "a clean PR body to the public repository" \
   "$public" "" pr create --title "fix: guard" --body "clean text"
 passed "a clean body from stdin, which gh must still receive" \

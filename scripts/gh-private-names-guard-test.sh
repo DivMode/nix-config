@@ -35,6 +35,7 @@ calls="$work_dir/calls"
 cat > "$work_dir/gh" <<EOF
 #!/usr/bin/env bash
 printf '%s\n' "\$*" > "$calls"
+printf '%s\n' "\${GH_EDITOR:-}" > "$calls.editor"
 cat > "$calls.stdin"
 EOF
 chmod +x "$work_dir/gh"
@@ -136,6 +137,37 @@ if (
   echo "error: text from an editor reached gh unchecked" >&2
   exit 1
 fi
+
+# Second review: a flag before the action, GraphQL mutations whose query is
+# not inline, an editor asked for through combined short flags, and the name
+# of an uploaded file.
+blocked "-R before the action" \
+  "$private" "" pr -R fixture-owner/public-repo create -t x -b "$leak"
+blocked "--repo= before the action" \
+  "$private" "" issue --repo=fixture-owner/public-repo comment 5 -b "$leak"
+blocked "a body flag before the action" \
+  "$public" "" pr -b "$leak" create
+mutation_json="$work_dir/mutation.json"
+printf '{"query":"mutation { addComment(input: {body: \\"%s\\"}) { clientMutationId } }"}\n' "$leak" > "$mutation_json"
+blocked "a GraphQL mutation sent with --input" \
+  "$private" "" api graphql --input "$mutation_json"
+blocked "a GraphQL mutation sent on stdin" \
+  "$private" "$(cat "$mutation_json")" api graphql --input -
+blocked "a GraphQL query field read from stdin" \
+  "$private" "mutation { x(body: \"$leak\") { y } }" api graphql -F query=@-
+asset_dir="$work_dir/assets"
+mkdir -p "$asset_dir"
+printf 'clean asset\n' > "$asset_dir/fixture-private-name.tar"
+blocked "an uploaded file whose name is a private term" \
+  "$public" "" release upload v1 "$asset_dir/fixture-private-name.tar"
+passed "combined short flags asking for an editor" \
+  "$public" "" pr create -de -t x
+if [[ "$(cat "$calls.editor")" != false ]]; then
+  echo "error: gh ran without the failing editor for a checked write" >&2
+  exit 1
+fi
+passed "a private repository's comment linking the public repository" \
+  "$private" "" pr comment 5 -b "see https://github.com/fixture-owner/public-repo/pull/3 for the fixture-private-name fix"
 
 # A body file's PATH is never posted, and a session's scratch path can name a
 # private checkout; only the contents count.

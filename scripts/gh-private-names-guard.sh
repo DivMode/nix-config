@@ -33,7 +33,19 @@ real_gh=${GH_GUARD_REAL_GH:?}
 checkout=${GH_GUARD_CHECKOUT:?}
 args=("$@")
 group=${args[0]:-}
-action=${args[1]:-}
+
+# The action is the first word after the group that is not a flag, since gh
+# takes flags before it too (`gh pr -R <repo> create`). -R/--repo is skipped
+# with its value; any other flag given a value there makes that value look
+# like the action, which then is not a read and gets checked.
+action=""
+for (( i = 1; i < ${#args[@]}; i++ )); do
+  case "${args[i]}" in
+    -R | --repo) i=$(( i + 1 )) ;;
+    -*) ;;
+    *) action=${args[i]}; break ;;
+  esac
+done
 
 lower() { printf '%s' "$1" | tr '[:upper:]' '[:lower:]'; }
 
@@ -55,7 +67,7 @@ case "$group" in
   api) ;;
   *)
     case "$action" in
-      "" | -* | list | ls | view | status | diff | checks | checkout | co | download | \
+      "" | list | ls | view | status | diff | checks | checkout | co | download | \
         verify | verify-asset | watch | get | clone | set-default | gitignore | license)
         exec "$real_gh" "$@"
         ;;
@@ -89,9 +101,35 @@ if [[ "$group" == api ]]; then
     $fields || exec "$real_gh" "$@"
   fi
   endpoint=$(lower "${endpoint#/}")
-  if [[ "$endpoint" == graphql ]] && ! printf '%s\n' "${args[@]}" | grep -q mutation; then
-    query_file=$(printf '%s\n' "${args[@]}" | sed -n 's/^\(-[fF]\)\{0,1\}query=@//p' | head -n1)
-    if [[ -z "$query_file" || ! -f "$query_file" ]] || ! grep -q mutation "$query_file"; then
+
+  # A GraphQL call is a mutation unless it is shown to be a query: a query
+  # field given inline or in a readable file, with no operation that starts
+  # `mutation`. A body sent with --input, or anything read from stdin, is not
+  # inspected here, so it counts as a mutation and is checked.
+  if [[ "$endpoint" == graphql ]]; then
+    query="" known=false
+    for (( i = 1; i < ${#args[@]}; i++ )); do
+      arg=${args[i]}
+      case "$arg" in
+        --input | --input=*) known=false; break ;;
+        -f | -F | --field | --raw-field) value=${args[i + 1]:-}; i=$(( i + 1 )) ;;
+        --field=* | --raw-field=*) value=${arg#*=} ;;
+        -f?* | -F?*) value=${arg#-?} ;;
+        *) continue ;;
+      esac
+      [[ "$value" == query=* ]] || continue
+      value=${value#query=}
+      if [[ "$value" == @* ]]; then
+        if [[ "$value" == @- || ! -f "${value#@}" ]]; then
+          known=false
+          break
+        fi
+        value=$(cat "${value#@}")
+      fi
+      query=$value
+      known=true
+    done
+    if $known && ! printf '%s' "$query" | tr '\n' ' ' | grep -Eq '(^|\})[[:space:]]*mutation([^A-Za-z0-9_]|$)'; then
       exec "$real_gh" "$@"
     fi
   fi
@@ -103,15 +141,17 @@ if [[ -z "$public" ]]; then
   exit 1
 fi
 
-# Which repository is this aimed at? A URL or -R naming it, GH_REPO, the API
-# endpoint, or else the current checkout, whose remotes gh resolves.
+# Which repository is this aimed at? An argument that IS a URL of it (gh takes
+# the repository from a PR or issue URL), -R, GH_REPO, the API endpoint, or
+# else the current checkout, whose remotes gh resolves. A URL merely quoted
+# inside a body does not count: linking this repository from a private one's
+# comment is not posting to it.
 target=false
 repo_flag=""
+public_url_re="^((https?|ssh)://)?(git@)?(www\\.)?github\\.com[/:]${public//./\\.}(\\.git)?([/#?].*)?$"
 for (( i = 0; i < ${#args[@]}; i++ )); do
   arg=${args[i]}
-  case "$(lower "$arg")" in
-    *"github.com/$public"* | *"github.com:$public"*) target=true ;;
-  esac
+  [[ "$(lower "$arg")" =~ $public_url_re ]] && target=true
   case "$arg" in
     -R | --repo) repo_flag=${args[i + 1]:-} ;;
     --repo=*) repo_flag=${arg#--repo=} ;;
@@ -153,9 +193,10 @@ fi
 $target || exec "$real_gh" "$@"
 
 # Everything that will be posted. An argument naming a file is checked by the
-# file's contents, not its path: a session's scratch path can itself contain a
-# private project's name, and that path is never posted. Text read from stdin
-# is kept and handed to gh afterwards.
+# file's contents and its name, not its directory: a session's scratch path can
+# itself contain a private project's name and is never posted, while the name
+# of an uploaded release asset is. Text read from stdin is kept and handed to
+# gh afterwards.
 work_dir=$(mktemp -d)
 trap 'rm -rf "$work_dir"' EXIT
 text="$work_dir/text"
@@ -186,7 +227,7 @@ for arg in "${args[@]}"; do
   done
   if [[ -n "$file" ]]; then
     cat "$file" >> "$text"
-    printf '\n%s\n' "${arg/"$file"/}" >> "$text"
+    printf '\n%s\n%s\n' "${arg/"$file"/}" "$(basename "$file")" >> "$text"
   else
     printf '%s\n' "$arg" >> "$text"
   fi
@@ -196,6 +237,11 @@ if ! "$checkout/scripts/check-private-names.sh" --text "gh $group $action" < "$t
   echo "gh: refused — $public is public; nothing was posted." >&2
   exit 1
 fi
+
+# An editor's text would reach GitHub unchecked, however the editor was asked
+# for (-e, --editor, or combined short flags such as -de), so gh gets one that
+# fails. GH_EDITOR takes precedence over every other editor setting.
+export GH_EDITOR=false
 
 # Not exec: the trap must still remove the copies once gh is done.
 status=0

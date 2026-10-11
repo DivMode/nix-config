@@ -34,7 +34,7 @@
     # End-of-work review in one pass: confirm merged/deployed/observed, then
     # product, agent-environment and architecture lenses (the latter two adapted
     # from Matt Pocock's user-invoked retro and improve-codebase-architecture,
-    # which a skill cannot start); file what the user accepts.
+    # which a skill cannot start); the agent decides each finding (fix, file or drop) and reports.
     wrap-up = ./skills/wrap-up;
   };
 

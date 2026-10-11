@@ -26,8 +26,9 @@ The handoff document lives in a temp directory and will be lost, so it only poin
 
 - Record each decision, plan and finding that exists only in this conversation where it belongs: on the issue the work belongs to, in a new issue, or in an ADR or PR.
 - Commit and push finished work. Leave nothing important only in this transcript.
+- Decide every open choice yourself before handing it over: wrap-up findings, option lists on issues, recommendations. Record each decision and its reason where it belongs, so the next session inherits decisions and tasks. The next session contacts the owner only for what they alone can supply: their credentials, an account or console step, or an irreversible outward action they have not authorized.
 
-Done when the next session could rebuild the plan from GitHub and the repository alone.
+Done when the next session could rebuild the plan from GitHub and the repository alone, and nothing in it waits on the owner to choose.
 
 ## 3. Write the handoff document
 
@@ -36,7 +37,7 @@ Write it to `$TMPDIR` under a new, task-specific file name. Check the path is fr
 Sections, in this order:
 
 1. **Repository and state:** absolute repository root, default-branch commit, and the instruction to verify the root with `pwd` and `git rev-parse --show-toplevel`.
-2. **The task, in order:** numbered items, each pointing at its issue or PR by URL or number. Put anything time-bound first, with its exact time in the relevant timezone.
+2. **The task, in order:** numbered items, each pointing at its issue or PR by URL or number, each one work to do. Put anything time-bound first, with its exact time in the relevant timezone.
 3. **Decisions already made:** each with its reason and the issue that records it, so the next session doesn't re-litigate them.
 4. **How to work:** rules this session learned the hard way, each tied to the incident that taught it, plus current machine facts (resources, live sibling sessions and their panes, which sessions must not be disturbed).
 5. **Gotchas:** non-obvious technical facts, each with a file or symbol pointer.

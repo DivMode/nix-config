@@ -1,6 +1,6 @@
 ---
 name: wrap-up
-description: Close out a piece of work in one pass. Confirm it shipped, then review the product, the agent environment and the code architecture, and file what the user accepts.
+description: Close out a piece of work in one pass. Confirm it shipped, review the product, the agent environment and the code architecture, then decide each finding yourself and report what you did.
 disable-model-invocation: true
 argument-hint: "Which work to wrap up (default: this session's)"
 ---
@@ -63,12 +63,16 @@ Load the `codebase-design` skill and use its vocabulary (module, interface, dept
 
 A candidate that contradicts an ADR is surfaced only when the friction is real enough to reopen it, and it is marked as such.
 
-## 3. Present and file
+## 3. Decide, act, report
 
-Present one list across all three lenses, ranked by consequence: what breaks or slows down, for whom, and how soon. Each finding gets its lens, its evidence, a one-line fix and a size (small / medium / large).
+You decide every finding; the owner reads the outcome, not a ballot. For each finding, investigate until the choice is clear, then take exactly one:
 
-For each finding the user accepts, open an issue in the owning repository with the evidence, what is wanted and any constraints. A small fix inside this work's scope can be done now instead, with the user's agreement. For an accepted architecture candidate, walk its design through with the user before filing it.
+- **fix now:** small and inside this work's scope; merge it like the rest of the work;
+- **file:** an issue in the owning repository with the evidence, what is wanted and any constraints; an architecture candidate is designed through with the `codebase-design` skill first and filed with that design;
+- **drop:** not worth doing, with the reason.
 
-Done when every accepted finding has an issue or a merged fix.
+Record the decisions durably (the tracking issue or PR), then report to the owner in plain words: one line per finding saying what you did and why, ranked by consequence, with links. Contact the owner only for what they alone can supply: their credentials, an account or console step, or an irreversible outward action they have not authorized.
+
+Done when every finding is fixed, filed or dropped, and the record says which.
 
 If work continues in a fresh session, offer `/session-handoff`.

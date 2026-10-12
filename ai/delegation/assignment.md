@@ -1,6 +1,6 @@
 # Assignment template
 
-The brief a delegated worker receives, shared by the `delegate` (Codex) and `opus-delegate`
+The brief a delegated worker receives, shared by the `codex-delegate` (Codex) and `opus-delegate`
 (Claude sub-agent) skills. Fill every section; a section left empty or vague means the assignment is
 not ready to send. Point at source with paths and symbols rather than pasting whole files, long
 logs, or the conversation.

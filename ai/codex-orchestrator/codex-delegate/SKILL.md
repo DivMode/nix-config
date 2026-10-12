@@ -1,5 +1,5 @@
 ---
-name: delegate
+name: codex-delegate
 description: Codex workers — hand a coding job to a Codex CLI worker (gpt-6.1-sol at an effort Claude chooses per job; Fast tier only when the user asks for fast mode) while Claude plans, splits it into parallel pieces, supervises, and accepts. Use when the user names Codex for doing work ("use Codex", "have Codex do it", "Codex fast mode"). Delegation the user has not given to Codex goes through opus-delegate.
 ---
 

@@ -112,7 +112,7 @@ let
   # (`Counter.total`). The uv-backed `python3` launcher in ../development.nix is
   # what that name resolves to.
   #
-  # Local additions are the delegation policy (skills/delegate) with its copy of
+  # Local additions are the delegation policy (skills/codex-delegate) with its copy of
   # the shared worker brief, its scope check
   # (local/codex-scope), its guard hook (local/codex-guard), and journal writer
   # (local/codex-journal). The skill
@@ -137,17 +137,17 @@ let
   codexOrchestratorPlugin = pkgs.runCommand "codex-orchestrator-claude-plugin" { } ''
     cp -r ${inputs.codex-orchestrator} $out
     chmod -R u+w $out
-    # Upstream's own skills stay readable, because delegate cites them, but Claude may not start
+    # Upstream's own skills stay readable, because codex-delegate cites them, but Claude may not start
     # them on its own. Each launches Codex without the guard hook, with in-repo run records and
-    # upstream's "prefer Codex first" rule, so delegate must be the only way in. Found in
+    # upstream's "prefer Codex first" rule, so codex-delegate must be the only way in. Found in
     # independent review 2026-10-03.
     for skill in orchestrate workflow report; do
       sed -i '1a disable-model-invocation: true' $out/skills/$skill/SKILL.md
       grep -qx 'disable-model-invocation: true' $out/skills/$skill/SKILL.md
     done
-    cp -r ${ai.codexOrchestrator.delegateSkill} $out/skills/delegate
-    chmod u+w $out/skills/delegate
-    cp ${ai.delegationAssignment} $out/skills/delegate/assignment.md
+    cp -r ${ai.codexOrchestrator.delegateSkill} $out/skills/codex-delegate
+    chmod u+w $out/skills/codex-delegate
+    cp ${ai.delegationAssignment} $out/skills/codex-delegate/assignment.md
     install -Dm755 ${lib.getExe codexScope} $out/local/codex-scope
     install -Dm755 ${lib.getExe codexGuard} $out/local/codex-guard
     install -Dm755 ${lib.getExe codexJournal} $out/local/codex-journal

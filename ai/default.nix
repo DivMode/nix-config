@@ -56,7 +56,7 @@
   # delegation policy skill, the post-run scope check, and the guard hook it passes to Codex. Claude
   # Code only; modules/home/ai layers them into the plugin tree.
   codexOrchestrator = {
-    delegateSkill = ./codex-orchestrator/delegate;
+    delegateSkill = ./codex-orchestrator/codex-delegate;
     scopeCheck = ./codex-orchestrator/codex-scope.sh;
     guardHook = ./codex-orchestrator/codex-guard.sh;
     journal = ./codex-orchestrator/codex-journal.sh;

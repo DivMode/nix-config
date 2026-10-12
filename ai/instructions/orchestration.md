@@ -25,9 +25,9 @@ that the recipient received or read them.
   the repository requires another reviewer or the merge is hard to reverse.
   Claude Code is also the default implementation and review worker.
 - **Workers** are Claude sub-agents (the `opus-delegate` skill) and Codex (the
-  `delegate` skill), dispatched and supervised by the coordinator.
+  `codex-delegate` skill), dispatched and supervised by the coordinator.
   **The user's most recent instruction picks the worker:** "Codex" means
-  `delegate`; "Opus", "sub-agents", or no instruction means `opus-delegate`.
+  `codex-delegate`; "Opus", "sub-agents", or no instruction means `opus-delegate`.
 - **GitHub** is the durable source of truth. Issues, pull requests, and commits
   outlive every session.
 

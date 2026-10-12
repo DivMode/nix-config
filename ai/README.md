@@ -129,7 +129,7 @@ Claude Code plugin so Claude can hand precisely scoped implementation work to
 the real Codex CLI and keep supervising it. Its tools need Python 3.10+, which
 the uv-backed `python3` launcher in `modules/home/development.nix` provides.
 `codex-orchestrator/` here adds the local policy skill
-(`/codex-orchestrator:delegate`), its `codex-scope` post-run check, and the `codex-guard` hook that stops a delegated job committing, pushing, shipping, or deploying. The
+(`/codex-orchestrator:codex-delegate`), its `codex-scope` post-run check, and the `codex-guard` hook that stops a delegated job committing, pushing, shipping, or deploying. The
 policy fixes the worker to `gpt-6.1-sol` with explicit flags, not a Codex
 profile: Codex 0.159.2 started a session with a missing `-p` profile instead of
 failing. Claude picks the reasoning effort per job, never `ultra`, and Fast runs
@@ -138,11 +138,11 @@ disable all of it.
 
 ### Claude sub-agent delegation (opus-delegate)
 
-`claude-skills/opus-delegate` is the sibling of `delegate`: the same assignment,
+`claude-skills/opus-delegate` is the sibling of `codex-delegate`: the same assignment,
 worktree, single-correction, and acceptance discipline, with the Agent tool as
 the mechanism instead of a runner, journal, and guard hook. Claude picks the
 model, effort, and agent type per piece. The global Roles rule routes between
-the two by the user's words: "Codex" means `delegate`; "Opus", "sub-agents", or
+the two by the user's words: "Codex" means `codex-delegate`; "Opus", "sub-agents", or
 nothing said means `opus-delegate`. Both skills write their briefs from
 `delegation/assignment.md`, copied beside each `SKILL.md`, so the two cannot
 drift.

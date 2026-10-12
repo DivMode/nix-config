@@ -1,4 +1,4 @@
-# PreToolUse hook for Codex jobs Claude delegates through /codex-orchestrator:delegate.
+# PreToolUse hook for Codex jobs Claude delegates through /codex-orchestrator:codex-delegate.
 # Packaged by modules/home/ai with writeShellApplication (strict mode, shellcheck, jq on PATH),
 # so this file has no shebang.
 #

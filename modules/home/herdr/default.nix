@@ -96,7 +96,12 @@ let
 
     ui = {
       show_agent_labels_on_pane_borders = true;
-      toast.delivery = "herdr";
+      # The owner asked for agent notifications off (2026-10-12): every
+      # finished or needs-input agent raised a toast and a sound. "off" and
+      # `sound.enabled = false` are the documented keys (config reference,
+      # herdr v0.9.3: ui.toast.delivery, ui.sound.enabled).
+      toast.delivery = "off";
+      sound.enabled = false;
     };
 
     # Plugin actions are otherwise unreachable from the UI, so each one worth

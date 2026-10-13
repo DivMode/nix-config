@@ -194,7 +194,8 @@ in
 
         # Vault creation and item moves with no approval prompt, as a
         # service account whose token is read through Connect per call:
-        # `nix-config-op-admin vault create NAME`, `... item move ...`.
+        # `nix-config-op-admin vault create NAME`, `... item move ...`,
+        # `... item create|edit ... --template FILE`.
         # See scripts/op-admin.py.
         (pkgs.writeShellApplication {
           name = "nix-config-op-admin";

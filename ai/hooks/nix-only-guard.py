@@ -191,11 +191,13 @@ OP_CONFIG_RE = re.compile(
 # owner's own account had no access to a project vault the Connect token
 # uses. Revoking access stays blocked. Editing an item was added the same day
 # (owner request), under the move rule: no --reveal, output discarded.
+# Creating an item was added on 2026-10-12 (owner request): agents store
+# credentials the owner hands them, under the same rule.
 OP_ADMIN = {("connect", "server", "list"), ("connect", "vault", "list"),
             ("connect", "vault", "grant"), ("connect", "token", "create"),
             ("connect", "token", "list"), ("connect", "token", "delete"),
             ("vault", "create"), ("vault", "user", "grant"),
-            ("item", "move"), ("item", "mv"), ("item", "edit")}
+            ("item", "move"), ("item", "mv"), ("item", "edit"), ("item", "create")}
 MOVE_OUTPUT_DISCARDED_RE = re.compile(r"(?:^|\s)(?:1|&)?>\s*/dev/null(?:\s|$)")
 
 
@@ -216,7 +218,7 @@ def is_op_administration(raw):
             if command is None:
                 return False
             if command[0] == "item":
-                # `op item move` and `op item edit` print the item: usernames
+                # `op item move`, `edit` and `create` print the item: usernames
                 # and URLs, and every concealed field too with --reveal.
                 # Allowed only without --reveal and with that output discarded.
                 return "--reveal" not in words and MOVE_OUTPUT_DISCARDED_RE.search(raw) is not None

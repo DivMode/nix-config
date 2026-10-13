@@ -53,7 +53,8 @@ the `op connect token delete` to run once nothing does.
 
 `op` through the desktop app needs the owner's approval for each session.
 `nix-config-op-admin` runs `vault create`, `vault delete` (vaults it created)
-and `item move` as the "nix-config vault admin" service account instead. Its
+`item move`, and `item create`/`edit` (secret values in a `--template` file,
+never argv) as the "nix-config vault admin" service account instead. Its
 token is the item `local.nix` `onePassword.opAdminReference` names, read
 through Connect per call and given only to the `op` child. It was created once
 by `nix-config-op-admin setup VAULT NAME`: allowed to create vaults, with read

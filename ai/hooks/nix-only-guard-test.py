@@ -93,10 +93,7 @@ CASES = [
     # Granting a person a vault (owner request 2026-10-08); revoking stays blocked.
     ("grant a person a vault", "op vault user grant --vault SomeVault --user someone", "ALLOW"),
     ("revoke a person's vault access", "op vault user revoke --vault SomeVault --user someone", "DENY"),
-    ("creating an item, output shown", "op item create --vault SomeVault --category login", "DENY"),
-    # Creating an item (owner request 2026-10-12), under the move rule.
-    ("creating an item, output discarded", "op item create --vault SomeVault --template /tmp/item.json > /dev/null", "ALLOW"),
-    ("creating an item with --reveal", "op item create --vault SomeVault --template /tmp/item.json --reveal > /dev/null", "DENY"),
+    ("create an item", "op item create --vault SomeVault --category login", "DENY"),
     # ---- Moving an item between vaults (owner request 2026-10-07). ----
     ("move an item to another vault", "op item move SomeItem --current-vault A --destination-vault B > /dev/null", "ALLOW"),
     ("reading the moved item stays blocked", "op item get SomeItem --vault B", "DENY"),

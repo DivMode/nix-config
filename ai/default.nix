@@ -36,6 +36,10 @@
     # from Matt Pocock's user-invoked retro and improve-codebase-architecture,
     # which a skill cannot start); the agent decides each finding (fix, file or drop) and reports.
     wrap-up = ./skills/wrap-up;
+    # Storing and reading credentials through the Connect server: the item
+    # write command, the 0600 file convention, and which commands may touch
+    # 1Password at all.
+    onepassword = ./skills/onepassword;
   };
 
   # This repository's own skills for Claude Code only, because they drive a

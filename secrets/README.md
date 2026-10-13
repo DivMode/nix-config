@@ -49,12 +49,19 @@ owner's 1Password approval). The previous token is never deleted
 automatically: clusters or other machines may still use it. The command prints
 the `op connect token delete` to run once nothing does.
 
+### Storing a credential
+
+`nix-config-connect-item put VAULT TITLE FILE` creates the item, or replaces
+the named fields of the one item with that title, through Connect, then reads
+it back until every value matches. FILE is a mode-0600 JSON file of
+`{label, type, value}` fields, so values never reach argv; the command prints
+only labels. The Connect token must have write access to VAULT.
+
 ### Vault administration without a prompt
 
 `op` through the desktop app needs the owner's approval for each session.
 `nix-config-op-admin` runs `vault create`, `vault delete` (vaults it created)
-`item move`, and `item create`/`edit` (secret values in a `--template` file,
-never argv) as the "nix-config vault admin" service account instead. Its
+and `item move` as the "nix-config vault admin" service account instead. Its
 token is the item `local.nix` `onePassword.opAdminReference` names, read
 through Connect per call and given only to the `op` child. It was created once
 by `nix-config-op-admin setup VAULT NAME`: allowed to create vaults, with read

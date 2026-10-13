@@ -188,14 +188,24 @@ in
           '';
         })
 
+        # Storing a credential: create or update an item through Connect
+        # (`nix-config-connect-item put VAULT TITLE FILE`). See
+        # scripts/onepassword-connect-item.py and the onepassword skill.
+        (pkgs.writeShellApplication {
+          name = "nix-config-connect-item";
+          text = ''
+            exec ${pkgs.python3}/bin/python3 ${../../scripts}/onepassword-connect-item.py \
+              ${escapeShellArg cfg.connect.envPath} "$@"
+          '';
+        })
+
         connectStoreToken
         connectSetToken
         connectRotate
 
         # Vault creation and item moves with no approval prompt, as a
         # service account whose token is read through Connect per call:
-        # `nix-config-op-admin vault create NAME`, `... item move ...`,
-        # `... item create|edit ... --template FILE`.
+        # `nix-config-op-admin vault create NAME`, `... item move ...`.
         # See scripts/op-admin.py.
         (pkgs.writeShellApplication {
           name = "nix-config-op-admin";

@@ -303,19 +303,17 @@ The approved Connect interfaces are declarative and read the cached
 and the guard allows exactly this: Connect administration (`op connect` server
 and vault list, vault grant, token create, list and delete), `op vault create`,
 `op vault user grant` (added 2026-10-08, so the owner's account can be given
-access to a project vault), and `op item move`, `op item edit` and `op item
-create` without `--reveal` and with output sent to `/dev/null` (they print the
-item). Run vault creation and item changes as `nix-config-op-admin vault create
-NAME`, `nix-config-op-admin item move ITEM --current-vault A
---destination-vault B`, or `nix-config-op-admin item create|edit ...
---template FILE`: a service account whose token is read through Connect per
-call, so no approval prompt appears.
+access to a project vault), and `op item move` and `op item edit` (edit added 2026-10-08) without `--reveal` and
+with output sent to `/dev/null` (both print the item). When the owner is away, run vault creation and
+item moves as `nix-config-op-admin vault create NAME` or `nix-config-op-admin
+item move ITEM --current-vault A --destination-vault B`: a service account
+whose token is read through Connect per call, so no approval prompt appears.
 
-**Storing credentials is yours to do** (owner, 2026-10-12). When the owner
-hands you a credential, or a task needs one stored, create or edit the item
-yourself with `nix-config-op-admin item create` or `item edit`; do not ask the
-owner to do it. Put secret values in a `--template` JSON file (mode 0600, in
-the session scratchpad, deleted right after), never in argv assignments.
+**Storing credentials is yours to do, through Connect** (owner, 2026-10-12).
+When the owner hands you a credential, or a task needs one stored, write it
+yourself with `nix-config-connect-item put VAULT TITLE FILE` and do not ask the
+owner. Follow the `onepassword` skill: values go in a mode-0600 JSON file in
+the session scratchpad, deleted right after, never in argv.
 
 `scripts/rebuild.sh` is the declarative rebuild entry point. Activation only
 checks that the Connect environment exists and fails loudly when it does not;

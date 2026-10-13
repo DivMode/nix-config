@@ -3,6 +3,8 @@
   op-admin.py CONNECT_ENV REFERENCE vault create NAME
   op-admin.py CONNECT_ENV REFERENCE vault delete NAME     # only vaults it created
   op-admin.py CONNECT_ENV REFERENCE item move ITEM --current-vault A --destination-vault B
+  op-admin.py CONNECT_ENV REFERENCE item create --vault V --template FILE
+  op-admin.py CONNECT_ENV REFERENCE item edit ITEM --vault V --template FILE
   op-admin.py CONNECT_ENV - setup VAULT NAME     # once, with the owner's approval
 
 `op` through the desktop app asks the owner to approve every session, and the
@@ -12,8 +14,11 @@ owner wants vaults created and items moved while away (2026-10-07). This runs
 onePassword.opAdminReference); it is read through Connect for each call and
 given only to the `op` child, never written to disk or printed.
 
-Only `vault create`, `vault delete` (its own vaults) and `item move`/`mv` (without --reveal, output discarded:
-it prints the moved item) run. A service account cannot reach the built-in
+Only `vault create`, `vault delete` (its own vaults), `item move`/`mv`, and
+`item create`/`edit` (owner request 2026-10-12: agents store the credentials
+the owner hands them) run; item commands without --reveal and with their
+output discarded, since `op` prints the item. Pass secret values in a
+--template JSON file, never as argv assignments, which any process can read. A service account cannot reach the built-in
 Personal, Private or Employee vaults or the default Shared vault, cannot
 grant Connect a vault (`nix-config-connect-rotate` does that, with the
 owner's approval), and keeps the vault access it was created with; vaults it
@@ -41,7 +46,8 @@ from onepassword_connect import Connect, ConnectError, run  # noqa: E402
 FIELD = "credential"
 # `vault delete` reaches only vaults this account created: 1Password limits
 # a service account to deleting its own.
-ALLOWED = {("vault", "create"), ("vault", "delete"), ("item", "move"), ("item", "mv")}
+ALLOWED = {("vault", "create"), ("vault", "delete"), ("item", "move"), ("item", "mv"),
+           ("item", "create"), ("item", "edit")}
 
 
 def op_binary():
@@ -62,7 +68,8 @@ def parse_reference(reference):
 def administer(connect_env, reference, args):
     if tuple(args[:2]) not in ALLOWED:
         raise ConnectError("only `vault create NAME`, `vault delete NAME` (a vault this account "
-                           "created) and `item move ITEM --current-vault A --destination-vault B` are allowed")
+                           "created), `item move ITEM --current-vault A --destination-vault B`, "
+                           "`item create` and `item edit` are allowed")
     if "--reveal" in args:
         raise ConnectError("--reveal would print the item's concealed fields")
     vault, item, field = parse_reference(reference)
@@ -71,13 +78,13 @@ def administer(connect_env, reference, args):
     # Connect, and a session variable could make it use the owner's account.
     env = {k: v for k, v in os.environ.items() if not k.startswith("OP_")}
     env["OP_SERVICE_ACCOUNT_TOKEN"] = token
-    moving = args[0] == "item"
+    item = args[0] == "item"
     result = subprocess.run([op_binary(), *args], env=env, text=True,
-                            stdout=subprocess.DEVNULL if moving else None)
+                            stdout=subprocess.DEVNULL if item else None)
     if result.returncode != 0:
         raise ConnectError(f"`op {' '.join(args[:2])}` failed (exit {result.returncode})")
-    if moving:
-        print(f"moved '{args[2]}' (the moved item's details were not printed)")
+    if item:
+        print(f"`op {' '.join(args[:2])}` succeeded (the item's details were not printed)")
 
 
 def setup(connect_env, vault, name):

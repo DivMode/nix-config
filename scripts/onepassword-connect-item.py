@@ -8,13 +8,22 @@ item is created (default API_CREDENTIAL); `type` defaults to CONCEALED. FILE
 must be a regular file readable only by its owner (mode 0600): it holds secret
 values, which never go in argv.
 
-When VAULT holds an item titled TITLE, its fields with the same labels are
-replaced and new labels are added; other fields are kept. Otherwise the item is
-created. The command then reads the item back until every value matches, and
-prints only the vault, item ID and field labels, never a value.
+A field may also give an "id": the id of one of the category's built-in fields,
+such as "credential" in API_CREDENTIAL or "password" in LOGIN. Without it,
+Connect stores a custom field with a generated id, and readers that address
+built-in fields by id (the 1Password Pulumi provider among them) do not see it
+even though the label matches. With it, a new item gets the built-in field, and
+on an existing item the field with that id, or else the one with that label,
+becomes the built-in field.
+
+When VAULT holds an item titled TITLE, its fields with the same labels (or ids)
+are replaced and new labels are added; other fields are kept. Otherwise the item
+is created. The command then reads the item back until every value and id
+matches, and prints only the vault, item ID and field labels, never a value.
 """
 
 import json
+import re
 import os
 import stat
 import sys
@@ -26,6 +35,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from onepassword_connect import ID, Connect, ConnectError, NotFound, run  # noqa: E402
 
 TYPES = {"STRING", "CONCEALED", "EMAIL", "URL", "OTP", "PHONE"}
+FIELD_ID = re.compile(r"[A-Za-z][A-Za-z0-9_]{0,63}")
 
 
 def load(path):
@@ -53,11 +63,23 @@ def load(path):
             raise ConnectError(f"field '{label}' has type {kind!r}; use one of {sorted(TYPES)}")
         if label in wanted:
             raise ConnectError(f"field '{label}' appears twice")
-        wanted[label] = (kind, value)
+        field_id = field.get("id")
+        if field_id is not None and (not isinstance(field_id, str) or not FIELD_ID.fullmatch(field_id)):
+            raise ConnectError(f"field '{label}' has an invalid id; use a built-in field id such as credential")
+        wanted[label] = (kind, value, field_id)
     category = spec.get("category", "API_CREDENTIAL")
     if not isinstance(category, str) or not category:
         raise ConnectError('"category" must be a 1Password category name')
     return category, wanted
+
+
+def entry(label, spec):
+    """The Connect field object for one wanted field."""
+    kind, value, field_id = spec
+    field = {"label": label, "type": kind, "value": value}
+    if field_id is not None:
+        field["id"] = field_id
+    return field
 
 
 def existing(connect, vault_id, title):
@@ -78,17 +100,21 @@ def put(connect, vault, title, path):
     if item is None:
         written = connect.get(f"/v1/vaults/{vault_id}/items", method="POST", body={
             "vault": {"id": vault_id}, "title": title, "category": category,
-            "fields": [{"label": label, "type": kind, "value": value} for label, (kind, value) in wanted.items()],
+            "fields": [entry(label, spec) for label, spec in wanted.items()],
         })
         outcome = "created"
     else:
         fields = [f for f in item.get("fields") or [] if isinstance(f, dict)]
-        for field in fields:
-            if field.get("label") in wanted:
-                field["type"], field["value"] = wanted[field["label"]]
-        present = {f.get("label") for f in fields}
-        fields += [{"label": label, "type": kind, "value": value}
-                   for label, (kind, value) in wanted.items() if label not in present]
+        placed = set()
+        for label, (kind, value, field_id) in wanted.items():
+            # A named id wins; otherwise the field is found by its label.
+            match = next((f for f in fields if field_id is not None and f.get("id") == field_id), None)
+            match = match or next((f for f in fields if f.get("label") == label), None)
+            if match is None:
+                continue
+            match.update(entry(label, (kind, value, field_id)))
+            placed.add(label)
+        fields += [entry(label, spec) for label, spec in wanted.items() if label not in placed]
         item["fields"] = fields
         written = connect.get(f"/v1/vaults/{vault_id}/items/{item['id']}", method="PUT", body=item)
         outcome = "updated"
@@ -104,9 +130,14 @@ def put(connect, vault, title, path):
         except NotFound:
             stored = None
         if isinstance(stored, dict):
-            values = {f.get("label"): (f.get("type"), f.get("value"))
+            values = {f.get("label"): (f.get("type"), f.get("value"), f.get("id"))
                       for f in stored.get("fields") or [] if isinstance(f, dict)}
-            if all(values.get(label) == spec for label, spec in wanted.items()):
+            if all(
+                (stored_spec := values.get(label)) is not None
+                and stored_spec[:2] == (kind, value)
+                and (field_id is None or stored_spec[2] == field_id)
+                for label, (kind, value, field_id) in wanted.items()
+            ):
                 break
         if time.monotonic() > deadline:
             raise ConnectError(f"the stored {title} still does not match 60 s after the write")

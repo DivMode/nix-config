@@ -30,6 +30,13 @@ When the owner gives you a credential, store it yourself. Do not ask them to.
    Use the labels the consuming code reads, exactly; a loader that requires a
    concealed field rejects a `STRING` one.
 
+   When the consumer reads one of the category's built-in fields, also give
+   its `"id"` (`"credential"` for `API_CREDENTIAL`, `"password"` for `LOGIN`).
+   Without it Connect stores a custom field with a generated id: a reader that
+   matches labels finds it, but one that reads built-in fields by id, such as
+   the 1Password Pulumi provider, does not. Check how the consumer reads the
+   item, or copy the shape of a sibling item it already reads.
+
 2. Run `nix-config-connect-item put VAULT "TITLE" FILE`. VAULT is the vault's ID
    or exact name. An existing item with that title gets the listed fields
    replaced or added and keeps the rest; otherwise a new item is created

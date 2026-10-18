@@ -14,6 +14,7 @@
     ./power.nix
     ./spotlight.nix
     ./sudo.nix
+    ./xcode.nix
   ];
 
   programs.zsh.enable = true;

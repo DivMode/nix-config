@@ -397,6 +397,180 @@ def unquoted_heredoc_substitution(command):
     return False
 
 
+# Claude Code cannot statically check a script handed to a shell as a string,
+# so it stops for approval even in bypass mode ("This shell -c script runs rm
+# and could not be checked": a sub-agent's echo-only `/bin/bash -c '…'`
+# prompted the owner on 2026-10-09). The rule held only as prose until an
+# agent ran `gtimeout 5400 bash -c 'until …; do sleep 20; done'` (#187).
+# It judges the executable position, not the text: a grep, a quoted message
+# or a data heredoc that names `bash -c` changes nothing and must pass.
+STRING_EXECUTION = ("Blocked: a script string run through `sh -c`, `bash -c`, `zsh -c` or `eval`. "
+                    "Claude Code cannot check such a script and asks the owner to approve it. "
+                    "Write the script to the session scratchpad and run it with `bash <file>`.")
+ASSIGNMENT_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]*=")
+# Reserved words after which the next word is still a command.
+SHELL_KEYWORDS = {"if", "then", "else", "elif", "while", "until", "do", "!", "{"}
+# Programs that run the program named after them, with their flags that take
+# a separate argument. timeout and gtimeout also take a duration first.
+COMMAND_WRAPPERS = {
+    "env": {"-u", "--unset", "-C", "--chdir", "-P"},
+    "sudo": {"-u", "--user", "-g", "--group", "-h", "--host", "-p", "--prompt", "-C", "-D", "--chdir"},
+    "doas": {"-u", "-C"},
+    "nice": {"-n", "--adjustment"},
+    "timeout": {"-k", "--kill-after", "-s", "--signal"},
+    "gtimeout": {"-k", "--kill-after", "-s", "--signal"},
+    "xargs": {"-I", "-J", "-L", "-n", "-P", "-s", "-E", "-R", "-S", "-d", "-a"},
+    "nohup": set(), "command": set(), "exec": {"-a"}, "time": set(),
+}
+SHELL_C_FLAG_RE = re.compile(r"-[A-Za-z]*c[A-Za-z]*")  # -c, -lc, -ec
+
+
+def runs_script_string(command):
+    """True when `sh|bash|zsh -c` or `eval` is in an executable position.
+
+    Walks the command the way the shell tokenises it: quoting, `\\` escapes,
+    comments, `$(`, backticks and `(` (each opening a fresh command, including
+    inside double quotes, where they still run), redirections and their
+    operands, and the separators `;` `&` `|` and newline. Each word is judged
+    by where it stands: after a separator, keyword, assignment, or wrapper
+    such as `gtimeout 60`, it is the program; anything else is an argument."""
+    command = strip_heredoc_bodies(command)
+    mode, skip, wrapper, duration = "cmd", 0, None, False
+    stack = []  # open '"', or '(' / '`' with the outer word and state saved
+    word, started = [], False
+
+    def judge(text):
+        nonlocal mode, skip, wrapper, duration
+        if skip:
+            skip -= 1
+        elif mode == "shell":
+            if text in ("-o", "+o", "-O", "+O"):
+                skip = 1
+            elif SHELL_C_FLAG_RE.fullmatch(text):
+                return True
+            elif not text.startswith(("-", "+")):
+                mode = "arg"  # the script file: `bash script.sh`
+        elif mode == "wrapper" and text.startswith("-"):
+            skip = int(text in COMMAND_WRAPPERS[wrapper])
+        elif mode == "wrapper" and duration:
+            duration = False
+        elif mode in ("cmd", "wrapper"):
+            name = os.path.basename(text)
+            if ASSIGNMENT_RE.match(text) or (mode == "cmd" and text in SHELL_KEYWORDS):
+                pass
+            elif name == "eval":
+                return True
+            elif name in COMMAND_WRAPPERS:
+                mode, wrapper, duration = "wrapper", name, name in ("timeout", "gtimeout")
+            elif name in SHELL_INTERPRETERS:
+                mode = "shell"
+            else:
+                mode = "arg"
+        return False
+
+    def finish():
+        nonlocal word, started
+        text, had = "".join(word), started or bool(word)
+        word, started = [], False
+        return had and judge(text)
+
+    def open_command(context):
+        nonlocal mode, skip, wrapper, duration, word, started
+        stack.append((context, word, started, mode, skip, wrapper, duration))
+        word, started = [], False
+        mode, skip, wrapper, duration = "cmd", 0, None, False
+
+    def close_command():
+        nonlocal mode, skip, wrapper, duration, word, started
+        hit = finish()
+        _, word, started, mode, skip, wrapper, duration = stack.pop()
+        return hit
+
+    i, n = 0, len(command)
+    while i < n:
+        c = command[i]
+        if stack and stack[-1][0] == '"':
+            if c == "\\":
+                word.append(command[i + 1:i + 2])
+                i += 2
+                continue
+            if c == '"':
+                stack.pop()
+            elif command.startswith("$((", i):
+                close = command.find("))", i)
+                i = n if close == -1 else close + 2
+                continue
+            elif command.startswith("$(", i):
+                open_command("(")
+                i += 1
+            elif c == "`":
+                open_command("`")
+            else:
+                word.append(c)
+            i += 1
+            continue
+        if c == "\\":
+            if command[i + 1:i + 2] != "\n":
+                word.append(command[i + 1:i + 2])
+            i += 2
+            continue
+        if c == "'":
+            close = command.find("'", i + 1)
+            close = n if close == -1 else close
+            word.append(command[i + 1:close])
+            started, i = True, close + 1
+            continue
+        if c == '"':
+            stack.append(('"',))
+            started = True
+        elif c in " \t":
+            if finish():
+                return True
+        elif c == "#" and not word and not started:
+            close = command.find("\n", i)
+            i = n if close == -1 else close
+            continue
+        elif command.startswith("$((", i):
+            close = command.find("))", i)
+            i = n if close == -1 else close + 2
+            continue
+        elif command.startswith("$(", i):
+            open_command("(")
+            i += 1
+        elif c == "`":
+            if stack and stack[-1][0] == "`":
+                if close_command():
+                    return True
+            else:
+                open_command("`")
+        elif c == "(":
+            if finish():
+                return True
+            open_command("(")
+        elif c == ")":
+            if stack and stack[-1][0] == "(":
+                if close_command():
+                    return True
+            elif finish():
+                return True
+        elif c in "<>" or (c == "&" and command.startswith(">", i + 1)):
+            if finish():
+                return True
+            while i < n and command[i] in "<>&|":
+                i += 1
+            if command[i:i + 1] != "(":  # <(…) is a command, not an operand
+                skip += 1
+            continue
+        elif c in ";&|\n":
+            if finish():
+                return True
+            mode, skip, wrapper, duration = "cmd", 0, None, False
+        else:
+            word.append(c)
+        i += 1
+    return finish()
+
+
 def check_command(command):
     """Rules that need the whole command, heredoc bodies included.
 
@@ -407,6 +581,8 @@ def check_command(command):
     body whatever program reads it."""
     if unquoted_heredoc_substitution(command):
         return HEREDOC_SUBSTITUTION
+    if runs_script_string(command):
+        return STRING_EXECUTION
     if not GITHUB_API_RE.search(command) or not SCRIPT_WRITE_RE.search(command):
         return None
     for segment in re.split(r"&&|\|\||[;&|\n]", command):

@@ -17,10 +17,12 @@ let
   # volume filled (134 MB free of 1.8 TB) mid-build: 621 GB of Rust build
   # output in per-task and per-worktree target directories under `rust/`
   # (not set here; repositories and agents point CARGO_TARGET_DIR there) and
-  # 585 GB under `tmp/`. Delete an entry once nothing inside it has changed for
-  # a week, so a directory still in use is never touched: `find -mtime` looks
-  # at every file, not the directory's own date, which only moves when its
-  # direct children change.
+  # 585 GB under `tmp/`. Delete an entry once no file inside it has been read
+  # or written for a week, so anything still in use is kept. Caches are mostly
+  # read, not written, so modification time alone is not enough; this volume
+  # records read times (atime moved on a plain read, checked 2026-10-18). The
+  # test looks at every file, not the directory's own date, which only moves
+  # when its direct children change.
   #
   #   tmp/*            each temp entry, except the agent root below
   #   tmp/claude-UID/*/*  one Claude Code session or task inside a project folder
@@ -40,7 +42,7 @@ let
         local entry
         for entry in "$@"; do
           [ -e "$entry" ] || continue
-          if [ -z "$(find "$entry" -mtime -${toString pruneDays} -print -quit 2>/dev/null)" ]; then
+          if [ -z "$(find "$entry" -type f \( -atime -${toString pruneDays} -o -mtime -${toString pruneDays} \) -print -quit 2>/dev/null)" ]; then
             rm -rf -- "$entry" && deleted=$((deleted + 1))
           fi
         done

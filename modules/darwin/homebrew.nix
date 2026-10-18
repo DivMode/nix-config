@@ -41,7 +41,13 @@
     # Portable command-line tools belong to Nix/Home Manager. Add a formula
     # here only when nixpkgs is concretely unavailable or broken, and document
     # that exception beside the declaration.
-    brews = [ ];
+    brews = [
+      # App Store Connect CLI (signing, TestFlight, submissions). nixpkgs has
+      # it as `asccli`, but the pinned nixpkgs carries 1.5.4 while upstream is
+      # on 5.x, which is the version its agent skills are written against.
+      # Its environment settings are in ./xcode.nix.
+      "asc"
+    ];
     casks = [
       "google-chrome"
 

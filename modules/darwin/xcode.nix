@@ -48,6 +48,14 @@ in
   # v6.0.1). The NOPASSWD:SETENV entry in sudo.nix lets that run unattended.
   environment.systemPackages = [ pkgs.mas ];
 
+  # The asc CLI (./homebrew.nix) sends command telemetry by default and, once a
+  # day, runs `npx skills check` in the background. Skills here are vendored
+  # and pinned in each project, so that check only reports noise.
+  environment.variables = {
+    ASC_TELEMETRY_DISABLED = "1";
+    ASC_SKILLS_AUTO_CHECK = "0";
+  };
+
   # postActivation runs after Homebrew in the pinned activation-scripts.nix.
   system.activationScripts.postActivation.text = lib.mkAfter ''
     if [ ! -d ${xcode} ]; then

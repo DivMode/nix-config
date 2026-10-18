@@ -91,6 +91,14 @@ in
         echo >&2 "downloading the iOS Simulator runtime (about 8 GB)..."
         /usr/bin/xcodebuild -downloadPlatform iOS
       fi
+
+      # Xcode 27 ships without the Metal shader compiler, so any project with a
+      # .metal file fails with "cannot execute tool 'metal' due to missing
+      # Metal Toolchain" until this component is downloaded.
+      if ! /usr/bin/xcodebuild -showComponent metalToolchain 2>/dev/null | grep -q 'Status: installed'; then
+        echo >&2 "downloading the Metal Toolchain..."
+        /usr/bin/xcodebuild -downloadComponent MetalToolchain
+      fi
     fi
   '';
 }

@@ -2,6 +2,7 @@
   config,
   lib,
   local,
+  pkgs,
   ...
 }:
 let
@@ -10,6 +11,49 @@ let
   cacheDirectory = local.cacheDirectory or null;
   enabled = cacheDirectory != null;
   cacheDir = name: "${cacheDirectory}/${name}";
+
+  # Agents leave a temp copy or build directory behind for every task,
+  # worktree and review, and nothing removed them. On 2026-10-18 the cache
+  # volume filled (134 MB free of 1.8 TB) mid-build: 621 GB of Rust build
+  # output in per-task and per-worktree target directories under `rust/`
+  # (not set here; repositories and agents point CARGO_TARGET_DIR there) and
+  # 585 GB under `tmp/`. Delete an entry once nothing inside it has changed for
+  # a week, so a directory still in use is never touched: `find -mtime` looks
+  # at every file, not the directory's own date, which only moves when its
+  # direct children change.
+  #
+  #   tmp/*            each temp entry, except the agent root below
+  #   tmp/claude-UID/*/*  one Claude Code session or task inside a project folder
+  #   rust/*/*         one build directory, so an active sibling is kept
+  pruneDays = 7;
+  pruneCaches = pkgs.writeShellApplication {
+    name = "prune-caches";
+    runtimeInputs = [
+      pkgs.coreutils
+      pkgs.findutils
+    ];
+    text = ''
+      root=${lib.escapeShellArg cacheDirectory}
+      agents="claude-$(id -u)"
+      deleted=0
+      prune() {
+        local entry
+        for entry in "$@"; do
+          [ -e "$entry" ] || continue
+          if [ -z "$(find "$entry" -mtime -${toString pruneDays} -print -quit 2>/dev/null)" ]; then
+            rm -rf -- "$entry" && deleted=$((deleted + 1))
+          fi
+        done
+      }
+      shopt -s nullglob dotglob
+      for entry in "$root"/tmp/*; do
+        [ "$(basename "$entry")" = "$agents" ] || prune "$entry"
+      done
+      prune "$root/tmp/$agents"/*/*
+      prune "$root"/rust/*/*
+      echo "$(date -u +%FT%TZ) prune-caches: deleted $deleted entries untouched for ${toString pruneDays} days"
+    '';
+  };
 in
 {
   # Package managers and browser-automation tools default their caches to the
@@ -68,6 +112,23 @@ in
     };
 
     home.sessionPath = [ (cacheDir "cargo/bin") ];
+
+    launchd.agents.prune-caches = {
+      enable = true;
+      config = {
+        ProgramArguments = [ (lib.getExe pruneCaches) ];
+        StartCalendarInterval = [
+          {
+            Hour = 4;
+            Minute = 15;
+          }
+        ];
+        ProcessType = "Background";
+        LowPriorityIO = true;
+        StandardOutPath = "${local.homeDirectory}/Library/Logs/prune-caches.log";
+        StandardErrorPath = "${local.homeDirectory}/Library/Logs/prune-caches.log";
+      };
+    };
 
     # Same shape as downloads.nix: refuse a symlink or file at the path, and
     # report an unmounted volume as such rather than as a permissions error.

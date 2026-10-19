@@ -188,8 +188,9 @@ in
           '';
         })
 
-        # Storing a credential: create or update an item through Connect
-        # (`nix-config-connect-item put VAULT TITLE FILE`). See
+        # Storing or deleting a credential through Connect
+        # (`nix-config-connect-item put VAULT TITLE FILE`,
+        # `nix-config-connect-item delete VAULT TITLE`). See
         # scripts/onepassword-connect-item.py and the onepassword skill.
         (pkgs.writeShellApplication {
           name = "nix-config-connect-item";

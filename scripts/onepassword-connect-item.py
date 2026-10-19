@@ -1,6 +1,7 @@
-"""Create or update an item through Connect, then read it back.
+"""Create, update or delete an item through Connect, then read it back.
 
   onepassword-connect-item CONNECT_ENV put VAULT TITLE FILE
+  onepassword-connect-item CONNECT_ENV delete VAULT TITLE
 
 FILE is JSON: {"category": "API_CREDENTIAL", "fields": [{"label": "api_token",
 "type": "CONCEALED", "value": "..."}, ...]}. `category` is used only when the
@@ -20,6 +21,10 @@ When VAULT holds an item titled TITLE, its fields with the same labels (or ids)
 are replaced and new labels are added; other fields are kept. Otherwise the item
 is created. The command then reads the item back until every value and id
 matches, and prints only the vault, item ID and field labels, never a value.
+
+`delete` removes the one item titled TITLE in VAULT. It refuses when no item or
+more than one has that title, then reads the item back until Connect no longer
+has it, and prints only the vault and item ID.
 """
 
 import json
@@ -83,6 +88,8 @@ def entry(label, spec):
 
 
 def existing(connect, vault_id, title):
+    if not title.strip() or '"' in title or "\\" in title:
+        raise ConnectError("the title must be non-empty, without quotes or backslashes")
     query = urllib.parse.quote(f'title eq "{title}"')
     rows = [row for row in connect.get(f"/v1/vaults/{vault_id}/items?filter={query}") or []
             if isinstance(row, dict) and row.get("title") == title]
@@ -92,8 +99,6 @@ def existing(connect, vault_id, title):
 
 
 def put(connect, vault, title, path):
-    if not title.strip() or '"' in title or "\\" in title:
-        raise ConnectError("the title must be non-empty, without quotes or backslashes")
     category, wanted = load(path)
     vault_id = connect.vault_id(vault)
     item = existing(connect, vault_id, title)
@@ -145,10 +150,37 @@ def put(connect, vault, title, path):
     print(f"{outcome} and read back: {vault_id}/{item_id} ({', '.join(wanted)})")
 
 
+def delete(connect, vault, title):
+    vault_id = connect.vault_id(vault)
+    item = existing(connect, vault_id, title)
+    item_id = item.get("id") if isinstance(item, dict) else None
+    if not isinstance(item_id, str) or not ID.fullmatch(item_id):
+        raise ConnectError(f"no item is titled {title}")
+    connect.raw(f"/v1/vaults/{vault_id}/items/{item_id}", method="DELETE")
+    # As after a write, Connect's local copy may still serve the item briefly.
+    deadline = time.monotonic() + 60
+    while True:
+        try:
+            connect.get(f"/v1/vaults/{vault_id}/items/{item_id}")
+        except NotFound:
+            break
+        if time.monotonic() > deadline:
+            raise ConnectError(f"Connect still has {title} 60 s after the delete")
+        time.sleep(2)
+    print(f"deleted and read back as gone: {vault_id}/{item_id}")
+
+
+USAGE = "usage: nix-config-connect-item put VAULT TITLE FILE | delete VAULT TITLE"
+
+
 def main():
-    if len(sys.argv) != 6 or sys.argv[2] != "put":
-        raise ConnectError("usage: nix-config-connect-item put VAULT TITLE FILE")
-    put(Connect(sys.argv[1]), sys.argv[3], sys.argv[4], sys.argv[5])
+    command = sys.argv[2] if len(sys.argv) > 2 else None
+    if command == "put" and len(sys.argv) == 6:
+        put(Connect(sys.argv[1]), sys.argv[3], sys.argv[4], sys.argv[5])
+    elif command == "delete" and len(sys.argv) == 5:
+        delete(Connect(sys.argv[1]), sys.argv[3], sys.argv[4])
+    else:
+        raise ConnectError(USAGE)
 
 
 run(main)

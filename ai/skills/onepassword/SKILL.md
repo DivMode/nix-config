@@ -1,6 +1,6 @@
 ---
 name: onepassword
-description: Store, update, read or organise 1Password credentials on this Mac through the self-hosted Connect server. Use whenever the owner hands you a credential (an API token, key pair, password) to keep, a task needs a secret stored or rotated in a vault, or you need to know which commands may touch 1Password.
+description: Store, update, read, delete or organise 1Password credentials on this Mac through the self-hosted Connect server. Use whenever the owner hands you a credential (an API token, key pair, password) to keep, a task needs a secret stored or rotated in a vault, or you need to know which commands may touch 1Password.
 ---
 
 # 1Password through Connect
@@ -53,6 +53,15 @@ If Connect answers 403 for the vault, the Connect token lacks write access
 there: say so; `nix-config-connect-rotate --add-vault VAULT` issues a token
 covering a new vault, with the owner's approval.
 
+## Delete an item
+
+Deleting an item is the owner's call: do it only when they have authorized
+that specific item. Then run `nix-config-connect-item delete VAULT "TITLE"`. It
+refuses unless exactly one item in VAULT has that title, deletes it, reads it
+back until Connect no longer has it, and prints only the vault and item ID. A
+403 means the Connect token lacks delete access to the vault: say so, and do
+not reach for another credential.
+
 ## Read a credential
 
 Use the repository's own loader for the task (its deploy script or Connect
@@ -63,4 +72,4 @@ client). Never print a secret value; check labels, types or a hash instead.
 `nix-config-op-admin vault create NAME` and `nix-config-op-admin item move ITEM
 --current-vault A --destination-vault B` run as the vault-admin service account
 without a prompt. Connect administration is `nix-config-connect-rotate`.
-Deleting items or vaults is the owner's call: ask first.
+Deleting vaults is the owner's call: ask first.

@@ -112,6 +112,47 @@ let
     '';
   };
 
+  # Bun at the version the repositories declare in `packageManager`; their
+  # `check:bun` guards fail on any other. nixpkgs trails it (2026-10-18:
+  # nixos-26.05 packages 1.3.13 and nixpkgs-unstable 1.4.2, against 1.4.3), so
+  # this overrides the version and the release zips. The derivation reads `src`
+  # from `finalAttrs.passthru.sources`, so nothing else needs to change. Drop
+  # the override once the locked nixpkgs packages this version or newer.
+  bun = pkgs.bun.overrideAttrs (
+    finalAttrs: previous: {
+      version = "1.4.3";
+      passthru = previous.passthru // {
+        sources =
+          lib.mapAttrs
+            (
+              _: asset:
+              pkgs.fetchurl {
+                url = "https://github.com/oven-sh/bun/releases/download/bun-v${finalAttrs.version}/bun-${asset.name}.zip";
+                inherit (asset) hash;
+              }
+            )
+            {
+              aarch64-darwin = {
+                name = "darwin-aarch64";
+                hash = "sha256-gK/UwGm0am+o8+xSC+vHUKeEPkqNW5WD0prUNsAKNAM=";
+              };
+              aarch64-linux = {
+                name = "linux-aarch64";
+                hash = "sha256-76mBPaXtckI7+Ef5FujSxHwNd2rdlyNUAmp14Q2pqiE=";
+              };
+              x86_64-darwin = {
+                name = "darwin-x64-baseline";
+                hash = "sha256-D94E6LCSFWuX/mQy6Jm68W2e1s5Sy7QhjS2cB6L4J+8=";
+              };
+              x86_64-linux = {
+                name = "linux-x64";
+                hash = "sha256-PnMFKNiXdfA/h/BcBnh8TfQJnQo38/JS57gpyyOBbhg=";
+              };
+            };
+      };
+    }
+  );
+
   # Grafana's kubectl-style CLI for dashboards, alerts, metrics, logs and
   # traces, agent-optimized. Rebuilt from the flake-pinned release tag rather
   # than taken from nixpkgs as-is: nixpkgs trails upstream badly — nixos-26.05
@@ -231,7 +272,7 @@ in
         # nixpkgs rather than Homebrew. This is a portable CLI, and Homebrew in
         # this configuration owns only native and vendor casks — a formula needs
         # a documented nixpkgs incompatibility, which trailing the latest
-        # release by a single patch version is not.
+        # release is not. The let block's override sets the version.
         bun
         # `promtool`, Prometheus's CLI only (the `cli` output, no server). A
         # repository's pre-push gate evaluates its production alert expression

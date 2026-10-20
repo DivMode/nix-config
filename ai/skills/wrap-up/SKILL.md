@@ -1,7 +1,6 @@
 ---
 name: wrap-up
 description: Close out a piece of work in one pass. Confirm it shipped, review the product, the agent environment and the code architecture, then decide each finding yourself and report what you did.
-disable-model-invocation: true
 argument-hint: "Which work to wrap up (default: this session's)"
 ---
 

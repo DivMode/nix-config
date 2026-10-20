@@ -1,7 +1,6 @@
 ---
 name: session-handoff
 description: Hand the current work to a fresh agent session in a new Herdr pane, with a handoff document and its first prompt.
-disable-model-invocation: true
 argument-hint: "What should the next session do?"
 ---
 

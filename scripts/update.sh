@@ -218,7 +218,7 @@ echo "==> ChatGPT / Codex (updates itself through Sparkle; reported, not moved h
 chatgptApp="/Applications/ChatGPT.app"
 if [[ -d "$chatgptApp" ]]; then
   appVersion="$(/usr/bin/defaults read "$chatgptApp/Contents/Info.plist" CFBundleShortVersionString 2>/dev/null || echo unknown)"
-  codexVersion="$("$chatgptApp/Contents/Resources/codex" --version 2>/dev/null || echo unknown)"
+  codexVersion="$("$chatgptApp/Contents/Resources/codex-cli/bin/codex" --version 2>/dev/null || echo unknown)"
   lockRev="$(jq -r '.nodes["homebrew-cask"].locked.rev // empty' flake.lock 2>/dev/null || true)"
   lockVersion="$(curl -fsSL --max-time 10 \
     "https://raw.githubusercontent.com/Homebrew/homebrew-cask/${lockRev:-HEAD}/Casks/c/chatgpt.rb" 2>/dev/null \

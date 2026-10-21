@@ -174,17 +174,20 @@ let
   # the version here is read back from the lock's record of that tag, and the
   # Go vendor hash lives in ./gcx-pin.json. `scripts/update.sh` moves the tag
   # to the latest release and rewrites the hash when Go dependencies changed,
-  # so neither is edited by hand.
+  # so neither is edited by hand. It builds with ./go.nix's toolchain, because
+  # gcx raises its go.mod requirement faster than nixpkgs packages Go.
   gcxTag = (builtins.fromJSON (builtins.readFile ../../flake.lock)).nodes.gcx-src.original.ref;
   gcxPin = builtins.fromJSON (builtins.readFile ./gcx-pin.json);
-  gcx = pkgs.gcx.overrideAttrs (old: {
-    version = lib.removePrefix "v" gcxTag;
-    src = inputs.gcx-src;
-    inherit (gcxPin) vendorHash;
-    meta = old.meta // {
-      changelog = "https://github.com/grafana/gcx/releases/tag/${gcxTag}";
-    };
-  });
+  gcx =
+    (pkgs.gcx.override { inherit (import ./go.nix { inherit lib pkgs; }) buildGoModule; }).overrideAttrs
+      (old: {
+        version = lib.removePrefix "v" gcxTag;
+        src = inputs.gcx-src;
+        inherit (gcxPin) vendorHash;
+        meta = old.meta // {
+          changelog = "https://github.com/grafana/gcx/releases/tag/${gcxTag}";
+        };
+      });
 
   # gh, wrapped so nothing posts a private name to this public repository: PR
   # and issue text never passes the pre-push hook. The checkout local.nix

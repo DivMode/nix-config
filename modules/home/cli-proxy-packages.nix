@@ -1,6 +1,7 @@
 { lib, pkgs }:
 let
   pins = builtins.fromJSON (builtins.readFile ./cli-proxy-pin.json);
+  inherit (import ./go.nix { inherit lib pkgs; }) buildGoModule;
   source =
     pin:
     pkgs.fetchurl {
@@ -47,7 +48,7 @@ let
   };
 in
 {
-  gateway = pkgs.buildGoModule {
+  gateway = buildGoModule {
     pname = "cli-proxy-api-local";
     inherit (pins.gateway) version;
     src = source pins.gateway;
@@ -66,7 +67,7 @@ in
       description = "CLIProxyAPI restricted to local access without keys";
     };
   };
-  manager = pkgs.buildGoModule {
+  manager = buildGoModule {
     pname = "cpa-manager-plus-local";
     inherit (pins.manager) version;
     src = source pins.manager;

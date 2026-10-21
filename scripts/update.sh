@@ -18,6 +18,7 @@
 #   nixup                    # every input and every pin
 #   nixup codex              # ChatGPT/Codex: the cask definition, plus where the app stands
 #   nixup gcx                # gcx: the release tag in flake.nix and the Go vendor hash
+#   nixup go                 # Go toolchain for source-built Go programs (go-pin.json)
 #   nixup cli-proxy          # upstream gateway and Manager Full source releases
 #   nixup herdr              # Herdr: the llm-agents input that packages it
 #   nixup homebrew-cask      # any flake input by its name in flake.nix
@@ -32,6 +33,8 @@
 # on a full run or by name: any input whose URL in flake.nix names a release
 # TAG, which `nix flake update` alone never moves — the tag is rewritten to the
 # latest GitHub release and the input re-locked (`gcx`, currently the only one).
+# The Go toolchain those Go programs build with (modules/home/go.nix) is pinned
+# in go-pin.json and moves first, so a tag never outruns the Go it needs.
 # Gateway/dashboard source releases in cli-proxy-pin.json move on a full run
 # or `nixup cli-proxy`; local patches and dependency hashes are checked by Nix.
 # "Every input" means every input: nothing declared here waits for a hand edit.
@@ -56,6 +59,7 @@ export NIX_CONFIG_LOCAL="$repository/local.nix"
 
 dryRun=false
 cliProxyUpdate=false
+goUpdate=false
 inputs=()
 # Every direct flake input, from the lock rather than a hand-kept list, so a
 # new input is accepted the moment it is locked.
@@ -86,6 +90,7 @@ for argument in "$@"; do
     # gcx is a release-tag pin; naming it moves the tag (see the tag section).
     gcx) inputs+=(gcx-src) ;;
     cli-proxy|cliproxyapi|cpa-manager-plus) cliProxyUpdate=true ;;
+    go) goUpdate=true ;;
     -*)
       echo "error: unknown option $argument" >&2
       exit 1
@@ -93,7 +98,7 @@ for argument in "$@"; do
     *)
       if ! grep -qx -- "$argument" <<<"$knownInputs"; then
         echo "error: '$argument' is neither an application name nor a flake input." >&2
-        echo "applications: cli-proxy, codex, gcx, herdr" >&2
+        echo "applications: cli-proxy, codex, gcx, go, herdr" >&2
         echo "flake inputs: $(tr '\n' ' ' <<<"$knownInputs")" >&2
         exit 1
       fi
@@ -105,7 +110,7 @@ done
 # No arguments at all means everything: every lock input AND every pin. An
 # explicit list moves exactly what it names.
 fullUpdate=false
-if (( ${#inputs[@]} == 0 )) && [[ "$cliProxyUpdate" == false ]]; then
+if (( ${#inputs[@]} == 0 )) && [[ "$cliProxyUpdate" == false && "$goUpdate" == false ]]; then
   fullUpdate=true
 fi
 
@@ -253,7 +258,8 @@ describeLockMoves() {
 # rather than what was requested. Every file this script may move is listed in
 # versionFiles: the lock, and the pin this repository keeps itself.
 gcxPin="modules/home/gcx-pin.json"
-versionFiles=(flake.lock "$gcxPin")
+goPin="modules/home/go-pin.json"
+versionFiles=(flake.lock "$gcxPin" "$goPin")
 cliProxyPin="modules/home/cli-proxy-pin.json"
 if [[ "$fullUpdate" == true || "$cliProxyUpdate" == true ]]; then
   if ! git diff --quiet HEAD -- "$cliProxyPin"; then
@@ -297,15 +303,56 @@ elif (( ${#inputs[@]} > 0 )); then
   nix flake update "${inputs[@]}"
 fi
 
+# ── Go: go.dev's newest release, before anything that builds with it ───────
+# modules/home/go.nix builds this repository's Go programs with the release in
+# go-pin.json, through nixpkgs' derivation for that minor line, because nixpkgs
+# trails Go patch releases and upstreams raise their go.mod requirement on
+# release day (2026-10-21: gcx v1.7.1 needed go 1.26.10; nixos-26.05 had
+# 1.26.8). It moves after the lock, so the minor-line derivations it can use
+# are the updated nixpkgs' ones, and before the tags, which are checked
+# against it.
+goMoveLines=()
+if [[ "$fullUpdate" == true || "$goUpdate" == true ]]; then
+  goLines="$(nix eval --impure --json --expr '
+    builtins.filter (name: builtins.match "go_[0-9]+_[0-9]+" name != null)
+      (builtins.attrNames (builtins.getFlake "git+file://'"$repository"'").inputs.nixpkgs.legacyPackages.${builtins.currentSystem})')"
+  goRelease="$(curl -fsSL --max-time 30 'https://go.dev/dl/?mode=json' | jq -ec --argjson lines "$goLines" '
+    [.[] | select(.stable)
+     | select((.version | ltrimstr("go") | split(".")[0:2] | "go_" + join("_")) as $line
+              | $lines | index($line))]
+    | first
+    | { version: (.version | ltrimstr("go")),
+        sha256: (.files[] | select(.kind == "source") | .sha256) }')"
+  goVersion="$(jq -r '.version' <<<"$goRelease")"
+  oldGoVersion="$(jq -er '.version' "$goPin")"
+  if [[ "$goVersion" != "$oldGoVersion" ]]; then
+    goHash="$(nix hash convert --hash-algo sha256 --to sri "$(jq -r '.sha256' <<<"$goRelease")")"
+    jq -n --arg version "$goVersion" --arg hash "$goHash" '{ version: $version, hash: $hash }' > "$goPin"
+    goMoveLines+=("    go: ${oldGoVersion} -> ${goVersion}")
+  fi
+fi
+goVersion="$(jq -er '.version' "$goPin")"
+
 # ── Tag-pinned inputs: rewrite the tag, re-lock ─────────────────────────────
 # The URL in flake.nix is the single place a tag is written; versions derived
 # from it (gcx's, in modules/home/development.nix) are read back from the lock.
 # The sed is anchored on the exact `github:owner/repo/oldtag"` string found in
 # the lock, and verified to have changed the file, so a URL written any other
 # way fails loudly instead of re-locking the old tag and calling it moved.
+# A release whose go.mod needs a newer Go than go-pin.json holds stays where
+# it is, said loudly, rather than failing the whole build: go.dev had no such
+# Go yet, or nixpkgs has no derivation for its minor line.
 tagMoveLines=()
+heldLines=()
 for move in "${tagMoves[@]}"; do
   IFS=$'\t' read -r name owner repo ref latest <<<"$move"
+  requiredGo="$(curl -fsSL --max-time 30 \
+    "https://raw.githubusercontent.com/${owner}/${repo}/${latest}/go.mod" 2>/dev/null \
+    | sed -n 's/^go \([0-9][0-9.]*\).*/\1/p' || true)"
+  if [[ -n "$requiredGo" ]] && versionNewer "$requiredGo" "$goVersion"; then
+    heldLines+=("    ${name}: held at ${ref}; ${latest} needs go ${requiredGo}, newest buildable is ${goVersion}")
+    continue
+  fi
   sed -i '' -e "s|github:${owner}/${repo}/${ref}\"|github:${owner}/${repo}/${latest}\"|" flake.nix
   if ! grep -q "github:${owner}/${repo}/${latest}\"" flake.nix; then
     echo "error: could not find 'github:${owner}/${repo}/${ref}' in flake.nix to move ${name} to ${latest}" >&2
@@ -356,10 +403,15 @@ echo
 echo "==> What moved"
 if command -v jq >/dev/null 2>&1; then
   describeLockMoves "$before/flake.lock"
+  (( ${#goMoveLines[@]} > 0 )) && printf '%s\n' "${goMoveLines[@]}"
   (( ${#tagMoveLines[@]} > 0 )) && printf '%s\n' "${tagMoveLines[@]}"
   (( ${#sourceMoveLines[@]} > 0 )) && printf '%s\n' "${sourceMoveLines[@]}"
 else
   git --no-pager diff --stat -- "${versionFiles[@]}" || true
+fi
+if (( ${#heldLines[@]} > 0 )); then
+  echo "==> Held back" >&2
+  printf '%s\n' "${heldLines[@]}" >&2
 fi
 
 # Everything from here to the final activation is a pure build: a failure leaves
@@ -482,8 +534,10 @@ if command -v jq >/dev/null 2>&1; then
   headLock="$(mktemp)"
   git show HEAD:flake.lock > "$headLock"
   moved="$(
+    (( ${#goMoveLines[@]} > 0 )) && printf '%s\n' "${goMoveLines[@]}"
     (( ${#tagMoveLines[@]} > 0 )) && printf '%s\n' "${tagMoveLines[@]}"
     (( ${#sourceMoveLines[@]} > 0 )) && printf '%s\n' "${sourceMoveLines[@]}"
+    (( ${#heldLines[@]} > 0 )) && printf '%s\n' "${heldLines[@]}"
     describeLockMoves "$headLock" || echo "    (listing failed)"
   )"
   rm -f "$headLock"

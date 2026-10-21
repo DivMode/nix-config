@@ -329,6 +329,9 @@ if [[ "$fullUpdate" == true || "$goUpdate" == true ]]; then
     goHash="$(nix hash convert --hash-algo sha256 --to sri "$(jq -r '.sha256' <<<"$goRelease")")"
     jq -n --arg version "$goVersion" --arg hash "$goHash" '{ version: $version, hash: $hash }' > "$goPin"
     goMoveLines+=("    go: ${oldGoVersion} -> ${goVersion}")
+    echo "==> Go: ${oldGoVersion} -> ${goVersion}"
+  else
+    echo "==> Go: ${goVersion} (current)"
   fi
 fi
 goVersion="$(jq -er '.version' "$goPin")"

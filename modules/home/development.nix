@@ -116,10 +116,13 @@ let
   # `check:bun` guards fail on any other. nixpkgs trails it (2026-10-18:
   # nixos-26.05 packages 1.3.13 and nixpkgs-unstable 1.4.2, against 1.4.3), so
   # this overrides the version and the release zips. The derivation reads `src`
-  # from `finalAttrs.passthru.sources`, so nothing else needs to change. Drop
-  # the override once the locked nixpkgs packages this version or newer.
+  # from `finalAttrs.passthru.sources`, so nothing else needs to change; that
+  # is also why nixpkgs' "overridden with `version` but not `src`" evaluation
+  # warning is a false positive here, and the flag below says so. Drop the
+  # override once the locked nixpkgs packages this version or newer.
   bun = pkgs.bun.overrideAttrs (
     finalAttrs: previous: {
+      __intentionallyOverridingVersion = true;
       version = "1.4.3";
       passthru = previous.passthru // {
         sources =

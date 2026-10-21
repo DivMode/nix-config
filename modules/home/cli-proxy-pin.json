@@ -1,14 +1,14 @@
 {
   "gateway": {
-    "version": "8.0.15",
+    "version": "8.0.37",
     "repository": "router-for-me/CLIProxyAPI",
-    "sourceHash": "sha256-M0+7N438j7GLIX/7Zam7Bgg1ayMnuRYzPtTj9psTJsA=",
+    "sourceHash": "sha256-7nVv8n1tPO1O2Na7zD1TDvD7Agnhc7c+xXsFWiPC35U=",
     "vendorHash": "sha256-r3yWkdMcM40G9jV7MxW/qNv3E9WrHavFilW24quEf+8="
   },
   "manager": {
-    "version": "1.14.3",
+    "version": "1.14.8",
     "repository": "seakee/CPA-Manager-Plus",
-    "sourceHash": "sha256-obnJZlJ7ifWs1ptiFxqWo8JPRKXhtGXmdIeiQSaVBn0=",
+    "sourceHash": "sha256-Xr352oBEPgTZIQ0a2lq4xyWPbqVeF0hpcfEEn4oxrcg=",
     "vendorHash": "sha256-+KeivbPYmHJPbnCfjC0LWkK2gRikUXOI2HsqSd3kLpU=",
     "npmDepsHash": "sha256-PVg3Pqr5DSz6KCZs15e41mkJm1BhUHgjtHjdfn6UIxU=",
     "lockHash": "sha256-e4bQGhlnlfLDdlkYIH+Kn4gFg9kFJdKg9pp1l8v6SsI="

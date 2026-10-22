@@ -162,8 +162,11 @@ let
       # not clear it (2026-10-21, after the file server rebooted). dock.py
       # --refresh-stale drops only bookmarks that no longer resolve, and
       # restarts the Dock only then, so running it every pass is a no-op
-      # whenever nothing went stale.
-      ${pkgs.python3}/bin/python3 -I ${../darwin/dock.py} --refresh-stale || status=1
+      # whenever nothing went stale. Resolving a bookmark can touch the share,
+      # and a server that answers on 445 while the share itself hangs would
+      # otherwise hold this pass open; timeout bounds it so the next 300s pass
+      # starts clean (launchd never runs two at once, so nothing piles up).
+      timeout 20 ${pkgs.python3}/bin/python3 -I ${../darwin/dock.py} --refresh-stale || status=1
       exit "$status"
     '';
   };

@@ -71,7 +71,11 @@ recent applications, and uses recent-use Spaces arrangement. Its one
 `persistent-others` entry is the downloads directory from `local.nix`, declared
 in attrset form so the stack sorts by `date-modified` rather than the
 alphabetical default. The tile shows a question mark whenever that path is an
-unmounted share; the stack renders the path it was given.
+unmounted share. It also shows one after a share is remounted: the bookmark the
+Dock stored for the old volume stops resolving, and the Dock trusts it over the
+path. `dock.py` treats a bookmark that no longer resolves to its own path as
+stale and drops it, both on activation and, via `dock.py --refresh-stale`, on
+every `mount-network-shares` pass.
 
 `chrome.nix` is the single Chrome policy file. It declares Google's real Gmail
 PWA through Chrome's supported `WebAppInstallForceList` platform policy, and

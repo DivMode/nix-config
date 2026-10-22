@@ -155,11 +155,15 @@ let
         shares.mounts or [ ]
       )}
 
-      # No Dock refresh here any more. It existed because dock.nix pinned one of
-      # these shares as a stack and the Dock, which resolves its tiles at start
-      # and never re-checks, rendered a question mark for as long as the mount
-      # was missing. Since 2026-08-27 the stack is a local directory that is
-      # always present, so there is nothing left for a restart to fix.
+      # The Dock stack can be one of these shares (local.downloadsDirectory).
+      # A remounted share is a new volume, and the bookmark the Dock stored for
+      # the old one stops resolving: the stack shows a question mark even
+      # though the share is mounted again, and restarting the Dock alone does
+      # not clear it (2026-10-21, after the file server rebooted). dock.py
+      # --refresh-stale drops only bookmarks that no longer resolve, and
+      # restarts the Dock only then, so running it every pass is a no-op
+      # whenever nothing went stale.
+      ${pkgs.python3}/bin/python3 -I ${../darwin/dock.py} --refresh-stale || status=1
       exit "$status"
     '';
   };

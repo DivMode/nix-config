@@ -44,6 +44,9 @@ Do it in Claude directly when any of these hold:
 - It needs cloud access, credentials, deploys, or production data. Codex has network access for
   builds and package downloads, but secrets and anything that changes live systems stay with
   Claude.
+- It is a review of SQL privileges, grants, roles, or security boundaries. Codex's provider content
+  filter has repeatedly stopped these reviews partway (2026-10-22/23), so they start on a Claude
+  reviewer through `opus-delegate`.
 
 If the user explicitly asks for Codex on a specific change, use Codex for it. When a large job
 contains small follow-ups, such as a one-line fix after review, do those in Claude rather than

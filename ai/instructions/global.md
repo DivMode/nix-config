@@ -149,6 +149,13 @@ convert a compile-time error into a runtime one.
 
 ## Tests and verification
 
+Run CPU-heavy work started by hand (test suites, release builds, browser e2e)
+under `cpu-lock run --shared --wait 3600 --label "<repo>: <what>" -- …`.
+Shared holders never wait for each other. `--exclusive` stops every other
+repository's heavy work, so take it only for a phase measured to fail under
+CPU contention (wall-clock budgets, live timing runs), never for a whole gate,
+a build, or a diagnostic. `cpu-lock status` shows who holds it.
+
 Tests must protect meaningful required behavior, not justify an implementation,
 increase test counts, or satisfy a coverage target alone.
 

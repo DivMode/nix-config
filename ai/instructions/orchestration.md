@@ -21,8 +21,8 @@ that the recipient received or read them.
 
 - **Claude Code** is the coordinator: the session the user works with plans,
   delegates, verifies, and **merges verified work** for changes the user asked
-  for, rather than leaving a finished pull request open. Ask first only when
-  the repository requires another reviewer or the merge is hard to reverse.
+  for, rather than leaving a finished pull request open. When the repository
+  requires another reviewer, request that review rather than asking the user.
   Claude Code is also the default implementation and review worker.
 - **Workers** are Claude sub-agents (the `opus-delegate` skill) and Codex (the
   `codex-delegate` skill), dispatched and supervised by the coordinator.
@@ -61,9 +61,9 @@ that the recipient received or read them.
    loss, the first move is to **re-list the sessions and resume polling the
    same named worker** from where it was. Stop or replace a worker only when
    the user explicitly asks for that, or when they have changed the task that
-   worker owns. If you genuinely cannot tell whether in-flight work is still
-   wanted, say what is running and ask — do not silently abandon it and do not
-   silently start a second one.
+   worker owns. If you cannot tell whether in-flight work is still wanted,
+   decide from the task's durable records (issue, PR, journal), act, and say
+   what you chose. Never silently abandon it or silently start a second one.
 
 6. **Reconcile before you open.** At the start of substantial work and after
    an interruption, inspect the current client's worker status and any pending
@@ -132,8 +132,9 @@ that the recipient received or read them.
 13. **Work in the intended checkout.** Confirm the repository root from the
     checkout itself before reading or changing anything, and never let a
     convenient copy of a repository become a second source of truth. If you
-    find two checkouts of the same project, say so and ask which is canonical
-    rather than picking one.
+    find two checkouts of the same project, determine which is canonical from
+    the configuration's project map, remotes and recent activity, use that one,
+    and say which you chose.
 
 14. **No hidden fleets.** The active coordinator owns orchestration. A
     worker may use its own subagents where they clearly help — genuine

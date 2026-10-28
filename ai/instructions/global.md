@@ -155,7 +155,9 @@ Shared holders never wait for each other. Never pass `--exclusive` yourself,
 whatever your tests measure: it stops every repository's heavy work, and one
 agent's full gate under it queued the whole machine for over half an hour.
 Only a repository's own gate or recipe scripts take it, for a phase measured
-to fail under CPU contention. `cpu-lock status` shows who holds it.
+to fail under CPU contention. `cpu-lock status` shows who holds it. Never
+take it inside a git hook: Git opens the remote connection before pre-push
+hooks run, and a wait there let GitHub drop the push.
 
 Tests must protect meaningful required behavior, not justify an implementation,
 increase test counts, or satisfy a coverage target alone.

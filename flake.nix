@@ -227,6 +227,16 @@
               (import ./modules/home/command-governor-settings.nix {
                 pkgs = nixpkgs.legacyPackages.${system};
               }).tests;
+            cpu-lock =
+              let
+                pkgs = nixpkgs.legacyPackages.${system};
+              in
+              pkgs.runCommand "cpu-lock-tests" { } ''
+                cp ${./scripts/cpu-lock.py} cpu-lock.py
+                cp ${./scripts/cpu-lock-test.py} cpu-lock-test.py
+                ${pkgs.python3}/bin/python3 cpu-lock-test.py
+                touch "$out"
+              '';
             cli-proxy-state =
               let
                 pkgs = nixpkgs.legacyPackages.${system};

@@ -44,6 +44,7 @@ in
     ./chrome-app-icons.nix
     ./cli-proxy.nix
     ./command-governor.nix
+    ./cpu-lock.nix
     ./default-handlers.nix
     ./development.nix
     ./downloads.nix

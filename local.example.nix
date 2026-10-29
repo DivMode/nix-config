@@ -103,6 +103,20 @@
   # lets each backend take the first profile with cookies, Default first.
   agentReach.chromeProfile = null;
 
+  # Recurring commands run by launchd from a dedicated, job-owned worktree kept
+  # at origin/<branch> (modules/home/scheduled-commands.nix). Empty disables
+  # it. Each job logs to ~/Library/Logs/scheduled-<job>.log.
+  scheduledCommands = {
+    # example-check = {
+    #   repository = "/Users/replace-me/Developer/example-project";
+    #   worktree = "/Users/replace-me/Developer/example-project-scheduled";
+    #   branch = "main";
+    #   commands = [ [ "make" "check" ] ];
+    #   hour = 7;
+    #   minute = 30;
+    # };
+  };
+
   # SMB shares mounted at login by modules/home/network-shares.nix. Leave
   # `mounts` empty to disable the module entirely.
   #

@@ -27,15 +27,15 @@
  	s.managementRoutesEnabled.Store(hasManagementSecret)
  	redisqueue.SetEnabled(hasManagementSecret || (cfg != nil && cfg.Home.Enabled))
  	if hasManagementSecret {
-@@ -256,7 +260,7 @@
+@@ -266,7 +270,7 @@
  	// Create HTTP server
  	s.server = &http.Server{
- 		Addr:    fmt.Sprintf("%s:%d", cfg.Host, cfg.Port),
--		Handler: engine,
-+		Handler: nixlocal.Wrap(engine),
+ 		Addr:              fmt.Sprintf("%s:%d", cfg.Host, cfg.Port),
+-		Handler:           wrapUnconsumedRequestBodyHandler(engine),
++		Handler:           nixlocal.Wrap(wrapUnconsumedRequestBodyHandler(engine)),
+ 		ReadHeaderTimeout: muxSniffDeadline,
  	}
- 
- 	return s
+
 --- a/internal/api/server_reload.go
 +++ b/internal/api/server_reload.go
 @@ -128,9 +128,9 @@
@@ -53,14 +53,16 @@
  		if s.managementRoutesEnabled.CompareAndSwap(false, true) {
 --- a/internal/api/handlers/management/handler.go
 +++ b/internal/api/handlers/management/handler.go
-@@ -307,6 +307,10 @@
+@@ -377,6 +377,12 @@
+ 		secretHash = cfg.RemoteManagement.SecretKey
  	}
- 
- 	cfg := h.cfg
+ 	h.mu.Unlock()
 +	// This Nix build is restricted to loopback by the HTTP server wrapper.
++	// After the unlock: 8.0.47 reads cfg under h.mu, and returning above it
++	// left the lock held, so every later management request hung.
 +	if cfg != nil && cfg.Host == "127.0.0.1" && localClient {
 +		return true, http.StatusOK, ""
 +	}
- 	var (
- 		allowRemote bool
- 		secretHash  string
+ 	if h.allowRemoteOverride {
+ 		allowRemote = true
+ 	}

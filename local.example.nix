@@ -73,8 +73,10 @@
 
   # The oMLX API key (modules/home/omlx.nix): read through Connect at login
   # and written into ~/.omlx/settings.json. The one key every oMLX client
-  # uses. Omit to leave oMLX's settings to its own setup window.
-  onePassword.omlxApiKeyReference = "op://ExampleVault/dddddddddddddddddddddddddd/credential";
+  # uses. Omit to leave oMLX's settings to its own setup window. Keep it as
+  # the password of a Login item whose websites are the admin page
+  # (http://127.0.0.1:8000/admin), so the browser extension fills the login.
+  onePassword.omlxApiKeyReference = "op://ExampleVault/dddddddddddddddddddddddddd/password";
 
   # Where browser downloads land. modules/darwin/chrome.nix declares it as a
   # mandatory Chrome policy, modules/darwin/dock.nix pins it as a stack, and

@@ -37,6 +37,10 @@ When the owner gives you a credential, store it yourself. Do not ask them to.
    the 1Password Pulumi provider, does not. Check how the consumer reads the
    item, or copy the shape of a sibling item it already reads.
 
+   When the owner should be able to fill the value into a web page, make it a
+   `LOGIN` item and add `"urls": ["http://..."]` (first one primary): the
+   browser extension never fills an `API_CREDENTIAL` into a page.
+
 2. Run `nix-config-connect-item put VAULT "TITLE" FILE`. VAULT is the vault's ID
    or exact name. An existing item with that title gets the listed fields
    replaced or added and keeps the rest; otherwise a new item is created

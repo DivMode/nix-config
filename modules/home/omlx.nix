@@ -15,11 +15,75 @@
 {
   config,
   lib,
+  local,
   pkgs,
   ...
 }:
 let
   appPath = "${config.home.homeDirectory}/Applications/oMLX.app";
+
+  # The op:// reference of the one oMLX API key, from the ignored local.nix.
+  apiKeyReference = local.onePassword.omlxApiKeyReference or null;
+
+  # oMLX's settings, as its first-run window would write them. The app shows
+  # that window only while <base>/settings.json is absent
+  # (apps/omlx-mac/Sources/App/AppDelegate.swift, `hasExistingConfig`), and
+  # its own save sets exactly these keys and keeps every other key verbatim
+  # (Sources/Config/AppConfig.swift, `save`). So these are merged into the
+  # file, and the server keeps owning the rest of it.
+  settingsPath = "${config.home.homeDirectory}/.omlx/settings.json";
+  modelsDir = "${config.home.homeDirectory}/.omlx/models";
+
+  # The key lives only in 1Password. Activation never reads 1Password
+  # (./secrets.nix), and oMLX cannot read Connect itself, so this runs as an
+  # agent at login and whenever its plist changes: it reads the key through
+  # Connect, merges it with the declared settings, and writes the file only
+  # when the result differs, with the 0600 mode the server itself uses.
+  writeSettings = pkgs.writeShellApplication {
+    name = "omlx-write-settings";
+    runtimeInputs = [
+      pkgs.coreutils
+      pkgs.jq
+    ];
+    text = ''
+      settings=${lib.escapeShellArg settingsPath}
+      key="$(${pkgs.python3}/bin/python3 ${../../scripts}/onepassword-connect-read.py \
+        ${lib.escapeShellArg config.nixConfig.secrets.onePassword.connect.envPath} \
+        ${lib.escapeShellArg (toString apiKeyReference)})"
+      if [[ "$key" != sk-omlx-* ]]; then
+        echo "the oMLX API key read from 1Password is not an sk-omlx- key" >&2
+        exit 1
+      fi
+
+      mkdir -p "$(dirname "$settings")" ${lib.escapeShellArg modelsDir}
+      current='{}'
+      if [[ -e "$settings" ]]; then
+        current="$(cat "$settings")"
+      fi
+      umask 077
+      next="$(mktemp "$settings.XXXXXX")"
+      # The key reaches jq through a file descriptor, never argv.
+      jq --rawfile key <(printf '%s' "$key") \
+        --arg dir ${lib.escapeShellArg modelsDir} '
+          .version //= "1.0"
+          | .server.host = "127.0.0.1"
+          | .server.port = 8000
+          | .server.auto_start_on_launch = true
+          | .auth.api_key = $key
+          | .model.model_dirs = [$dir]
+          | .model.model_dir = $dir
+        ' <<<"$current" > "$next"
+      # Compared as canonical JSON: the server re-saves the file in its own
+      # layout, and a byte comparison rewrote it after every such save
+      # (2026-10-28) though nothing in it had changed.
+      if [[ -e "$settings" ]] && [[ "$(jq -S . "$next")" == "$(jq -S . "$settings")" ]]; then
+        rm "$next"
+      else
+        mv "$next" "$settings"
+        echo "$(date -u +%FT%TZ) wrote $settings"
+      fi
+    '';
+  };
 
   # The macOS 26/27 build; the release also carries a separate Sequoia DMG.
   # The hash equals the sha256 GitHub publishes for the asset.
@@ -120,4 +184,19 @@ in
     # The PATH entry is in ZDOTDIR's .zshenv (modules/home/omlx.nix).
     # oMLX: CLI shim path end
   '';
+
+  # A failed run (Connect unreachable, no network at login) retries after
+  # the throttle interval; a successful one exits 0 and stays down.
+  launchd.agents.omlx-settings = lib.mkIf (apiKeyReference != null) {
+    enable = true;
+    config = {
+      ProgramArguments = [ (lib.getExe writeSettings) ];
+      RunAtLoad = true;
+      KeepAlive.SuccessfulExit = false;
+      ThrottleInterval = 60;
+      ProcessType = "Background";
+      StandardOutPath = "${config.home.homeDirectory}/Library/Logs/omlx-settings.log";
+      StandardErrorPath = "${config.home.homeDirectory}/Library/Logs/omlx-settings.log";
+    };
+  };
 }

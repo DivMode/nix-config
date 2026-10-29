@@ -79,6 +79,14 @@
 
       "raycast"
 
+      # DeepSeek Harness, the chat and agent app used with the local oMLX
+      # server (modules/home/omlx.nix). Like chatgpt: an auto_updates cask of
+      # DeepSeek's own zip, kept current by the app's electron-builder updater.
+      # oMLX's own `omlx launch dsh --model <id>` connects it: it writes the
+      # provider route into ~/.dsh/profiles/*/cordis.patch.yml and the key
+      # into the 0600 ~/.dsh/.credentials.yaml, both app-owned files.
+      "deepseek-harness"
+
       # Local, on-device voice input used on this Mac. Keeping it declared is
       # required because strict Homebrew reconciliation removes undeclared casks.
       "fluidvoice"

@@ -61,6 +61,7 @@ in
     ./privacy.nix
     ./projects.nix
     ./python.nix
+    ./scheduled-commands.nix
     ./screensaver.nix
     ./secrets.nix
     ./sparkle.nix

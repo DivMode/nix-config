@@ -17,10 +17,16 @@ even though the label matches. With it, a new item gets the built-in field, and
 on an existing item the field with that id, or else the one with that label,
 becomes the built-in field.
 
+FILE may also give "urls": ["https://...", ...], the item's websites, first one
+primary. The browser extension offers a LOGIN or PASSWORD item on the pages
+those name; an API_CREDENTIAL is never filled into a page. When given, they
+replace the item's websites.
+
 When VAULT holds an item titled TITLE, its fields with the same labels (or ids)
 are replaced and new labels are added; other fields are kept. Otherwise the item
-is created. The command then reads the item back until every value and id
-matches, and prints only the vault, item ID and field labels, never a value.
+is created. The command then reads the item back until every value, id and
+website matches, and prints only the vault, item ID and field labels, never a
+value.
 
 `delete` removes the one item titled TITLE in VAULT. It refuses when no item or
 more than one has that title, then reads the item back until Connect no longer
@@ -75,7 +81,19 @@ def load(path):
     category = spec.get("category", "API_CREDENTIAL")
     if not isinstance(category, str) or not category:
         raise ConnectError('"category" must be a 1Password category name')
-    return category, wanted
+    urls = spec.get("urls")
+    if urls is not None and (
+        not isinstance(urls, list) or not urls
+        or not all(isinstance(url, str) and urllib.parse.urlsplit(url).scheme in {"http", "https"}
+                   and urllib.parse.urlsplit(url).netloc for url in urls)
+    ):
+        raise ConnectError('"urls" must be a non-empty list of http(s) addresses')
+    return category, wanted, urls
+
+
+def websites(urls):
+    """The Connect url objects for the wanted websites, the first primary."""
+    return [{"href": url, "primary": index == 0} for index, url in enumerate(urls)]
 
 
 def entry(label, spec):
@@ -98,34 +116,50 @@ def existing(connect, vault_id, title):
     return connect.get(f"/v1/vaults/{vault_id}/items/{rows[0]['id']}") if rows else None
 
 
+def merge(fields, wanted):
+    """`fields` with every wanted field set once.
+
+    A named id wins; otherwise the field is found by its label. Other fields
+    with that id or label are dropped: readers (onepassword_connect.Connect.
+    fields) take the first field with a label, so a second one is a value no
+    reader sees. Creating a LOGIN item stored Connect's own empty `password`
+    field ahead of the one sent, both with id `password` (2026-10-28).
+    """
+    fields = [f for f in fields if isinstance(f, dict)]
+    for label, spec in wanted.items():
+        field_id = spec[2]
+        by_id = [f for f in fields if field_id is not None and f.get("id") == field_id]
+        same = by_id + [f for f in fields if f.get("label") == label and f not in by_id]
+        if not same:
+            fields.append(entry(label, spec))
+            continue
+        same[0].update(entry(label, spec))
+        fields = [f for f in fields if f is same[0] or all(f is not s for s in same)]
+    return fields
+
+
 def put(connect, vault, title, path):
-    category, wanted = load(path)
+    category, wanted, urls = load(path)
     vault_id = connect.vault_id(vault)
     item = existing(connect, vault_id, title)
+    outcome = "updated"
     if item is None:
-        written = connect.get(f"/v1/vaults/{vault_id}/items", method="POST", body={
-            "vault": {"id": vault_id}, "title": title, "category": category,
-            "fields": [entry(label, spec) for label, spec in wanted.items()],
-        })
+        body = {"vault": {"id": vault_id}, "title": title, "category": category,
+                "fields": merge([], wanted)}
+        if urls is not None:
+            body["urls"] = websites(urls)
+        item = connect.get(f"/v1/vaults/{vault_id}/items", method="POST", body=body)
         outcome = "created"
-    else:
-        fields = [f for f in item.get("fields") or [] if isinstance(f, dict)]
-        placed = set()
-        for label, (kind, value, field_id) in wanted.items():
-            # A named id wins; otherwise the field is found by its label.
-            match = next((f for f in fields if field_id is not None and f.get("id") == field_id), None)
-            match = match or next((f for f in fields if f.get("label") == label), None)
-            if match is None:
-                continue
-            match.update(entry(label, (kind, value, field_id)))
-            placed.add(label)
-        fields += [entry(label, spec) for label, spec in wanted.items() if label not in placed]
-        item["fields"] = fields
-        written = connect.get(f"/v1/vaults/{vault_id}/items/{item['id']}", method="PUT", body=item)
-        outcome = "updated"
-    item_id = written.get("id") if isinstance(written, dict) else None
-    if not isinstance(item_id, str) or not ID.fullmatch(item_id):
+    if not isinstance(item, dict) or not isinstance(item.get("id"), str) or not ID.fullmatch(item["id"]):
         raise ConnectError("Connect did not return the written item")
+    item_id = item["id"]
+    fields = item.get("fields") or []
+    merged = merge(json.loads(json.dumps(fields)), wanted)
+    if outcome == "updated" or merged != fields:
+        item["fields"] = merged
+        if urls is not None:
+            item["urls"] = websites(urls)
+        connect.get(f"/v1/vaults/{vault_id}/items/{item_id}", method="PUT", body=item)
     # Connect serves reads from a local copy that catches up a few seconds
     # after a write, and a just-created item 404s until then.
     deadline = time.monotonic() + 60
@@ -134,18 +168,31 @@ def put(connect, vault, title, path):
             stored = connect.get(f"/v1/vaults/{vault_id}/items/{item_id}")
         except NotFound:
             stored = None
+        problem = f"the stored {title} still does not match 60 s after the write"
         if isinstance(stored, dict):
-            values = {f.get("label"): (f.get("type"), f.get("value"), f.get("id"))
-                      for f in stored.get("fields") or [] if isinstance(f, dict)}
-            if all(
+            stored_fields = [f for f in stored.get("fields") or [] if isinstance(f, dict)]
+            duplicates = [
+                f"{len(same)} fields labelled {label} ("
+                + ", ".join(f"id {f.get('id')} {'set' if f.get('value') else 'empty'}" for f in same) + ")"
+                for label in wanted
+                if len(same := [f for f in stored_fields if f.get("label") == label]) > 1
+            ]
+            if duplicates:
+                problem = f"{title} still has {'; '.join(duplicates)} 60 s after the write"
+            # Read as readers do: the first field with each label.
+            values = {}
+            for f in stored_fields:
+                values.setdefault(f.get("label"), (f.get("type"), f.get("value"), f.get("id")))
+            if not duplicates and all(
                 (stored_spec := values.get(label)) is not None
                 and stored_spec[:2] == (kind, value)
                 and (field_id is None or stored_spec[2] == field_id)
                 for label, (kind, value, field_id) in wanted.items()
-            ):
+            ) and (urls is None or [u.get("href") for u in stored.get("urls") or []
+                                    if isinstance(u, dict)] == urls):
                 break
         if time.monotonic() > deadline:
-            raise ConnectError(f"the stored {title} still does not match 60 s after the write")
+            raise ConnectError(problem)
         time.sleep(2)
     print(f"{outcome} and read back: {vault_id}/{item_id} ({', '.join(wanted)})")
 

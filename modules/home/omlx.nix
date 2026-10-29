@@ -31,6 +31,14 @@ let
   # its own save sets exactly these keys and keeps every other key verbatim
   # (Sources/Config/AppConfig.swift, `save`). So these are merged into the
   # file, and the server keeps owning the rest of it.
+  #
+  # The idle timeout unloads any loaded model after 15 minutes without a
+  # request, returning its memory (omlx/engine_pool.py,
+  # `check_ttl_expirations`; a model's own TTL or pin overrides it). The next
+  # request loads it again on demand. The server reads this key only at
+  # startup (omlx/cli.py, `GlobalSettings.load()`), so a change to it is
+  # also applied live through the dashboard's Idle Timeout setting
+  # (POST /admin/api/global-settings), which saves the same value.
   settingsPath = "${config.home.homeDirectory}/.omlx/settings.json";
   modelsDir = "${config.home.homeDirectory}/.omlx/models";
 
@@ -72,6 +80,7 @@ let
           | .auth.api_key = $key
           | .model.model_dirs = [$dir]
           | .model.model_dir = $dir
+          | .idle_timeout.idle_timeout_seconds = 900
         ' <<<"$current" > "$next"
       # Compared as canonical JSON: the server re-saves the file in its own
       # layout, and a byte comparison rewrote it after every such save

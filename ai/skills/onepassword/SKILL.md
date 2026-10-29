@@ -57,6 +57,13 @@ If Connect answers 403 for the vault, the Connect token lacks write access
 there: say so; `nix-config-connect-rotate --add-vault VAULT` issues a token
 covering a new vault, with the owner's approval.
 
+## Find an item
+
+`nix-config-connect-item find TEXT` lists the items, in every vault Connect
+reaches, whose title or website contains TEXT: vault, item ID, category,
+dates and websites, never a field value. Items in vaults the Connect token
+cannot read (the owner's personal vault among them) do not appear.
+
 ## Delete an item
 
 Deleting an item is the owner's call: do it only when they have authorized

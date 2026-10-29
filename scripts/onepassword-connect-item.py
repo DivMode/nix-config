@@ -3,6 +3,7 @@
   onepassword-connect-item CONNECT_ENV put VAULT TITLE FILE
   onepassword-connect-item CONNECT_ENV delete VAULT TITLE
   onepassword-connect-item CONNECT_ENV find TEXT
+  onepassword-connect-item CONNECT_ENV inspect VAULT ITEM
 
 FILE is JSON: {"category": "API_CREDENTIAL", "fields": [{"label": "api_token",
 "type": "CONCEALED", "value": "..."}, ...]}. `category` is used only when the
@@ -36,8 +37,13 @@ has it, and prints only the vault and item ID.
 `find` lists the items, in every vault Connect reaches, whose title or website
 contains TEXT (ignoring case): vault, item ID, category, dates, title and
 websites. It reads item summaries only, never a field value.
+
+`inspect` prints one item's fields (ITEM is a title or an item ID): section,
+label, type, length and word count, and only the public Ethereum and Bitcoin
+addresses a value contains, never the value itself.
 """
 
+import hashlib
 import json
 import re
 import os
@@ -239,8 +245,50 @@ def find(connect, text):
                       f"{row.get('title')!r} {' '.join(urls)}")
 
 
+ETH = re.compile(r"(?<![0-9A-Za-z])(?:0x)?([0-9a-fA-F]{40})(?![0-9A-Za-z])")
+BTC_BECH32 = re.compile(r"(?<![0-9a-z])(bc1[02-9ac-hj-np-z]{25,87})(?![0-9a-z])")
+BTC_BASE58 = re.compile(r"(?<![0-9A-Za-z])([13][1-9A-HJ-NP-Za-km-z]{25,34})(?![0-9A-Za-z])")
+BASE58 = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz"
+
+
+def base58check(text):
+    """Whether `text` is a Base58Check string, the form of a legacy Bitcoin address."""
+    number = 0
+    for char in text:
+        number = number * 58 + BASE58.index(char)
+    raw = number.to_bytes(25, "big") if number < 1 << 200 else b""
+    return len(raw) == 25 and hashlib.sha256(hashlib.sha256(raw[:21]).digest()).digest()[:4] == raw[21:]
+
+
+def addresses(value):
+    """Public cryptocurrency addresses in `value`. An Ethereum address is 40
+    hex digits (a keystore stores it without 0x); a legacy Bitcoin address
+    must pass its Base58Check checksum, so a random password does not."""
+    found = [("ethereum", "0x" + m.lower()) for m in ETH.findall(value)]
+    found += [("bitcoin", m) for m in BTC_BECH32.findall(value)]
+    found += [("bitcoin", m) for m in BTC_BASE58.findall(value) if base58check(m)]
+    return found
+
+
+def inspect(connect, vault, item):
+    """Each field's section, label, type and length, and only the public
+    cryptocurrency addresses its value contains, never the value itself."""
+    stored = connect.item(vault, item)
+    sections = {s.get("id"): s.get("label") for s in stored.get("sections") or [] if isinstance(s, dict)}
+    print(f"{stored.get('title')!r} {stored.get('category')} created {stored.get('createdAt')}")
+    for field in stored.get("fields") or []:
+        if not isinstance(field, dict):
+            continue
+        value = field.get("value") if isinstance(field.get("value"), str) else ""
+        section = sections.get((field.get("section") or {}).get("id"), "")
+        print(f"  [{section}] {field.get('label')!r} {field.get('type')} "
+              f"{len(value)} chars, {len(value.split())} words")
+        for kind, address in addresses(value):
+            print(f"    {kind} address {address}")
+
+
 USAGE = ("usage: nix-config-connect-item put VAULT TITLE FILE | delete VAULT TITLE"
-         " | find TEXT")
+         " | find TEXT | inspect VAULT ITEM")
 
 
 def main():
@@ -249,6 +297,8 @@ def main():
         put(Connect(sys.argv[1]), sys.argv[3], sys.argv[4], sys.argv[5])
     elif command == "delete" and len(sys.argv) == 5:
         delete(Connect(sys.argv[1]), sys.argv[3], sys.argv[4])
+    elif command == "inspect" and len(sys.argv) == 5:
+        inspect(Connect(sys.argv[1]), sys.argv[3], sys.argv[4])
     elif command == "find" and len(sys.argv) == 4 and sys.argv[3].strip():
         find(Connect(sys.argv[1]), sys.argv[3])
     else:

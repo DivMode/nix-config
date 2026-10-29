@@ -64,6 +64,10 @@ reaches, whose title or website contains TEXT: vault, item ID, category,
 dates and websites, never a field value. Items in vaults the Connect token
 cannot read (the owner's personal vault among them) do not appear.
 
+`nix-config-connect-item inspect VAULT ITEM` (a title or an item ID) shows
+what an item holds without revealing it: each field's section, label, type,
+length and word count, plus any public Ethereum or Bitcoin address in a value.
+
 ## Delete an item
 
 Deleting an item is the owner's call: do it only when they have authorized

@@ -71,6 +71,11 @@
     };
   };
 
+  # The oMLX API key (modules/home/omlx.nix): read through Connect at login
+  # and written into ~/.omlx/settings.json. The one key every oMLX client
+  # uses. Omit to leave oMLX's settings to its own setup window.
+  onePassword.omlxApiKeyReference = "op://ExampleVault/dddddddddddddddddddddddddd/credential";
+
   # Where browser downloads land. modules/darwin/chrome.nix declares it as a
   # mandatory Chrome policy, modules/darwin/dock.nix pins it as a stack, and
   # modules/home/downloads.nix creates local directories, never mountpoints.

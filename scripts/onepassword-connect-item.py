@@ -2,6 +2,7 @@
 
   onepassword-connect-item CONNECT_ENV put VAULT TITLE FILE
   onepassword-connect-item CONNECT_ENV delete VAULT TITLE
+  onepassword-connect-item CONNECT_ENV find TEXT
 
 FILE is JSON: {"category": "API_CREDENTIAL", "fields": [{"label": "api_token",
 "type": "CONCEALED", "value": "..."}, ...]}. `category` is used only when the
@@ -31,6 +32,10 @@ value.
 `delete` removes the one item titled TITLE in VAULT. It refuses when no item or
 more than one has that title, then reads the item back until Connect no longer
 has it, and prints only the vault and item ID.
+
+`find` lists the items, in every vault Connect reaches, whose title or website
+contains TEXT (ignoring case): vault, item ID, category, dates, title and
+websites. It reads item summaries only, never a field value.
 """
 
 import json
@@ -217,7 +222,25 @@ def delete(connect, vault, title):
     print(f"deleted and read back as gone: {vault_id}/{item_id}")
 
 
-USAGE = "usage: nix-config-connect-item put VAULT TITLE FILE | delete VAULT TITLE"
+def find(connect, text):
+    """Items whose title or website contains `text`, in every vault Connect
+    reaches: vault, ID, category, dates, title and websites, never a field."""
+    needle = text.lower()
+    for vault in connect.get("/v1/vaults") or []:
+        if not isinstance(vault, dict) or not isinstance(vault.get("id"), str):
+            continue
+        for row in connect.get(f"/v1/vaults/{vault['id']}/items") or []:
+            if not isinstance(row, dict):
+                continue
+            urls = [u.get("href", "") for u in row.get("urls") or [] if isinstance(u, dict)]
+            if any(needle in str(s).lower() for s in [row.get("title", ""), *urls]):
+                print(f"{vault.get('name')}/{row.get('id')} {row.get('category')} "
+                      f"created {row.get('createdAt')} updated {row.get('updatedAt')} "
+                      f"{row.get('title')!r} {' '.join(urls)}")
+
+
+USAGE = ("usage: nix-config-connect-item put VAULT TITLE FILE | delete VAULT TITLE"
+         " | find TEXT")
 
 
 def main():
@@ -226,6 +249,8 @@ def main():
         put(Connect(sys.argv[1]), sys.argv[3], sys.argv[4], sys.argv[5])
     elif command == "delete" and len(sys.argv) == 5:
         delete(Connect(sys.argv[1]), sys.argv[3], sys.argv[4])
+    elif command == "find" and len(sys.argv) == 4 and sys.argv[3].strip():
+        find(Connect(sys.argv[1]), sys.argv[3])
     else:
         raise ConnectError(USAGE)
 

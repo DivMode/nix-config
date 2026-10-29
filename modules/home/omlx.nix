@@ -1,5 +1,4 @@
-# oMLX, the MLX inference server for Apple Silicon (github.com/jundot/omlx),
-# and the model it serves.
+# oMLX, the MLX inference server for Apple Silicon (github.com/jundot/omlx).
 #
 # The app is NOT a Nix-store application, deliberately. Its in-app updater
 # replaces the live bundle by atomically swapping it with a staged copy in the
@@ -83,70 +82,6 @@ let
     '';
   };
 
-  # The model: Qwen3.8-Flash-Next, abliterated (refusals removed), in oMLX's
-  # own oQ4e quantization with the Lightning MTP head. All 512 experts per
-  # layer are kept. Its 51.2B-parameter PLE n-gram table is 4-bit at group
-  # size 32, the layout oMLX's SSD-backed PLE path reads (model card), and
-  # oMLX can also stream the routed experts from the checkpoint
-  # (docs/experimental/MoE_Expert_Offload.md, measured there on
-  # Qwen3.8-Flash-Next-oQ4e). Those two offloads are what let this 108.8 GB
-  # checkpoint run on a 96 GB Mac. Pinned to a commit so the bytes are
-  # reviewable; the repo ships a SHA256SUMS the download is checked against.
-  model = {
-    repo = "jedisct1/Qwen3.8-Flash-Next-Uncensored-oQ4e-100K-MTP";
-    revision = "7d92e74f3e1dda4504e86a58d47716e44c36521a";
-    name = "Qwen3.8-Flash-Next-Uncensored-oQ4e-100K-MTP";
-  };
-
-  # oMLX's default model directory (omlx/settings.py: `[] means
-  # ~/.omlx/models`). It discovers a model from any first-level entry holding
-  # config.json and skips names starting with "." (omlx/model_discovery.py,
-  # discover_models), so the download is staged under a dot directory and
-  # moved into place only once complete and verified; a half-downloaded model
-  # is never offered.
-  modelsDir = "${config.home.homeDirectory}/.omlx/models";
-
-  fetchModel = pkgs.writeShellApplication {
-    name = "omlx-fetch-model";
-    runtimeInputs = [
-      pkgs.coreutils
-      pkgs.python3Packages.huggingface-hub
-    ];
-    text = ''
-      final=${lib.escapeShellArg "${modelsDir}/${model.name}"}
-      stage=${lib.escapeShellArg "${modelsDir}/.downloads/${model.name}"}
-      revision=${lib.escapeShellArg model.revision}
-      marker=.nix-config-revision
-
-      if [[ "$(cat "$final/$marker" 2>/dev/null)" == "$revision" ]]; then
-        exit 0
-      fi
-      # A directory under that name that this script did not finish is not
-      # ours to replace.
-      if [[ -e "$final" && ! -f "$final/$marker" ]]; then
-        echo "$final exists and was not downloaded by nix-config; leaving it alone" >&2
-        exit 1
-      fi
-      mkdir -p "$(dirname "$stage")"
-      # An older pinned revision: move it back to staging so hf only fetches
-      # the files that changed.
-      if [[ -e "$final" ]]; then
-        if [[ -e "$stage" ]]; then
-          echo "both $final and $stage exist; refusing to merge them" >&2
-          exit 1
-        fi
-        mv "$final" "$stage"
-      fi
-
-      export HF_HUB_DISABLE_TELEMETRY=1
-      echo "$(date -u +%FT%TZ) downloading ${model.repo}@$revision"
-      hf download ${lib.escapeShellArg model.repo} --revision "$revision" --local-dir "$stage"
-      (cd "$stage" && sha256sum --check --quiet SHA256SUMS)
-      printf '%s\n' "$revision" > "$stage/$marker"
-      mv "$stage" "$final"
-      echo "$(date -u +%FT%TZ) installed $final"
-    '';
-  };
 in
 {
   # Installs the app only when nothing is at the path. An existing app,
@@ -162,21 +97,27 @@ in
     fi
   '';
 
-  # A 108.8 GB download does not belong inside activation, so it runs as an
-  # agent. Home Manager reloads the agent only when this plist changes, which
-  # is when the pinned model changes; RunAtLoad then starts the download. A
-  # failed run (offline, a full disk, a checksum mismatch) retries after the
-  # throttle interval; a completed one exits 0 and stays down.
-  launchd.agents.omlx-fetch-model = {
-    enable = true;
-    config = {
-      ProgramArguments = [ (lib.getExe fetchModel) ];
-      RunAtLoad = true;
-      KeepAlive.SuccessfulExit = false;
-      ThrottleInterval = 600;
-      ProcessType = "Background";
-      StandardOutPath = "${config.home.homeDirectory}/Library/Logs/omlx-fetch-model.log";
-      StandardErrorPath = "${config.home.homeDirectory}/Library/Logs/omlx-fetch-model.log";
-    };
-  };
+  # `omlx` in the terminal. On launch the app writes its CLI shim to
+  # ~/.omlx/bin/omlx and, when that folder is not on PATH, asks to append a
+  # PATH block to the user's shell file. It skips that prompt when ~/.zshrc,
+  # ~/.zprofile or ~/.zshenv contains its begin marker: "The shim marker in a
+  # shell file is the only signal that 'Update Shell File' already ran"
+  # (apps/omlx-mac/Sources/Config/ShellEnvWriter.swift). Of those, only
+  # ~/.zshenv exists here: the Home Manager stub that sources ZDOTDIR's
+  # .zshenv. That stub is skipped by every shell started from another one,
+  # because ZDOTDIR is exported (`zsh` from a terminal did not find `omlx`
+  # with the PATH line in the stub, 2026-10-28). So the PATH entry is in
+  # ZDOTDIR's .zshenv, which every zsh reads, and the stub carries only the
+  # markers the app looks for, so it never edits a shell file. Appended, so
+  # nothing on this PATH is shadowed.
+  programs.zsh.envExtra = ''
+    if [[ ":$PATH:" != *":$HOME/.omlx/bin:"* ]]; then
+      path+=("$HOME/.omlx/bin")
+    fi
+  '';
+  home.file.".zshenv".text = lib.mkAfter ''
+    # oMLX: CLI shim path begin
+    # The PATH entry is in ZDOTDIR's .zshenv (modules/home/omlx.nix).
+    # oMLX: CLI shim path end
+  '';
 }

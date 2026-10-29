@@ -71,10 +71,6 @@ today and is intentionally structured to add NixOS servers later.
   `modules/home/development.nix` that execs the app's bundled
   `Contents/Resources/codex-cli/bin/codex`; that launcher is the only provider
   of `bin/codex`, so never also install a Nix or Homebrew codex package.
-- oMLX (`~/Applications/oMLX.app`) also updates itself: its updater swaps the
-  bundle in place, so `modules/home/omlx.nix` installs it once from a
-  hash-pinned DMG and never from the store. That module also declares the
-  model oMLX serves, downloaded by a launchd agent into `~/.omlx/models`.
 - Exactly one thing provides `bin/claude`: the launcher in `development.nix`,
   wrapped by `programs.claude-code` with the plugin directories.
 - Karabiner-Elements exclusively owns keyboard remapping; Raycast's native Hyper

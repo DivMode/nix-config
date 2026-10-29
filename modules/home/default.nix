@@ -57,6 +57,7 @@ in
     ./menu-bar.nix
     ./mouse.nix
     ./network-shares.nix
+    ./omlx.nix
     ./privacy.nix
     ./projects.nix
     ./python.nix

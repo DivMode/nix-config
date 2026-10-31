@@ -47,25 +47,23 @@ def arguments():
     return args
 
 
-def alive(pid):
-    try:
-        os.kill(pid, 0)
-        return True
-    except ProcessLookupError:
-        return False
-    except PermissionError:
-        return True
-
-
 def records(directory):
     for path in sorted(directory.glob("[0-9]*")):
         if not path.name.isdecimal():
             continue
         try:
-            record = json.loads(path.read_text())
+            with path.open() as file:
+                record = json.load(file)
+                # The writer holds its record's flock until it releases. The kernel
+                # drops it on any death, whereas a dead writer's pid can be reused.
+                try:
+                    fcntl.flock(file, fcntl.LOCK_SH | fcntl.LOCK_NB)
+                    live = False
+                except BlockingIOError:
+                    live = True
         except FileNotFoundError:
             continue  # A release raced the directory listing.
-        yield record, alive(record["pid"])
+        yield record, live
 
 
 def describe(record):
@@ -85,10 +83,18 @@ def status(directory):
 
 
 def publish(path, record):
+    """Publish a record that stays live until the returned file is closed."""
     temporary = path.with_suffix(".tmp")
+    file = temporary.open("w")
     try:
-        temporary.write_text(json.dumps(record) + "\n")
+        fcntl.flock(file, fcntl.LOCK_EX)
+        file.write(json.dumps(record) + "\n")
+        file.flush()
         temporary.replace(path)
+        return file
+    except BaseException:
+        file.close()
+        raise
     finally:
         temporary.unlink(missing_ok=True)
 
@@ -133,6 +139,7 @@ def run(args, directory, command_umask):
     child = None
     received = None
     reported = False
+    published = []
 
     def forward(signum, _frame):
         nonlocal received
@@ -176,7 +183,7 @@ def run(args, directory, command_umask):
     try:
         with (directory / "turnstile").open("a") as gate, (directory / "main").open("a") as main:
             if args.mode == "exclusive":
-                publish(waiter, record)
+                published.append(publish(waiter, record))
             try:
                 while True:
                     acquire(gate, fcntl.LOCK_EX)
@@ -189,7 +196,7 @@ def run(args, directory, command_umask):
                     acquire(main, fcntl.LOCK_SH if args.mode == "shared" else fcntl.LOCK_EX)
                     break
                 record["start"] = datetime.now(timezone.utc).isoformat()
-                publish(holder, record)
+                published.append(publish(holder, record))
                 waiter.unlink(missing_ok=True)
                 fcntl.flock(gate, fcntl.LOCK_UN)
                 if received is not None:
@@ -208,6 +215,8 @@ def run(args, directory, command_umask):
             finally:
                 holder.unlink(missing_ok=True)
                 waiter.unlink(missing_ok=True)
+                for file in published:
+                    file.close()
     except TimeoutError:
         print(f"cpu-lock: timed out after {args.wait:g}s waiting on {blockers(directory, pid)}",
               file=sys.stderr)

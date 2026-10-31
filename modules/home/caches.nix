@@ -88,7 +88,18 @@ in
     home.sessionVariables = {
       BUN_INSTALL_CACHE_DIR = cacheDir "bun";
       NUGET_PACKAGES = cacheDir "nuget/packages";
-      PLAYWRIGHT_BROWSERS_PATH = cacheDir "ms-playwright";
+      # Playwright's browsers stay at its default, ~/Library/Caches/ms-playwright
+      # on the internal volume. macOS treats the external cache volume as
+      # removable, and Chromium build 1248's GPU helper is its own responsible
+      # process, so opening its own executable there asks TCC for
+      # kTCCServiceSystemPolicyRemovableVolumes for that path. On 2026-10-29
+      # (unified log) the dialog opened at 04:15:05 while the screen was
+      # locked (WindowServer: "Denying UserNotificationCenter the right to be in
+      # front"), the helper's open() looped on EINTR, and every page that drew
+      # hung until the dialog was answered at 13:06. The grant is per binary
+      # path, so each new browser build would prompt again. A fresh copy of the
+      # same build under ~/Library/Caches drew in under 2 s, three times, with
+      # no RemovableVolumes request for its path (2026-10-30).
       PUPPETEER_CACHE_DIR = cacheDir "puppeteer";
       UV_CACHE_DIR = cacheDir "uv";
       HOMEBREW_CACHE = cacheDir "homebrew";
@@ -156,7 +167,6 @@ in
           (cacheDir "xdg")
           (cacheDir "bun")
           (cacheDir "nuget/packages")
-          (cacheDir "ms-playwright")
           (cacheDir "puppeteer")
           (cacheDir "uv")
           (cacheDir "homebrew")

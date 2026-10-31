@@ -97,9 +97,19 @@ in
       # locked (WindowServer: "Denying UserNotificationCenter the right to be in
       # front"), the helper's open() looped on EINTR, and every page that drew
       # hung until the dialog was answered at 13:06. The grant is per binary
-      # path, so each new browser build would prompt again. A fresh copy of the
-      # same build under ~/Library/Caches drew in under 2 s, three times, with
-      # no RemovableVolumes request for its path (2026-10-30).
+      # path, so each new browser build would prompt again.
+      #
+      # Measured 2026-10-31 with GPU helpers attributed by pid: launched as
+      # Playwright launches it, the internal-volume build makes no
+      # RemovableVolumes or AllFiles check, external or internal TMPDIR and
+      # working directory alike. In a real browser test its GPU helper still
+      # makes one RemovableVolumes request per launch, for a file the logs do
+      # not name. It is not the profile: the count was the same with TMPDIR on
+      # the internal disk. That request reaches the system tccd with no user
+      # session (auid 0) and fails at once ("forwardMessage error: Connection
+      # invalid"), so no dialog is raised and nothing waits. Every launch that
+      # night drew without one. The 10-29 request reached the user tccd, which
+      # raised the dialog and blocked.
       PUPPETEER_CACHE_DIR = cacheDir "puppeteer";
       UV_CACHE_DIR = cacheDir "uv";
       HOMEBREW_CACHE = cacheDir "homebrew";

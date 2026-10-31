@@ -150,6 +150,19 @@ def main():
     print(f"Token in use ({claims(old_token) or 'not a JWT'}) sees {len(current)} vaults: "
           + ", ".join(sorted(current.values())))
 
+    if args.dry_run:
+        # Every `op` call below goes through the desktop app and can ask for
+        # Touch ID, so a dry run makes none: it plans from what Connect sees.
+        for requested in args.add_vault:
+            if resolve(requested, current) is not None:
+                print(f"'{requested}' is already one of this token's vaults")
+            else:
+                print(f"would look up '{requested}' in the account and grant {args.server} that vault")
+        print(f"would issue '{args.name or f'mac-{date.today().isoformat()}'}' (a suffix is added if the name "
+              f"is taken) for these {len(current)} vaults plus any added above")
+        print("Dry run: no `op` call made; nothing issued or changed.")
+        return
+
     op = Op(args.server)
     added = {}
     if args.add_vault:
@@ -169,9 +182,6 @@ def main():
                                    "A vault your account is not a member of is not listed; pass its ID")
             added[vault_id] = account[vault_id]
         for vault_id, vault_name in added.items():
-            if args.dry_run:
-                print(f"would grant {args.server} the vault '{vault_name}' ({vault_id})")
-                continue
             print(f"granting {args.server} the vault '{vault_name}' ({vault_id})")
             try:
                 op.grant(vault_id)
@@ -184,9 +194,6 @@ def main():
     tokens = op.tokens()
     name = unused_name(args.name or f"mac-{date.today().isoformat()}", tokens)
     print(f"New token '{name}' for {len(wanted)} vaults: " + ", ".join(sorted(wanted.values())))
-    if args.dry_run:
-        print("Dry run: nothing issued or changed.")
-        return
 
     workdir = tempfile.mkdtemp(prefix="connect-rotate-")
     try:

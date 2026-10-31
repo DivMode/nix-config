@@ -320,20 +320,23 @@ The approved Connect interfaces are declarative and read the cached
 **Touch ID is asked for only when the owner is the one thing that can do the
 step.** Agent shells run with `OP_BIOMETRIC_UNLOCK_ENABLED=false`, so no
 command an agent runs, typed or buried in a script, can raise a prompt; the
-guard also denies a typed `op`. Each owner-approved administration step
-(2026-10-07/08; it touches no secret value) has a declared command instead:
+guard denies a typed `op` and setting, unsetting or dropping that variable.
+Each owner-approved administration step (2026-10-07/08; it touches no secret
+value) has a declared command instead:
 
-- No prompt, any time: `nix-config-op-admin vault create NAME` and
+- No prompt, any time: `nix-config-op-admin vault create NAME`,
   `nix-config-op-admin item move ITEM --current-vault A --destination-vault B`
-  (a service account whose token is read through Connect per call), and
-  `nix-config-connect-item put` to write or edit an item.
+  and `nix-config-op-admin vault user grant --vault V --user U` (a vault it
+  created; a service account whose token is read through Connect per call),
+  and `nix-config-connect-item put` to write or edit an item.
 - Touch ID, deliberately: `nix-config-connect-rotate` (Connect access to a new
-  vault, or a replaced token), `nix-config-op-owner vault user grant --vault V
-  --user U` (the owner's account gets a vault it lacks, such as one the service
-  account created) and `nix-config-op-owner connect token delete TOKEN
-  --server S`. Each turns the app integration back on for its own `op` calls
-  only. Run one only when the work needs it; while it waits, tell the owner
-  that a Touch ID prompt is pending and for what.
+  vault, or a replaced token; `--dry-run` never prompts), `nix-config-op-owner
+  vault user grant --vault V --user U` (a vault the service account did not
+  create), `nix-config-op-owner connect token delete TOKEN --server S` and the
+  one-time `nix-config-op-admin setup`. Each turns the app integration back on
+  for its own `op` calls only. Run one only
+  when the work needs it; while it waits, tell the owner that a Touch ID prompt
+  is pending and for what.
 
 **Storing credentials is yours to do, through Connect** (owner, 2026-10-12).
 When the owner hands you a credential, or a task needs one stored, write it

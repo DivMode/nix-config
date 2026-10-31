@@ -170,6 +170,59 @@ OP_VARIABLE_RE = re.compile(
     r"(?:^|[\s;&|(])(?:env\s+(?:-\S+\s+)*-u\s+OP_|unset\s+(?:-\S+\s+)*OP_|"
     r"(?:export\s+)?OP_(?:SERVICE_ACCOUNT_TOKEN|CONNECT_HOST|CONNECT_TOKEN|SESSION_[A-Za-z0-9_]+)=)"
 )
+
+# Agent shells run with OP_BIOMETRIC_UNLOCK_ENABLED=false so that no command,
+# typed or buried in a script, can reach the 1Password desktop app and raise a
+# Touch ID prompt (2026-10-31). Setting it, unsetting it, or starting from an
+# empty environment (`env -i`) all hand a buried `op` call the app again. Judged
+# on the parsed words of the segment, so quoting cannot hide an assignment and
+# a command that only prints or searches the text (echo, grep) is not denied.
+BIOMETRIC = "OP_BIOMETRIC_UNLOCK_ENABLED"
+DECLARERS = {"export", "declare", "typeset", "local", "readonly"}
+
+
+def reenables_app_integration(tokens):
+    """True when this segment's words would set, unset or drop BIOMETRIC."""
+    i = 0
+    while i < len(tokens):
+        word = tokens[i]
+        if word.startswith(BIOMETRIC + "="):
+            return True  # a leading assignment, before any program
+        if re.match(r"^[A-Za-z_][A-Za-z0-9_]*=", word):
+            i += 1
+            continue
+        head = os.path.basename(word)
+        rest = tokens[i + 1:]
+        if head == "unset":
+            return BIOMETRIC in rest
+        if head in DECLARERS:
+            return any(arg == BIOMETRIC or arg.startswith(BIOMETRIC + "=") for arg in rest)
+        if head == "env":
+            j = 0
+            while j < len(rest):
+                arg = rest[j]
+                if arg in {"-i", "--ignore-environment", "-"}:
+                    return True
+                if arg in {"-u", "--unset"}:
+                    if j + 1 < len(rest) and rest[j + 1] == BIOMETRIC:
+                        return True
+                    j += 2
+                    continue
+                if arg in {f"-u{BIOMETRIC}", f"--unset={BIOMETRIC}"} or arg.startswith(BIOMETRIC + "="):
+                    return True
+                if arg.startswith("-") or re.match(r"^[A-Za-z_][A-Za-z0-9_]*=", arg):
+                    j += 1
+                    continue
+                break
+            i += 1 + j
+            continue
+        if head in WRAPPERS:
+            i += 1
+            while i < len(tokens) and tokens[i].startswith("-"):
+                i += 1
+            continue
+        return False
+    return False
 OP_CONFIG_RE = re.compile(
     r"(?:~|\$HOME|\$\{HOME\}|" + re.escape(HOME) + r")/\.config/op(?:/|\b)"
 )
@@ -184,11 +237,13 @@ def credential_boundary(raw, prog):
         return ("Blocked: the 1Password CLI (`op`) is never invoked from an agent command. "
                 "Secrets come only through the repository's own loader (Connect). "
                 "Administration has declared commands: `nix-config-connect-item put` to store "
-                "or edit an item, `nix-config-op-admin vault create NAME` and `nix-config-op-admin "
-                "item move ITEM --current-vault A --destination-vault B` (no prompt), "
-                "`nix-config-connect-rotate --add-vault VAULT` for Connect access, and "
-                "`nix-config-op-owner vault user grant ...` or `... connect token delete ...` "
-                "(those two ask for the owner's Touch ID). "
+                "or edit an item, and `nix-config-op-admin vault create NAME`, `nix-config-op-admin "
+                "item move ITEM --current-vault A --destination-vault B` and `nix-config-op-admin "
+                "vault user grant ...` (a vault it created), none of which prompts. Only these ask "
+                "for the owner's Touch ID: `nix-config-connect-rotate --add-vault VAULT` (Connect "
+                "access), `nix-config-op-owner vault user grant ...` (any other vault), "
+                "`nix-config-op-owner connect token delete ...` and the one-time "
+                "`nix-config-op-admin setup`. "
                 "If one fails, stop and report; do not find another credential.")
     if OP_VARIABLE_RE.search(raw):
         return ("Blocked: unsetting or overriding an OP_* variable. The repository's secrets "
@@ -561,6 +616,12 @@ def check(segment):
         tokens = raw.split()
     if not tokens:
         return None
+
+    if reenables_app_integration(tokens):
+        return ("Blocked: setting, unsetting or dropping OP_BIOMETRIC_UNLOCK_ENABLED (including "
+                "`env -i`). Agent commands run with it false so nothing they run can reach the "
+                "1Password desktop app or raise a Touch ID prompt. The steps that need the owner "
+                "have declared commands that ask deliberately; see the credentials rules.")
 
     # Peel wrappers and leading VAR=value assignments.
     while tokens:

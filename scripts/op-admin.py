@@ -3,6 +3,7 @@
   op-admin.py CONNECT_ENV REFERENCE vault create NAME
   op-admin.py CONNECT_ENV REFERENCE vault delete NAME     # only vaults it created
   op-admin.py CONNECT_ENV REFERENCE item move ITEM --current-vault A --destination-vault B
+  op-admin.py CONNECT_ENV REFERENCE vault user grant --vault V --user U   # vaults it created
   op-admin.py CONNECT_ENV - setup VAULT NAME     # once, with the owner's approval
 
 `op` through the desktop app asks the owner to approve every session, and the
@@ -12,7 +13,7 @@ owner wants vaults created and items moved while away (2026-10-07). This runs
 onePassword.opAdminReference); it is read through Connect for each call and
 given only to the `op` child, never written to disk or printed.
 
-Only `vault create`, `vault delete` (its own vaults) and `item move`/`mv` (without --reveal, output discarded:
+Only `vault create`, `vault delete` and `vault user grant` (the last two on its own vaults), and `item move`/`mv` (without --reveal, output discarded:
 it prints the moved item) run. A service account cannot reach the built-in
 Personal, Private or Employee vaults or the default Shared vault, cannot
 grant Connect a vault (`nix-config-connect-rotate` does that, with the
@@ -41,7 +42,10 @@ from onepassword_connect import Connect, ConnectError, run  # noqa: E402
 FIELD = "credential"
 # `vault delete` reaches only vaults this account created: 1Password limits
 # a service account to deleting its own.
-ALLOWED = {("vault", "create"), ("vault", "delete"), ("item", "move"), ("item", "mv")}
+# `vault user grant` likewise: 1Password lets a service account manage people's
+# access to the vaults it created, which is how the owner's account gets a
+# vault made here without a Touch ID prompt.
+ALLOWED = {("vault", "create"), ("vault", "delete"), ("vault", "user", "grant"), ("item", "move"), ("item", "mv")}
 
 
 def op_binary():
@@ -60,8 +64,8 @@ def parse_reference(reference):
 
 
 def administer(connect_env, reference, args):
-    if tuple(args[:2]) not in ALLOWED:
-        raise ConnectError("only `vault create NAME`, `vault delete NAME` (a vault this account "
+    if tuple(args[:2]) not in ALLOWED and tuple(args[:3]) not in ALLOWED:
+        raise ConnectError("only `vault create NAME`, `vault delete NAME` and `vault user grant` (a vault this account "
                            "created) and `item move ITEM --current-vault A --destination-vault B` are allowed")
     if "--reveal" in args:
         raise ConnectError("--reveal would print the item's concealed fields")
@@ -88,6 +92,9 @@ def setup(connect_env, vault, name):
     print(f"creating service account '{name}': may create vaults; read and write in "
           f"{len(vault_ids)} vaults (those this Mac's Connect token sees)")
     vault_args = [arg for vid in vault_ids for arg in ("--vault", f"{vid}:read_items,write_items")]
+    # Creating the service account is the owner's own step: agent shells turn
+    # the desktop app integration off, so ask it deliberately here.
+    owner_env = {**os.environ, "OP_BIOMETRIC_UNLOCK_ENABLED": "true"}
     workdir = tempfile.mkdtemp(prefix="op-admin-")
     token_file = os.path.join(workdir, "token")
     keep = False
@@ -95,7 +102,7 @@ def setup(connect_env, vault, name):
         descriptor = os.open(token_file, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
         with os.fdopen(descriptor, "w") as handle:
             result = subprocess.run([op_binary(), "service-account", "create", name, "--can-create-vaults",
-                                     *vault_args, "--raw"], stdout=handle, stderr=subprocess.PIPE, text=True)
+                                     *vault_args, "--raw"], stdout=handle, stderr=subprocess.PIPE, text=True, env=owner_env)
         if result.returncode != 0:
             raise ConnectError(f"`op service-account create` failed: {result.stderr.strip()}")
         token = Path(token_file).read_text().strip()

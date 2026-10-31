@@ -220,7 +220,9 @@ in
 
         # The two administration steps only the owner's desktop account can
         # take, so they ask for Touch ID: giving a person (the owner) access
-        # to a vault, and deleting a Connect token that nothing uses any more.
+        # to a vault the service account did not create (for one it did,
+        # `nix-config-op-admin vault user grant` needs no prompt), and deleting
+        # a Connect token that nothing uses any more.
         # Agent shells turn the app integration off so nothing else can ask;
         # this turns it back on for these two only. Connect tokens and vault
         # grants for Connect are `nix-config-connect-rotate`.

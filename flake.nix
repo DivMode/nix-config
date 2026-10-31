@@ -44,6 +44,17 @@
       flake = false;
     };
 
+    # Paul Bakaus's Impeccable design skill, which grew out of Anthropic's
+    # frontend-design. Upstream installs it with `npx skills add` or its
+    # plugin marketplace, both of which write a mutable copy under ~/.claude;
+    # modules/home/ai builds the skill directory from this pinned tree
+    # instead. Apache-2.0, referenced not vendored, and updated with
+    # `./scripts/update.sh impeccable`.
+    impeccable = {
+      url = "github:pbakaus/impeccable";
+      flake = false;
+    };
+
     # Grafana's gcx CLI, pinned to a release tag. One input feeds two
     # consumers: modules/home/development.nix builds the CLI binary from it
     # (nixpkgs packages gcx, but its pinned release trails upstream), and

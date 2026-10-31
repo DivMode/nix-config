@@ -44,10 +44,10 @@ whole replacement (`--dry-run` shows the plan first):
 4. installs it (`nix-config-connect-set-token`) and updates the stored copy
    (`nix-config-connect-store-token store`).
 
-Steps 1–2 are the only `op` use on this Mac (Connect administration, with the
-owner's 1Password approval). The previous token is never deleted
+Steps 1–2 use `op` through the desktop app, so they ask for the owner's Touch
+ID; `--dry-run` makes no `op` call. The previous token is never deleted
 automatically: clusters or other machines may still use it. The command prints
-the `op connect token delete` to run once nothing does.
+the `nix-config-op-owner connect token delete` to run once nothing does.
 
 ### Storing a credential
 
@@ -60,8 +60,9 @@ only labels. The Connect token must have write access to VAULT.
 ### Vault administration without a prompt
 
 `op` through the desktop app needs the owner's approval for each session.
-`nix-config-op-admin` runs `vault create`, `vault delete` (vaults it created)
-and `item move` as the "nix-config vault admin" service account instead. Its
+`nix-config-op-admin` runs `vault create`, `vault delete` and `vault user
+grant` (both on vaults it created) and `item move` as the "nix-config vault
+admin" service account instead. Its
 token is the item `local.nix` `onePassword.opAdminReference` names, read
 through Connect per call and given only to the `op` child. It was created once
 by `nix-config-op-admin setup VAULT NAME`: allowed to create vaults, with read
@@ -73,12 +74,19 @@ grant Connect a vault; that last step stays `nix-config-connect-rotate
 
 ### Steps that need the owner's Touch ID
 
-Agent shells run with `OP_BIOMETRIC_UNLOCK_ENABLED=false`, so `op` in them
-cannot reach the desktop app and no agent command can raise a prompt. Three
-declared commands turn it back on for their own `op` calls, because only the
-owner's account can do what they do: `nix-config-connect-rotate`,
-`nix-config-op-owner vault user grant` and `nix-config-op-owner connect token
-delete`.
+Agent shells run with `OP_BIOMETRIC_UNLOCK_ENABLED=false` (Claude Code's
+settings `env`; Codex's `shell_environment_policy.set`), and the guard denies
+setting, unsetting or dropping it, so `op` in them cannot reach the desktop
+app. One known gap: the ChatGPT app starts Codex's `node_repl` MCP server with
+an environment it builds itself and rewrites that server's config entry, so the
+variable cannot be declared there (observed 2026-10-31). That server runs
+browser-automation JavaScript, not shell commands or `just` recipes. These declared commands
+turn it back on for their own `op` calls, because only the owner's account can
+do what they do: `nix-config-connect-rotate` (not with `--dry-run`),
+`nix-config-op-owner vault user grant` (a vault the service account did not
+create), `nix-config-op-owner connect token delete`, and the one-time
+`nix-config-op-admin setup`. Processes that are not agents (the owner's own
+terminal, launchd jobs) do not get the variable.
 
 ## Local metadata
 

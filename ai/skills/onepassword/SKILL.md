@@ -86,5 +86,10 @@ client). Never print a secret value; check labels, types or a hash instead.
 
 `nix-config-op-admin vault create NAME` and `nix-config-op-admin item move ITEM
 --current-vault A --destination-vault B` run as the vault-admin service account
-without a prompt. Connect administration is `nix-config-connect-rotate`.
+without a prompt. Three steps need the owner's Touch ID, so run them only when
+the work needs them and tell the owner a prompt is pending:
+`nix-config-connect-rotate` (Connect access to a vault),
+`nix-config-op-owner vault user grant --vault V --user U` (the owner's account
+gets a vault, such as one the service account created) and
+`nix-config-op-owner connect token delete TOKEN --server S`.
 Deleting vaults is the owner's call: ask first.

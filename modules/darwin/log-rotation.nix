@@ -6,6 +6,10 @@ let
   # Herdr rotates it itself at 5 MB (src/logging.rs, DEFAULT_MAX_LOG_BYTES).
   herdrLauncherLog =
     config.home-manager.users.${local.user}.launchd.agents.herdr-server.config.StandardErrorPath;
+  # ../home/project-sync.nix logs a line for each fast-forward, and every 15
+  # minutes for each checkout it has to leave behind.
+  projectSyncLog =
+    config.home-manager.users.${local.user}.launchd.agents.sync-project-checkouts.config.StandardErrorPath;
 in
 {
   # Rotated by macOS's own newsyslog, which launchd already runs hourly for
@@ -21,5 +25,6 @@ in
   # and compressing would delete that copy and lose those lines.
   environment.etc."newsyslog.d/nix-config.conf".text = ''
     ${herdrLauncherLog}  ${local.user}:staff  644  3  1024  *  N
+    ${projectSyncLog}  ${local.user}:staff  644  3  1024  *  N
   '';
 }

@@ -59,6 +59,7 @@ in
     ./network-shares.nix
     ./omlx.nix
     ./privacy.nix
+    ./project-sync.nix
     ./projects.nix
     ./python.nix
     ./scheduled-commands.nix

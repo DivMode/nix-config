@@ -19,7 +19,10 @@ into a Document item, which Connect cannot write). In order, this:
 
 It never deletes the old token: other machines or clusters may still use it.
 It prints that token's ID and the command to delete it once nothing does.
-Steps 2 and 3 use `op` (the owner's 1Password approval).
+Steps 2 and 3 use `op` through the desktop app, so they ask for the owner's
+Touch ID. This is the one command that turns that back on (agent shells run
+with OP_BIOMETRIC_UNLOCK_ENABLED=false): it runs only when a vault is added
+or the token is replaced, and nothing else can do either.
 No token is ever printed or passed as an argument.
 """
 
@@ -59,10 +62,14 @@ class Op:
         if not self.binary:
             raise ConnectError("the 1Password CLI (`op`, the 1password-cli cask) is not on PATH")
         self.server = server
+        # Agent shells disable the app integration so that nothing raises a
+        # Touch ID prompt by accident; this command needs the owner, so it
+        # asks deliberately.
+        self.env = {**os.environ, "OP_BIOMETRIC_UNLOCK_ENABLED": "true"}
 
     def _run(self, *args, stdout=subprocess.PIPE):
         result = subprocess.run([self.binary, "connect", *args, "--server", self.server],
-                                stdout=stdout, stderr=subprocess.PIPE, text=True)
+                                stdout=stdout, stderr=subprocess.PIPE, text=True, env=self.env)
         if result.returncode != 0:
             raise ConnectError(f"`op connect {' '.join(args[:2])}` failed: {result.stderr.strip()}")
         return result.stdout
@@ -80,7 +87,7 @@ class Op:
         (it reads a name with a space as an ID: "unable to find vault with ID
         'Options Console'", 2026-10-06). This `op` has no `connect vault list`."""
         result = subprocess.run([self.binary, "vault", "list", "--format", "json"],
-                                capture_output=True, text=True)
+                                capture_output=True, text=True, env=self.env)
         if result.returncode != 0:
             raise ConnectError(f"`op vault list` failed: {result.stderr.strip()}")
         data = json.loads(result.stdout or "[]")
@@ -206,7 +213,7 @@ def main():
         if set(seen) != set(wanted):
             raise ConnectError(f"the new token '{name}' sees {sorted(seen.values())}, not {sorted(wanted.values())}; "
                                f"the token in use is unchanged. Delete the new one: "
-                               f"op connect token delete {name} --server {args.server}")
+                               f"nix-config-op-owner connect token delete {name} --server {args.server}")
         confirm(args.set_token, token_file)
         confirm(args.store_token, "store")
         confirm(args.store_token, "ids")
@@ -217,7 +224,7 @@ def main():
     old_id = old_claims.split()[0].removeprefix("jti=") if old_claims else "the previous token"
     old = next((t for t in tokens if t.get("id") == old_id), {})
     print(f"Done. The previous token ({old.get('name') or old_id}) still works. Once nothing else uses it:\n"
-          f"  op connect token delete {old.get('name') or old_id} --server {args.server}")
+          f"  nix-config-op-owner connect token delete {old.get('name') or old_id} --server {args.server}")
 
 
 if __name__ == "__main__":

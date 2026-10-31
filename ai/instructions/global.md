@@ -275,8 +275,8 @@ it on purpose.
 ## Credentials
 
 The owner's credentials are not the repository's. Never invoke the 1Password
-CLI (`op`) directly or through an improvised wrapper, except for the
-owner-approved administration below; never unset, strip or
+CLI (`op`) directly or through an improvised wrapper; the owner-approved
+administration below runs only through its declared commands. Never unset, strip or
 override an `OP_*` variable, never read `~/.config/op/`, and never reach for the
 desktop app, biometric, or signed-in session. Secrets come only through the repository's
 own loader, which uses the self-hosted Connect server; if that loader fails
@@ -315,20 +315,25 @@ The approved Connect interfaces are declarative and read the cached
   Mac's Connect token (a new vault means a new token): it issues one with
   `op connect` administration, installs it, and updates the stored copy. It
   never deletes the old token; that stays a separate, deliberate
-  `op connect token delete` once nothing else uses it. It authenticates
-  through the desktop app, which agent shells cannot reach: they run with
-  `OP_BIOMETRIC_UNLOCK_ENABLED=false`, so no agent command ever raises a
-  Touch ID prompt.
+  `nix-config-op-owner connect token delete` once nothing else uses it.
 
-**Owner-approved `op` administration** (2026-10-07) touches no secret value,
-and the guard allows exactly this: Connect administration (`op connect` server
-and vault list, vault grant, token create, list and delete), `op vault create`,
-`op vault user grant` (added 2026-10-08, so the owner's account can be given
-access to a project vault), and `op item move` and `op item edit` (edit added 2026-10-08) without `--reveal` and
-with output sent to `/dev/null` (both print the item). When the owner is away, run vault creation and
-item moves as `nix-config-op-admin vault create NAME` or `nix-config-op-admin
-item move ITEM --current-vault A --destination-vault B`: a service account
-whose token is read through Connect per call, so no approval prompt appears.
+**Touch ID is asked for only when the owner is the one thing that can do the
+step.** Agent shells run with `OP_BIOMETRIC_UNLOCK_ENABLED=false`, so no
+command an agent runs, typed or buried in a script, can raise a prompt; the
+guard also denies a typed `op`. Each owner-approved administration step
+(2026-10-07/08; it touches no secret value) has a declared command instead:
+
+- No prompt, any time: `nix-config-op-admin vault create NAME` and
+  `nix-config-op-admin item move ITEM --current-vault A --destination-vault B`
+  (a service account whose token is read through Connect per call), and
+  `nix-config-connect-item put` to write or edit an item.
+- Touch ID, deliberately: `nix-config-connect-rotate` (Connect access to a new
+  vault, or a replaced token), `nix-config-op-owner vault user grant --vault V
+  --user U` (the owner's account gets a vault it lacks, such as one the service
+  account created) and `nix-config-op-owner connect token delete TOKEN
+  --server S`. Each turns the app integration back on for its own `op` calls
+  only. Run one only when the work needs it; while it waits, tell the owner
+  that a Touch ID prompt is pending and for what.
 
 **Storing credentials is yours to do, through Connect** (owner, 2026-10-12).
 When the owner hands you a credential, or a task needs one stored, write it

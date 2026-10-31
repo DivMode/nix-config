@@ -217,6 +217,27 @@ in
               } "$@"
           '';
         })
+
+        # The two administration steps only the owner's desktop account can
+        # take, so they ask for Touch ID: giving a person (the owner) access
+        # to a vault, and deleting a Connect token that nothing uses any more.
+        # Agent shells turn the app integration off so nothing else can ask;
+        # this turns it back on for these two only. Connect tokens and vault
+        # grants for Connect are `nix-config-connect-rotate`.
+        (pkgs.writeShellApplication {
+          name = "nix-config-op-owner";
+          text = ''
+            case "''${1-} ''${2-} ''${3-}" in
+              "vault user grant" | "connect token delete") ;;
+              *)
+                echo "usage: nix-config-op-owner vault user grant --vault VAULT --user USER [--permissions P]" >&2
+                echo "       nix-config-op-owner connect token delete TOKEN --server SERVER" >&2
+                exit 2
+                ;;
+            esac
+            OP_BIOMETRIC_UNLOCK_ENABLED=true exec op "$@"
+          '';
+        })
       ];
 
       # Activation never reads 1Password and never refreshes the token: the

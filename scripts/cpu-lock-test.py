@@ -331,6 +331,17 @@ class CpuLockTests(unittest.TestCase):
             os.kill(child_pid, signal.SIGTERM)
             self.finish(process, -signal.SIGKILL)
 
+    def test_record_of_a_reused_pid_is_stale(self):
+        # A killed waiter's pid can be reused by an unrelated long-lived process.
+        waiting = self.directory / "waiting"
+        waiting.mkdir(parents=True)
+        (waiting / str(os.getpid())).write_text(json.dumps({
+            "mode": "exclusive", "label": "reused", "pid": os.getpid(),
+            "start": datetime.now().isoformat(), "cwd": str(self.root)}))
+        self.assertIn('stale exclusive waiter: exclusive label="reused"', self.status())
+        follower, _ = self.start("shared", "after-reuse", "exit", "0", wait="0.5")
+        self.finish(follower)
+
     def test_nested_modes_export_identity_and_refuse_upgrade(self):
         for outer, inner, expected in (("shared", "shared", 0),
                                         ("exclusive", "exclusive", 0),

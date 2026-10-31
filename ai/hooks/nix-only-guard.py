@@ -175,63 +175,21 @@ OP_CONFIG_RE = re.compile(
 )
 
 
-# Connect ADMINISTRATION the owner allowed agents to run on 2026-10-07: list
-# servers and their vaults, grant a server a vault, and issue a token. Connect
-# itself cannot grant access, and neither the SDK nor a service account can,
-# so this is the only path besides the 1Password website. Everything that
-# reads or writes secret data stays blocked — data goes through Connect only.
-# Listing and deleting tokens were added the same day, at the owner's request,
-# to retire a replaced token; deleting a server or revoking vault access stays
-# blocked. Creating a vault was added on 2026-10-07, also at the owner's
-# request: an empty vault holds no secret, and a new vault is what
-# `nix-config-connect-rotate --add-vault` then grants. Editing or deleting a
-# vault stays blocked. Moving an item between vaults was added the same day
-# (owner request): the agent never sees the secret, only where it lives.
-# Granting a person a vault was added on 2026-10-08 (owner request): the
-# owner's own account had no access to a project vault the Connect token
-# uses. Revoking access stays blocked. Editing an item was added the same day
-# (owner request), under the move rule: no --reveal, output discarded.
-OP_ADMIN = {("connect", "server", "list"), ("connect", "vault", "list"),
-            ("connect", "vault", "grant"), ("connect", "token", "create"),
-            ("connect", "token", "list"), ("connect", "token", "delete"),
-            ("vault", "create"), ("vault", "user", "grant"),
-            ("item", "move"), ("item", "mv"), ("item", "edit")}
-MOVE_OUTPUT_DISCARDED_RE = re.compile(r"(?:^|\s)(?:1|&)?>\s*/dev/null(?:\s|$)")
-
-
-def is_op_administration(raw):
-    """True for an `op` command whose leading subcommand words are in OP_ADMIN."""
-    try:
-        words = shlex.split(raw)
-    except ValueError:
-        return False
-    for i, word in enumerate(words):
-        if os.path.basename(word) == "op":
-            positional = []
-            for rest in words[i + 1:]:
-                if rest.startswith("-"):
-                    break
-                positional.append(rest)
-            command = next((tuple(positional[:n]) for n in (3, 2) if tuple(positional[:n]) in OP_ADMIN), None)
-            if command is None:
-                return False
-            if command[0] == "item":
-                # `op item move` and `op item edit` print the item: usernames
-                # and URLs, and every concealed field too with --reveal.
-                # Allowed only without --reveal and with that output discarded.
-                return "--reveal" not in words and MOVE_OUTPUT_DISCARDED_RE.search(raw) is not None
-            return True
-    return False
-
-
 def credential_boundary(raw, prog):
     """Deny commands that reach past the repository's secrets loader."""
-    if prog == "op" and is_op_administration(raw):
-        return None
     if prog == "op":
+        # Typed 1Password administration used to be allowed here. Agent shells
+        # now run with the desktop app integration off, so it could only fail;
+        # each owner-approved step has a declared command instead.
         return ("Blocked: the 1Password CLI (`op`) is never invoked from an agent command. "
                 "Secrets come only through the repository's own loader (Connect). "
-                "If it fails, stop and report; do not find another credential.")
+                "Administration has declared commands: `nix-config-connect-item put` to store "
+                "or edit an item, `nix-config-op-admin vault create NAME` and `nix-config-op-admin "
+                "item move ITEM --current-vault A --destination-vault B` (no prompt), "
+                "`nix-config-connect-rotate --add-vault VAULT` for Connect access, and "
+                "`nix-config-op-owner vault user grant ...` or `... connect token delete ...` "
+                "(those two ask for the owner's Touch ID). "
+                "If one fails, stop and report; do not find another credential.")
     if OP_VARIABLE_RE.search(raw):
         return ("Blocked: unsetting or overriding an OP_* variable. The repository's secrets "
                 "loader owns 1Password access; nothing may strip its token or point it "

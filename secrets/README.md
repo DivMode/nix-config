@@ -71,6 +71,15 @@ built-in Personal, Private, Employee or default Shared vaults, and cannot
 grant Connect a vault; that last step stays `nix-config-connect-rotate
 --add-vault`, with the owner's approval.
 
+### Steps that need the owner's Touch ID
+
+Agent shells run with `OP_BIOMETRIC_UNLOCK_ENABLED=false`, so `op` in them
+cannot reach the desktop app and no agent command can raise a prompt. Three
+declared commands turn it back on for their own `op` calls, because only the
+owner's account can do what they do: `nix-config-connect-rotate`,
+`nix-config-op-owner vault user grant` and `nix-config-op-owner connect token
+delete`.
+
 ## Local metadata
 
 Git identity and the signing key's public half belong in ignored `local.nix`,

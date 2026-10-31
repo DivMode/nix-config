@@ -76,37 +76,22 @@ CASES = [
     ("the 1Password CLI, bare", "op whoami", "DENY"),
     ("the 1Password CLI reading an item", "op item get SomeItem --vault SomeVault --format json", "DENY"),
     ("the 1Password CLI through a wrapper", "env -u FOO op read op://SomeVault/SomeItem/field", "DENY"),
-    # ---- Connect administration the owner allowed (2026-10-07). ----
-    ("list Connect servers", "op connect server list", "ALLOW"),
-    ("grant a Connect server a vault", "op connect vault grant --server SomeServer --vault SomeVault", "ALLOW"),
-    ("issue a Connect token", "op connect token create name --server SomeServer --vault SomeVault > /tmp/t", "ALLOW"),
-    # ---- ...and nothing else under op. ----
-    ("listing Connect tokens", "op connect token list --server SomeServer", "ALLOW"),
-    ("deleting a replaced Connect token", "op connect token delete name --server SomeServer", "ALLOW"),
-    ("deleting a Connect server", "op connect server delete SomeServer", "DENY"),
-    ("revoking a vault grant", "op connect vault revoke --server SomeServer --vault SomeVault", "DENY"),
-    # ---- Creating a vault (owner request 2026-10-07); nothing else on vaults. ----
-    ("create a vault", "op vault create SomeVault", "ALLOW"),
-    ("create a vault with a description", "op vault create 'Some Vault' --description x", "ALLOW"),
-    ("delete a vault", "op vault delete SomeVault", "DENY"),
-    ("edit a vault", "op vault edit SomeVault --name Other", "DENY"),
-    # Granting a person a vault (owner request 2026-10-08); revoking stays blocked.
-    ("grant a person a vault", "op vault user grant --vault SomeVault --user someone", "ALLOW"),
-    ("revoke a person's vault access", "op vault user revoke --vault SomeVault --user someone", "DENY"),
-    ("create an item", "op item create --vault SomeVault --category login", "DENY"),
-    # ---- Moving an item between vaults (owner request 2026-10-07). ----
-    ("move an item to another vault", "op item move SomeItem --current-vault A --destination-vault B > /dev/null", "ALLOW"),
-    ("reading the moved item stays blocked", "op item get SomeItem --vault B", "DENY"),
-    ("the mv alias, output discarded", "op item mv SomeItem --current-vault A --destination-vault B >/dev/null", "ALLOW"),
-    ("a move that prints the item", "op item move SomeItem --current-vault A --destination-vault B", "DENY"),
-    ("a move that reveals concealed fields", "op item move SomeItem --current-vault A --destination-vault B --reveal > /dev/null", "DENY"),
-    ("a move whose output goes to a file", "op item move SomeItem --current-vault A --destination-vault B > /tmp/item", "DENY"),
+    # ---- Typed administration (allowed 2026-10-07/08) can no longer reach the
+    # desktop app from an agent shell (OP_BIOMETRIC_UNLOCK_ENABLED=false), so
+    # it is denied with directions to the declared commands. ----
+    ("list Connect servers", "op connect server list", "DENY"),
+    ("grant a Connect server a vault", "op connect vault grant --server SomeServer --vault SomeVault", "DENY"),
+    ("issue a Connect token", "op connect token create name --server SomeServer --vault SomeVault > /tmp/t", "DENY"),
+    ("deleting a replaced Connect token", "op connect token delete name --server SomeServer", "DENY"),
+    ("create a vault", "op vault create SomeVault", "DENY"),
+    ("grant a person a vault", "op vault user grant --vault SomeVault --user someone", "DENY"),
+    ("move an item, output discarded", "op item move SomeItem --current-vault A --destination-vault B > /dev/null", "DENY"),
+    ("editing an item, output discarded", "op item edit SomeItem --vault SomeVault field=value > /dev/null", "DENY"),
     ("reading an item through the CLI", "op item get SomeItem", "DENY"),
-    ("editing an item through the CLI, output shown", "op item edit SomeItem --vault SomeVault field=value", "DENY"),
-    # Editing an item (owner request 2026-10-08), under the move rule.
-    ("editing an item, output discarded", "op item edit SomeItem --vault SomeVault field=value > /dev/null", "ALLOW"),
-    ("editing an item with --reveal", "op item edit SomeItem --vault SomeVault field=value --reveal > /dev/null", "DENY"),
-    ("deleting an item", "op item delete SomeItem", "DENY"),
+    # ---- The declared commands that replace them. ----
+    ("vault creation as the service account", "nix-config-op-admin vault create SomeVault", "ALLOW"),
+    ("an owner-only step", "nix-config-op-owner vault user grant --vault SomeVault --user someone", "ALLOW"),
+    ("Connect access for a new vault", "nix-config-connect-rotate --add-vault SomeVault", "ALLOW"),
     ("connect as a flag value is not the subcommand", "op read --account connect op://SomeVault/SomeItem/field", "DENY"),
     ("stripping the service-account token", "env -u OP_SERVICE_ACCOUNT_TOKEN bun scripts/with-onepassword.mjs --check", "DENY"),
     ("unsetting the token", "unset OP_SERVICE_ACCOUNT_TOKEN; bun run deploy", "DENY"),

@@ -84,7 +84,7 @@ in
 
   # launchd starts agents with a bare environment: no Nix profile on PATH, none
   # of Home Manager's session variables (TMPDIR, the relocated caches in
-  # caches.nix, PLAYWRIGHT_BROWSERS_PATH) and no mise shims. A non-interactive
+  # caches.nix) and no mise shims. A non-interactive
   # zsh reads /etc/zshenv (nix-darwin's PATH) and ~/.zshenv (the session
   # variables and the mise shims, development.nix), which is the environment an
   # agent's own shell runs these commands in.

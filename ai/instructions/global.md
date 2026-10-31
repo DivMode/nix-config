@@ -315,7 +315,10 @@ The approved Connect interfaces are declarative and read the cached
   Mac's Connect token (a new vault means a new token): it issues one with
   `op connect` administration, installs it, and updates the stored copy. It
   never deletes the old token; that stays a separate, deliberate
-  `op connect token delete` once nothing else uses it.
+  `op connect token delete` once nothing else uses it. It authenticates
+  through the desktop app, which agent shells cannot reach: they run with
+  `OP_BIOMETRIC_UNLOCK_ENABLED=false`, so no agent command ever raises a
+  Touch ID prompt.
 
 **Owner-approved `op` administration** (2026-10-07) touches no secret value,
 and the guard allows exactly this: Connect administration (`op connect` server

@@ -16,7 +16,9 @@ Run directly, or via scripts/hooks/pre-commit.
 
 import importlib.util
 import os
+import subprocess
 import sys
+import tempfile
 
 GUARD = os.path.join(os.path.dirname(os.path.abspath(__file__)), "nix-only-guard.py")
 
@@ -35,14 +37,9 @@ GH_API = "https://api." + "github.com"
 GH_UPLOADS = "https://uploads." + "github.com"
 
 
-def verdict(command):
+def verdict(command, cwd=None):
     """The guard's decision for a command, without running anything."""
-    if guard.check_command(command):
-        return "DENY"
-    for segment in guard.split_segments(command):
-        if guard.check(segment):
-            return "DENY"
-    return "ALLOW"
+    return "DENY" if guard.command_verdict(command, cwd) else "ALLOW"
 
 
 CASES = [
@@ -253,6 +250,56 @@ CASES = [
     ("echo naming it", "echo eval bash -c", "ALLOW"),
     ("an escaped separator", "echo a \\; bash -c x", "ALLOW"),
     ("python -c is not a shell", "python3 -c 'print(1)'", "ALLOW"),
+
+    # ---- A runner in front hid the program (2026-10-31). cpu-lock is the
+    # wrapper the global policy requires for heavy work. ----
+    ("a write into ~/Library under gtimeout", "gtimeout 60 rm -r ~/Library/Caches/x", "DENY"),
+    ("a write into ~/Library under timeout -k", "timeout -k 5 60 mkdir -p ~/Library/Caches/x", "DENY"),
+    ("a write into ~/Library under cpu-lock",
+     "cpu-lock run --shared --wait 3600 --label 'repo: x' -- mkdir -p ~/Library/Caches/x", "DENY"),
+    ("a script string under cpu-lock",
+     "cpu-lock run --shared --wait 3600 --label x -- bash -c 'echo hi'", "DENY"),
+    ("an empty environment under cpu-lock",
+     "cpu-lock run --shared --label x -- env -i HOME=/h just wt x", "DENY"),
+    ("a write into ~/Library under nice", "nice -n 5 cp a ~/Library/Caches/x", "DENY"),
+    ("a test run under cpu-lock",
+     "cpu-lock run --shared --wait 3600 --label 'repo: tests' -- just verify", "ALLOW"),
+    ("cpu-lock status", "cpu-lock status", "ALLOW"),
+    ("a read of ~/Library under gtimeout", "gtimeout 60 ls ~/Library/Caches", "ALLOW"),
+]
+
+# ---- Files a command runs as shell. The guard never opened them, so a script
+# did unseen what the guard denies when typed (2026-10-30: an agent's probe
+# script created and filled ~/Library/Caches/tcc-probe-1248). Each file is
+# written to a temporary directory; {d} in a command is that directory. ----
+SCRIPT_FILES = {
+    "probe.sh": ("#!/bin/bash\nset -u\nSRC=/src\nDST=\"$HOME/Library/Caches/tcc-probe-1248\"\n"
+                 "mkdir -p \"$DST\"\ncp -R \"$SRC/.\" \"$DST/\"\n"),
+    "plain.sh": "mkdir -p ~/Library/Caches/x\n",
+    "outer.sh": "#!/bin/bash\necho start\nbash inner.sh\n",
+    "inner.sh": "rm -r ~/Library/Caches/x\n",
+    "after-string.sh": "#!/bin/bash\nbash -c 'echo hi'\nsource ./plain.sh\n",
+    "exec.sh": "#!/usr/bin/env bash\ntouch ~/.config/x\n",
+    "exec.py": "#!/usr/bin/env python3\n# mkdir -p ~/Library/Caches/x\n",
+    "benign.sh": ("#!/bin/bash\nOUT=/tmp/out\nls ~/Library/Caches\nmkdir -p \"$OUT\"\n"
+                  "cat > notes.md <<'EOF'\nnever mkdir -p ~/Library/Caches/x\nEOF\n"
+                  "node cli.js install chromium\nbash -c 'echo hi'\n"),
+}
+SCRIPT_CASES = [
+    ("the incident: a probe script whose writes go through $DST", "bash {d}/probe.sh", "DENY"),
+    ("a script under zsh -li", "zsh -li {d}/plain.sh", "DENY"),
+    ("a sourced script", "source {d}/plain.sh", "DENY"),
+    ("a dot-sourced script", ". {d}/plain.sh", "DENY"),
+    ("a script under cpu-lock", "cpu-lock run --shared --wait 3600 --label x -- bash {d}/plain.sh", "DENY"),
+    ("a script relative to the session directory", "bash plain.sh", "DENY"),
+    ("a script another script runs", "bash {d}/outer.sh", "DENY"),
+    ("a script sourced after a script string in a file", "bash {d}/after-string.sh", "DENY"),
+    ("a shell-shebang script run by path", "{d}/exec.sh", "DENY"),
+    ("a python script run by path is not shell", "{d}/exec.py", "ALLOW"),
+    ("a script that reads, writes elsewhere, and names writes in data", "bash {d}/benign.sh", "ALLOW"),
+    ("a script that does not exist", "bash {d}/missing.sh", "ALLOW"),
+    ("a script path the guard cannot resolve", "bash \"$S/plain.sh\"", "ALLOW"),
+    ("a script only shown, not run", "cat {d}/plain.sh", "ALLOW"),
 ]
 
 
@@ -264,16 +311,56 @@ def main():
             failures += 1
             print(f"FAIL  expected {expected:<5} got {got:<5}  {name}", file=sys.stderr)
 
+    with tempfile.TemporaryDirectory() as d:
+        for file, text in SCRIPT_FILES.items():
+            with open(os.path.join(d, file), "w") as handle:
+                handle.write(text)
+        for name, command, expected in SCRIPT_CASES:
+            got = verdict(command.format(d=d), cwd=d)
+            if got != expected:
+                failures += 1
+                print(f"FAIL  expected {expected:<5} got {got:<5}  {name}", file=sys.stderr)
+
+    # A script git tracks unchanged is the repository's own mechanism (another
+    # repository's Connect loader clears OP_* before loading its own); once
+    # edited, or never added, it is read like any scratch file.
+    repository_cases = 0
+    # pre-commit runs this with GIT_INDEX_FILE / GIT_DIR set to this
+    # repository's; without clearing them the scratch repository's `git add`
+    # stages into this one (it did, 2026-10-31).
+    git_env = {key: value for key, value in os.environ.items() if not key.startswith("GIT_")}
+    with tempfile.TemporaryDirectory() as d:
+        subprocess.run(["git", "init", "-q", d], check=True, env=git_env)
+        loader = os.path.join(d, "loader.sh")
+        with open(loader, "w") as handle:
+            handle.write("unset OP_CONNECT_TOKEN\nmkdir -p ~/Library/Caches/x\n")
+        for name, expected, step in [
+            ("an untracked script is read", "DENY", None),
+            ("a script git tracks unchanged is the repository's own", "ALLOW", ["add", "loader.sh"]),
+            ("a tracked script edited after it was added is read", "DENY", "edit"),
+        ]:
+            if step == "edit":
+                with open(loader, "a") as handle:
+                    handle.write("echo edited\n")
+            elif step:
+                subprocess.run(["git", "-C", d, *step], check=True, env=git_env)
+            repository_cases += 1
+            got = verdict("bash loader.sh", cwd=d)
+            if got != expected:
+                failures += 1
+                print(f"FAIL  expected {expected:<5} got {got:<5}  {name}", file=sys.stderr)
+
+    total = len(CASES) + len(SCRIPT_CASES) + repository_cases
     if failures:
         print(
-            f"\n{failures} of {len(CASES)} nix-only-guard tests failed.\n"
+            f"\n{failures} of {total} nix-only-guard tests failed.\n"
             "A newly ALLOWED case means the guard was loosened; a newly DENIED "
             "case means a false positive was reintroduced.",
             file=sys.stderr,
         )
         return 1
 
-    print(f"nix-only-guard: {len(CASES)}/{len(CASES)} tests passed")
+    print(f"nix-only-guard: {total}/{total} tests passed")
     return 0
 
 

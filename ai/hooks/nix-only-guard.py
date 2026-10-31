@@ -13,6 +13,7 @@ import json
 import os
 import re
 import shlex
+import subprocess
 import sys
 
 HOME = os.path.expanduser("~")
@@ -438,7 +439,27 @@ COMMAND_WRAPPERS = {
 SHELL_C_FLAG_RE = re.compile(r"-[A-Za-z]*c[A-Za-z]*")  # -c, -lc, -ec
 
 
-def runs_script_string(command):
+def strip_runner(tokens):
+    """The command a leading runner executes, or None when there is no runner.
+
+    check() judges the program at the head of a segment, so a runner in front
+    hid it: `gtimeout 60 rm -r ~/Library/x` and `cpu-lock run … -- mkdir
+    ~/Library/x` were both allowed, and cpu-lock is the wrapper the global
+    policy requires for heavy work (measured 2026-10-31)."""
+    if not tokens:
+        return None
+    head = os.path.basename(tokens[0])
+    if head in ("timeout", "gtimeout", "nice"):
+        i = 1
+        while i < len(tokens) and tokens[i].startswith("-"):
+            i += 1 + (tokens[i] in COMMAND_WRAPPERS[head])
+        return tokens[i + (head != "nice"):]  # timeout's duration is not the program
+    if head == "cpu-lock":
+        return tokens[tokens.index("--") + 1:] if "--" in tokens else []
+    return None
+
+
+def runs_script_string(command, scripts=None):
     """True when `sh|bash|zsh -c` or `eval` is in an executable position.
 
     Walks the command the way the shell tokenises it: quoting, `\\` escapes,
@@ -446,23 +467,42 @@ def runs_script_string(command):
     inside double quotes, where they still run), redirections and their
     operands, and the separators `;` `&` `|` and newline. Each word is judged
     by where it stands: after a separator, keyword, assignment, or wrapper
-    such as `gtimeout 60`, it is the program; anything else is an argument."""
+    such as `gtimeout 60` or `cpu-lock run … --`, it is the program; anything
+    else is an argument.
+
+    When `scripts` is a list, every file this command would execute as shell
+    is appended to it: the file a shell is given (`bash file`, `zsh -li file`),
+    the file `source` or `.` reads, and a program named by path (`./run.sh`),
+    which script_verdict() opens only if it has a shell shebang."""
     command = strip_heredoc_bodies(command)
     mode, skip, wrapper, duration = "cmd", 0, None, False
     stack = []  # open '"', or '(' / '`' with the outer word and state saved
     word, started = [], False
+    found = False  # a script string, when collecting scripts past it
+
+    def hit():
+        # Typed, the first hit decides. Collecting, keep walking: a file's
+        # later lines can still run other scripts.
+        nonlocal found, mode
+        found, mode = True, "arg"
+        return scripts is None
 
     def judge(text):
         nonlocal mode, skip, wrapper, duration
         if skip:
             skip -= 1
+        elif mode == "dashdash":
+            if text == "--":
+                mode = "cmd"  # cpu-lock runs what follows its `--`
         elif mode == "shell":
             if text in ("-o", "+o", "-O", "+O"):
                 skip = 1
             elif SHELL_C_FLAG_RE.fullmatch(text):
-                return True
+                return hit()
             elif not text.startswith(("-", "+")):
                 mode = "arg"  # the script file: `bash script.sh`
+                if scripts is not None:
+                    scripts.append((text, "shell"))
         elif mode == "wrapper" and text.startswith("-"):
             skip = int(text in COMMAND_WRAPPERS[wrapper])
         elif mode == "wrapper" and duration:
@@ -472,13 +512,17 @@ def runs_script_string(command):
             if ASSIGNMENT_RE.match(text) or (mode == "cmd" and text in SHELL_KEYWORDS):
                 pass
             elif name == "eval":
-                return True
+                return hit()
             elif name in COMMAND_WRAPPERS:
                 mode, wrapper, duration = "wrapper", name, name in ("timeout", "gtimeout")
-            elif name in SHELL_INTERPRETERS:
+            elif name == "cpu-lock":
+                mode = "dashdash"
+            elif name in SHELL_INTERPRETERS or name in ("source", "."):
                 mode = "shell"
             else:
                 mode = "arg"
+                if scripts is not None and "/" in text:
+                    scripts.append((text, "program"))
         return False
 
     def finish():
@@ -581,20 +625,26 @@ def runs_script_string(command):
         else:
             word.append(c)
         i += 1
-    return finish()
+    return finish() or found
 
 
-def check_command(command):
+def check_command(command, typed=True):
     """Rules that need the whole command, heredoc bodies included.
 
     split_segments() drops a heredoc fed to an interpreter as data, which is
     right for its other rules and wrong for these: `python3 - <<PY` with a
     requests.post() to the GitHub API is a write that never appears as a
     segment of its own, and an unquoted heredoc runs the substitutions in its
-    body whatever program reads it."""
-    if unquoted_heredoc_substitution(command):
+    body whatever program reads it.
+
+    The first two rules are about the typed command itself: a heredoc an agent
+    meant to be literal, and a script string Claude Code cannot check and so
+    stops to ask the owner about. Inside a script file (`typed=False`) neither
+    applies; a file is the form both denials ask for, and a script's own
+    heredocs expand on purpose."""
+    if typed and unquoted_heredoc_substitution(command):
         return HEREDOC_SUBSTITUTION
-    if runs_script_string(command):
+    if typed and runs_script_string(command):
         return STRING_EXECUTION
     if not GITHUB_API_RE.search(command) or not SCRIPT_WRITE_RE.search(command):
         return None
@@ -617,15 +667,19 @@ def check(segment):
     if not tokens:
         return None
 
-    if reenables_app_integration(tokens):
-        return ("Blocked: setting, unsetting or dropping OP_BIOMETRIC_UNLOCK_ENABLED (including "
-                "`env -i`). Agent commands run with it false so nothing they run can reach the "
-                "1Password desktop app or raise a Touch ID prompt. The steps that need the owner "
-                "have declared commands that ask deliberately; see the credentials rules.")
-
-    # Peel wrappers and leading VAR=value assignments.
+    # Peel wrappers, runners and leading VAR=value assignments. The biometric
+    # rule is judged at every layer, so a runner cannot hide an `env -i`.
     while tokens:
+        if reenables_app_integration(tokens):
+            return ("Blocked: setting, unsetting or dropping OP_BIOMETRIC_UNLOCK_ENABLED (including "
+                    "`env -i`). Agent commands run with it false so nothing they run can reach the "
+                    "1Password desktop app or raise a Touch ID prompt. The steps that need the owner "
+                    "have declared commands that ask deliberately; see the credentials rules.")
         head = os.path.basename(tokens[0])
+        inner = strip_runner(tokens)
+        if inner is not None:
+            tokens = inner
+            continue
         if head in WRAPPERS or re.match(r"^[A-Za-z_][A-Za-z0-9_]*=", tokens[0]):
             tokens = tokens[1:]
             # A wrapper's own flags (`env -u NAME`, `env -i`, `sudo -E`,
@@ -712,6 +766,127 @@ def check(segment):
     return None
 
 
+# The guard judged only the typed command, so a script file it ran was never
+# read: on 2026-10-30 an agent's `bash probe.sh` created and filled a
+# directory under ~/Library/Caches with `DST="$HOME/Library/…"; mkdir -p
+# "$DST"; cp -R … "$DST/"`, the very writes the guard denies when typed, and
+# the global policy tells agents to put multi-step work in such files. A file
+# a command executes as shell is now judged by the same rules, line by line,
+# with its simple NAME=value assignments expanded first, and so is any file it
+# runs in turn. Reading a file changes nothing, so a missing or unreadable
+# file, or a path built from a variable the guard cannot resolve, is skipped
+# rather than denied.
+#
+# A script git tracks, unchanged from its index entry, is the repository's
+# own mechanism and passes, as `just` recipes do: another repository's
+# Connect loader clears inherited OP_* variables before loading its own, and
+# nix-config's setup scripts do what only the owner's setup may. Measured on
+# 2026-10-31 over 3,359 scripts on this Mac (repositories' tracked scripts,
+# agents' scratchpads, Codex run scripts): 15 s in all, none over 0.5 s.
+SHELL_SHEBANG_RE = re.compile(rb"#![ \t]*/\S*/(?:env[ \t]+(?:-\S+[ \t]+)*)?(?:ba|z|da|k)?sh\b")
+SCRIPT_MAX_BYTES = 1 << 20
+SCRIPT_MAX_DEPTH = 4
+ASSIGNMENT_LINE_RE = re.compile(
+    r"^\s*(?:(?:export|local|readonly|declare|typeset)\s+(?:-\S+\s+)*)?"
+    r"([A-Za-z_][A-Za-z0-9_]*)=(.*)$")
+VARIABLE_RE = re.compile(r"\$(?:\{([A-Za-z_][A-Za-z0-9_]*)\}|([A-Za-z_][A-Za-z0-9_]*))")
+
+
+def expand_assignments(text):
+    """Substitute each simple `NAME=value` into the lines after it.
+
+    Only a value that is one shell word after quote removal is recorded. Any
+    `$NAME` inside it is expanded from earlier assignments; anything the guard
+    cannot know (`$(...)`, an unassigned variable) stays as written."""
+    values = {}
+    out = []
+
+    def substitute(match):
+        name = match.group(1) or match.group(2)
+        return values.get(name, match.group(0))
+
+    for line in text.split("\n"):
+        if values and "$" in line:
+            line = VARIABLE_RE.sub(substitute, line)
+        match = ASSIGNMENT_LINE_RE.match(line)
+        if match:
+            try:
+                words = shlex.split(match.group(2))
+            except ValueError:
+                words = []
+            if len(words) == 1:
+                values[match.group(1)] = words[0]
+        out.append(line)
+    return "\n".join(out)
+
+
+def repository_script(full):
+    """True when git tracks this file and its contents match the index.
+
+    Inherited GIT_DIR / GIT_INDEX_FILE / GIT_WORK_TREE (set inside git hooks)
+    would point git at another repository's index, so git finds the file's
+    own repository from its directory instead."""
+    directory = os.path.dirname(full)
+    env = {key: value for key, value in os.environ.items() if not key.startswith("GIT_")}
+    try:
+        tracked = subprocess.run(["git", "-C", directory, "ls-files", "--error-unmatch", "--", full],
+                                 capture_output=True, timeout=5, env=env)
+        if tracked.returncode != 0:
+            return False
+        unchanged = subprocess.run(["git", "-C", directory, "diff", "--quiet", "--", full],
+                                   capture_output=True, timeout=5, env=env)
+        return unchanged.returncode == 0
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+
+
+def script_verdict(path, kind, cwd, depth, seen):
+    """The denial reason for a file a command runs as shell, or None."""
+    if depth > SCRIPT_MAX_DEPTH or "$" in path or "`" in path:
+        return None
+    full = os.path.expanduser(path)
+    if not os.path.isabs(full):
+        if not cwd:
+            return None
+        full = os.path.join(cwd, full)
+    full = os.path.realpath(full)
+    if full in seen or not os.path.isfile(full):
+        return None
+    seen.add(full)
+    try:
+        with open(full, "rb") as handle:
+            data = handle.read(128)
+            if kind == "program" and not SHELL_SHEBANG_RE.match(data):
+                return None  # a binary or another language's script
+            data += handle.read(SCRIPT_MAX_BYTES + 1 - len(data))
+    except OSError:
+        return None
+    if len(data) > SCRIPT_MAX_BYTES or repository_script(full):
+        return None
+    reason = command_verdict(expand_assignments(data.decode("utf-8", "replace")),
+                             cwd, depth + 1, seen, typed=False)
+    return reason and f"Blocked: the script {path} would run this.\n\n{reason}"
+
+
+def command_verdict(command, cwd=None, depth=0, seen=None, typed=True):
+    """The denial reason for a typed command or a script's text, or None."""
+    seen = set() if seen is None else seen
+    reason = check_command(command, typed)
+    if reason:
+        return reason
+    for segment in split_segments(command):
+        reason = check(segment)
+        if reason:
+            return reason
+    scripts = []
+    runs_script_string(command, scripts)
+    for path, kind in scripts:
+        reason = script_verdict(path, kind, cwd, depth, seen)
+        if reason:
+            return reason
+    return None
+
+
 def main():
     try:
         payload = json.load(sys.stdin)
@@ -722,14 +897,9 @@ def main():
     if not command:
         sys.exit(0)
 
-    reason = check_command(command)
+    reason = command_verdict(command, payload.get("cwd"))
     if reason:
         deny(reason)
-
-    for segment in split_segments(command):
-        reason = check(segment)
-        if reason:
-            deny(reason)
 
     sys.exit(0)
 

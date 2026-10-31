@@ -344,6 +344,14 @@ let
     theme = "dark";
     tui = "fullscreen";
 
+    # No agent command may ever raise a 1Password Touch ID prompt. The guard
+    # blocks a typed 1Password CLI call, but not one buried in a script: a stale
+    # justfile's top-level backticks ran it on every `just` invocation and
+    # prompted the owner five times in one session (2026-10-31). With app
+    # integration off, such a call fails instead of asking the desktop app;
+    # agents reach 1Password only through Connect.
+    env.OP_BIOMETRIC_UNLOCK_ENABLED = "false";
+
     # Claude Code keeps itself current: `claude` is Anthropic's native install
     # behind the launcher in ../development.nix, and its background updater
     # follows this channel. "latest" rather than "stable" (about a week

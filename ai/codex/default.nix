@@ -44,6 +44,10 @@ let
     approvals_reviewer = "auto_review";
     sandbox_mode = "danger-full-access";
 
+    # As for Claude Code (modules/home/ai/default.nix): a 1Password CLI call
+    # from any command Codex runs fails instead of raising a Touch ID prompt.
+    shell_environment_policy.set.OP_BIOMETRIC_UNLOCK_ENABLED = "false";
+
     apps._default = {
       approvals_reviewer = "auto_review";
       default_tools_approval_mode = "approve";

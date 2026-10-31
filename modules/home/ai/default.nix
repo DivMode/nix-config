@@ -54,6 +54,40 @@ let
     ]
   );
 
+  # Impeccable's Claude Code skill directory, with its engine binary beside
+  # it. The skill's scripts/impeccable launcher runs
+  # scripts/bin/<os>-<arch>/impeccable when that binary reports the version in
+  # scripts/VERSION, and otherwise downloads one into ~/.impeccable on first
+  # use. Placing the release binary here, verified against the digest
+  # upstream records in scripts/engine-checksums.txt (the same manifest the
+  # launcher verifies its own download against), means nothing is fetched at
+  # run time and an `update.sh impeccable` moves the binary with the skill.
+  impeccableSkill =
+    let
+      source = "${inputs.impeccable}/.claude/skills/impeccable";
+      version = lib.trim (builtins.readFile "${source}/scripts/VERSION");
+      platform = pkgs.stdenv.hostPlatform;
+      target = "${if platform.isDarwin then "darwin" else "linux"}-${
+        if platform.isAarch64 then "arm64" else "x64"
+      }";
+      asset = "impeccable-${target}";
+      manifest = map (line: lib.filter (field: field != "") (lib.splitString " " line)) (
+        lib.splitString "\n" (builtins.readFile "${source}/scripts/engine-checksums.txt")
+      );
+      entry = lib.findFirst (
+        fields: lib.length fields == 3 && lib.head fields == version && lib.elemAt fields 1 == asset
+      ) (throw "impeccable: engine-checksums.txt has no ${asset} digest for ${version}") manifest;
+      engine = pkgs.fetchurl {
+        url = "https://github.com/pbakaus/impeccable/releases/download/engine-v${version}/${asset}";
+        sha256 = lib.elemAt entry 2;
+      };
+    in
+    pkgs.runCommand "impeccable-skill-${version}" { } ''
+      cp -R ${source} $out
+      chmod -R u+w $out
+      install -Dm755 ${engine} $out/scripts/bin/${target}/impeccable
+    '';
+
   # Grafana's official Claude Code plugin for the gcx CLI — skills for
   # querying dashboards, metrics, logs and alerts, plus a `grafana-debugger`
   # agent. Upstream documents installation through its plugin marketplace
@@ -443,7 +477,7 @@ in
       # Directory paths, which the module links as whole trees under
       # ~/.claude/skills/<name>/ — so a skill that grows references/ or
       # rules/ beside its SKILL.md needs no change here.
-      skills = ai.skills // ai.claudeSkills // anthropicClaudeSkills;
+      skills = ai.skills // ai.claudeSkills // anthropicClaudeSkills // { impeccable = impeccableSkill; };
     };
 
     # Session launchers, declared beside the client they launch.

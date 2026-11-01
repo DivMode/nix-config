@@ -893,11 +893,17 @@ def main():
     except Exception:
         sys.exit(0)
 
-    command = (payload.get("tool_input") or {}).get("command") or ""
-    if not command:
+    if not isinstance(payload, dict):
+        sys.exit(0)
+    tool_input = payload.get("tool_input")
+    if not isinstance(tool_input, dict):
+        sys.exit(0)
+    command = tool_input.get("command")
+    if not isinstance(command, str) or not command:
         sys.exit(0)
 
-    reason = command_verdict(command, payload.get("cwd"))
+    cwd = payload.get("cwd")
+    reason = command_verdict(command, cwd if isinstance(cwd, str) else None)
     if reason:
         deny(reason)
 

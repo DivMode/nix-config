@@ -63,6 +63,41 @@ self-updating native install behind a Nix launcher
 stream by days. The separate Claude desktop cask is intentionally
 absent.
 
+## Agent hooks
+
+`agent-hooks.nix` installs machine-managed hooks for Claude Code and Codex.
+`ai/hooks/default.nix` is the single declaration of every handler, its kind,
+event, matcher, command, and explicit timeout (at most 15 seconds). Repositories
+cannot add agent hooks: Claude's `allowManagedHooksOnly` and Codex's
+`allow_managed_hooks_only` skip unmanaged hook sources, including session hooks.
+No plugins are force-enabled through managed Claude settings.
+
+An `observe` handler never blocks. A `deny` handler is allowed only on
+PreToolUse and may refuse a specific forbidden command only through
+`permissionDecision: "deny"` JSON with exit 0. Stop, SubagentStop, PreCompact,
+and UserPromptSubmit handlers are forbidden because they can force or stall
+model turns. Broken input or a handler's own failure must never become a denial.
+
+Both managed files are outputs of the hook-contract derivation. Before writing
+them, it runs each real command with malformed, empty, null, and harmless event
+payloads under `env -i`, a bare PATH and no HOME tools. It checks exit
+status, output controls, and deliberate guard denials; separate flake checks
+prove rejection of an exit-2 hook and a Stop declaration, including the
+expected failure reason.
+
+Claude's validated JSON is installed atomically at
+`/Library/Application Support/ClaudeCode/managed-settings.json`, owned by
+root:wheel, mode 0644, in a mode-0755 directory. A receipt prevents overwriting
+an unmanaged or externally changed policy. No launchd reconciler is needed:
+macOS preserves this directory at boot. The ccstatusline `statusLine` lives
+there too because managed-only mode ignores a user status line. Home Manager
+removes the old `hooks` and `statusLine` keys from the live user settings.
+
+Codex's `/etc/codex/requirements.toml` is owned by nix-darwin's
+`environment.etc`. Its PreToolUse guard is inert unless a delegation launch
+sets `CODEX_ORCHESTRATOR_DELEGATED=1`; both dispatch and resume do so. Ordinary
+owner sessions can commit. Delegation supplies no inline hook or trust bypass.
+
 ## Dock and macOS defaults
 
 `dock.nix` is the Dock source of truth. Finder is supplied implicitly by macOS;

@@ -57,29 +57,18 @@
   delegationAssignment = ./delegation/assignment.md;
 
   # Local additions to the codex-orchestrator Claude Code plugin: the
-  # delegation policy skill, the post-run scope check, and the guard hook it passes to Codex. Claude
+  # delegation policy skill, the post-run scope check, and the journal writer. Claude
   # Code only; modules/home/ai layers them into the plugin tree.
   codexOrchestrator = {
     delegateSkill = ./codex-orchestrator/codex-delegate;
     scopeCheck = ./codex-orchestrator/codex-scope.sh;
-    guardHook = ./codex-orchestrator/codex-guard.sh;
     journal = ./codex-orchestrator/codex-journal.sh;
     journalTest = ./codex-orchestrator/codex-journal-test.sh;
   };
 
-  # Client hook programs. These are declared here, rather than written into a
-  # client's own directory, so that losing or wiping that directory cannot
-  # disarm them: the renderer points each client at the Nix store path.
-  hooks = {
-    nixOnlyGuard = ./hooks/nix-only-guard.py;
-
-    # Reports this agent's lifecycle state back to Herdr, which is what draws
-    # the running/waiting/idle marks in its sidebar. Byte-identical to what
-    # `herdr integration install claude` writes — verified by running that
-    # command against a throwaway HOME and diffing — so this is upstream's own
-    # artifact under version control, not a local edit of it.
-    herdrAgentState = ./hooks/herdr-agent-state.sh;
-  };
+  # Machine-only hook declarations and their build contract. Neither client
+  # loads hooks from user settings, repositories, or delegation command lines.
+  hooks = ./hooks;
 
   mcpServers = import ./mcp/servers.nix;
 }

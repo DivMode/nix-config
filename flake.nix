@@ -170,6 +170,17 @@
           rawLocal;
       localConfigured = localPath != "";
       ai = import ./ai;
+      agentHooks =
+        system:
+        import ai.hooks {
+          pkgs = nixpkgs.legacyPackages.${system};
+          statusLine =
+            (import ./modules/home/ai/ccstatusline.nix {
+              inherit inputs;
+              inherit (nixpkgs) lib;
+              pkgs = nixpkgs.legacyPackages.${system};
+            }).statusLine;
+        };
     in
     {
       darwinConfigurations.example-mac = nix-darwin.lib.darwinSystem {
@@ -194,6 +205,11 @@
             "x86_64-linux"
           ]
           (system: {
+            inherit ((agentHooks system).tests)
+              agent-hooks
+              agent-hooks-reject-exit
+              agent-hooks-reject-stop
+              ;
             shell-bootstrap-hashes =
               let
                 pkgs = nixpkgs.legacyPackages.${system};

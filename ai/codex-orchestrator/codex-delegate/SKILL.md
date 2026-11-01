@@ -157,23 +157,21 @@ default.
 RUN_DIR="$HOME/.claude/codex-runs/<repo-name>/<run-id>"
 EXECUTION_DIR="$RUN_DIR/codex-impl-01/execution-01"
 gtimeout --foreground --signal=TERM --kill-after=60s 45m \
-  python3 "${CLAUDE_PLUGIN_ROOT}/scripts/codex_orch_tools.py" run \
+  env CODEX_ORCHESTRATOR_DELEGATED=1 python3 "${CLAUDE_PLUGIN_ROOT}/scripts/codex_orch_tools.py" run \
     --label codex-impl-01 --repo "$REPO" --role implementation \
     --events "$EXECUTION_DIR/events.jsonl" --prompt "$EXECUTION_DIR/prompt.md" \
   -- codex exec --json --output-last-message "$EXECUTION_DIR/handoff.md" \
      -m gpt-6.1-sol -c model_reasoning_effort="<effort>" -c agents.max_threads=1 \
      -s danger-full-access -c approval_policy=never \
-     --dangerously-bypass-hook-trust \
-     -c "hooks.PreToolUse=[{matcher=\"Bash\", hooks=[{type=\"command\", command=\"${CLAUDE_PLUGIN_ROOT}/local/codex-guard\"}]}]" \
      -C "$WORKTREE" -
 ```
 
-The `hooks.PreToolUse` line attaches the guard to this job only. Before they run, it refuses git
+`CODEX_ORCHESTRATOR_DELEGATED=1` activates the machine-managed guard for this job. Before they run, it refuses git
 commands that commit or push (commit, push, merge, rebase, cherry-pick, revert, am),
 `just pr`/`just ship`, GitHub PR, release, and API writes, and deploy and cluster-write commands.
-Reads such as `gh pr view`, `git stash push`, and `rg` searches stay allowed. `--dangerously-bypass-hook-trust` lets an inline hook run without Codex's one-time
-review. It also runs any hooks the repository ships in `.codex/` without that review, which in
-practice means the repository's own guardrails apply to Codex too.
+Reads such as `gh pr view`, `git stash push`, and `rg` searches stay allowed. The guard is trusted
+through `/etc/codex/requirements.toml`; managed-only policy skips repository, user, session, and
+plugin hooks. The owner's ordinary sessions leave the environment gate unset.
 
 After each execution, append its result. The helper reads `session_id` from the recorded events
 path's `thread.started` event and carries forward the task and handoff paths. Repeat
@@ -242,14 +240,12 @@ by default for any job that splits cleanly; the user should not have to ask.
   SESSION_ID="$(jq -r 'select(.type=="thread.started").thread_id' "$RUN_DIR/codex-impl-01/execution-01/events.jsonl")"
   EXECUTION_DIR="$RUN_DIR/codex-impl-01/execution-02"
   gtimeout --foreground --signal=TERM --kill-after=60s 45m \
-    env -C "$WORKTREE" python3 "${CLAUDE_PLUGIN_ROOT}/scripts/codex_orch_tools.py" run \
+    env -C "$WORKTREE" CODEX_ORCHESTRATOR_DELEGATED=1 python3 "${CLAUDE_PLUGIN_ROOT}/scripts/codex_orch_tools.py" run \
       --label codex-impl-01 --repo "$REPO" --role implementation \
       --events "$EXECUTION_DIR/events.jsonl" --prompt "$EXECUTION_DIR/prompt.md" \
     -- codex exec resume --json --output-last-message "$EXECUTION_DIR/handoff.md" \
        -m gpt-6.1-sol -c model_reasoning_effort="<effort>" -c agents.max_threads=1 \
        -c 'sandbox_mode="danger-full-access"' -c approval_policy=never \
-       --dangerously-bypass-hook-trust \
-       -c "hooks.PreToolUse=[{matcher=\"Bash\", hooks=[{type=\"command\", command=\"${CLAUDE_PLUGIN_ROOT}/local/codex-guard\"}]}]" \
        "$SESSION_ID" -
   ```
 - Cancel: stop the background task. The runner exits 143 after stopping Codex. A timeout exits 124.
@@ -301,8 +297,8 @@ by default for any job that splits cleanly; the user should not have to ask.
   shared cargo home outside the worktree. Codex can therefore write anywhere the user can and use
   the network. `approval_policy=never` means it is never stopped to ask. `agents.max_threads=1` caps
   sub-agents at one concurrent child; Codex 0.159.2 offers no setting verified to remove them.
-- Enforced by the guard hook (`local/codex-guard`, a Codex PreToolUse hook passed on the command
-  line): committing and pushing git commands, ship, GitHub PR, release, and API writes, deploy, and
+- Enforced by the machine-managed Codex PreToolUse guard (activated by
+  `CODEX_ORCHESTRATOR_DELEGATED=1`): committing and pushing git commands, ship, GitHub PR, release, and API writes, deploy, and
   cluster-write commands are rejected before they run. It reads each tool's real subcommand, so it
   catches them behind `git -C`/`-c`, `bash -c '...'`, `env`, `$(...)`, redirections, and full
   paths, while reads such as `gh pr view` or `git stash push` run. It stops ordinary mistakes, not

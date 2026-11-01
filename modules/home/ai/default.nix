@@ -148,7 +148,7 @@ let
   #
   # Local additions are the delegation policy (skills/codex-delegate) with its copy of
   # the shared worker brief, its scope check
-  # (local/codex-scope), its guard hook (local/codex-guard), and journal writer
+  # (local/codex-scope), and journal writer
   # (local/codex-journal). The skill
   # reaches all of them through ${CLAUDE_PLUGIN_ROOT}, and they go away with the
   # plugin.
@@ -156,14 +156,6 @@ let
     name = "codex-scope";
     runtimeInputs = [ pkgs.git ];
     text = builtins.readFile ai.codexOrchestrator.scopeCheck;
-  };
-
-  # Codex PreToolUse hook that stops a delegated job committing, pushing, shipping, or
-  # deploying; the skill passes it inline on each job's command line.
-  codexGuard = pkgs.writeShellApplication {
-    name = "codex-guard";
-    runtimeInputs = [ pkgs.jq ];
-    text = builtins.readFile ai.codexOrchestrator.guardHook;
   };
 
   codexJournal = import ../../../ai/codex-orchestrator/codex-journal.nix { inherit pkgs; };
@@ -183,7 +175,6 @@ let
     chmod u+w $out/skills/codex-delegate
     cp ${ai.delegationAssignment} $out/skills/codex-delegate/assignment.md
     install -Dm755 ${lib.getExe codexScope} $out/local/codex-scope
-    install -Dm755 ${lib.getExe codexGuard} $out/local/codex-guard
     install -Dm755 ${lib.getExe codexJournal} $out/local/codex-journal
   '';
 
@@ -378,12 +369,8 @@ let
       "claude-opus-5".effortLevel = "high";
     };
 
-    # ccstatusline formats the status bar. Claude Code reads this key on
-    # startup and invokes the command once per render. See ./ccstatusline.nix.
-    statusLine = ccstatusline.statusLine;
-
     # Every session starts with permission prompts off. The nix-only-guard
-    # PreToolUse hook below still runs and still denies under this mode, so the
+    # managed PreToolUse hook still runs and still denies under this mode, so the
     # machine boundary is unaffected; what bypassing removes is the prompts.
     # It does not protect against prompt injection — the guard does.
     permissions.defaultMode = "bypassPermissions";
@@ -404,48 +391,6 @@ let
       enabled = false;
       autoAllowBashIfSandboxed = false;
     };
-
-    # The guard is referenced by absolute Nix store path and run with an
-    # explicit interpreter. Nothing under ~/.claude is involved, so removing
-    # that directory cannot silently disable the rule the hook enforces.
-    hooks.PreToolUse = [
-      {
-        matcher = "Bash";
-        hooks = [
-          {
-            type = "command";
-            command = "${pkgs.python3}/bin/python3 ${ai.hooks.nixOnlyGuard}";
-            timeout = 10;
-          }
-        ];
-      }
-    ];
-
-    # Herdr's sidebar draws each agent's running/waiting/idle state from this.
-    # `herdr integration install claude` writes the same registration pointing
-    # at a loose copy in ~/.claude/hooks/; pointing at the store path instead
-    # means wiping ~/.claude cannot disarm it, exactly as for the guard above.
-    #
-    # The cost is that `herdr integration status` reports `claude: not
-    # installed`, because it tests for its own file path rather than reading
-    # this registration. That report is wrong about the behaviour: running this
-    # store copy with a SessionStart payload was verified to set the pane's
-    # agent session through `pane.report_agent_session`, which is the whole job
-    # of the hook. Do not "fix" the status line by running `herdr integration
-    # install claude` — that rewrites this key to the loose path, which the
-    # next activation reverts, and reintroduces the undeclared file.
-    hooks.SessionStart = [
-      {
-        matcher = "*";
-        hooks = [
-          {
-            type = "command";
-            command = "${lib.getExe pkgs.bash} ${ai.hooks.herdrAgentState} session";
-            timeout = 10;
-          }
-        ];
-      }
-    ];
   };
 
   claudeSettingsJson = pkgs.writeText "claude-settings.json" (builtins.toJSON claudeSettings);
@@ -661,7 +606,8 @@ in
     #
     # The tradeoff: deleting a key from `claudeSettings` no longer removes it
     # from the live file, because a merge cannot tell "Nix stopped declaring
-    # this" from "the client wrote this". Remove it there once by hand too.
+    # this" from "the client wrote this". Hooks and statusLine are explicitly
+    # removed: ../../darwin/agent-hooks.nix now owns both in managed settings.
     home.activation.installClaudeSettings = lib.hm.dag.entryAfter [ "writeBoundary" ] ''
       claudeDirectory="$HOME/.claude"
       settingsFile="$claudeDirectory/settings.json"
@@ -680,7 +626,7 @@ in
       claudeCurrent="$(${lib.getExe pkgs.jq} --sort-keys '.' "$settingsFile" 2>/dev/null || echo '{}')"
       claudeMerged="$(
         printf '%s' "$claudeCurrent" \
-          | ${lib.getExe pkgs.jq} --sort-keys --slurpfile declared ${claudeSettingsJson} '. * $declared[0]'
+          | ${lib.getExe pkgs.jq} --sort-keys --slurpfile declared ${claudeSettingsJson} '. * $declared[0] | del(.hooks, .statusLine)'
       )"
 
       # Only rewrite on a real difference, so an unrelated activation does not

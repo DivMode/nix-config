@@ -2,7 +2,8 @@
 
 This directory is the canonical public source for shared instructions,
 specialist agents, client hook programs, Codex preferences, and MCP server
-metadata. `modules/home/ai` renders or merges them into client-native files.
+metadata. `modules/home/ai` renders or merges user configuration;
+`modules/darwin/agent-hooks.nix` installs machine-managed hook policy.
 
 The point of declaring any of this is recoverability. A coding agent deleted a
 previous machine's assistant configuration; everything here is restored by
@@ -17,7 +18,7 @@ previous machine's assistant configuration; everything here is restored by
 | `skills/` | `~/.claude/skills/<name>/`, `~/.codex/skills/<name>/` |
 | `claude-skills/` | `~/.claude/skills/<name>/` (Claude Code only) |
 | `delegation/assignment.md` | `assignment.md` beside both delegation skills |
-| `hooks/nix-only-guard.py` | referenced by absolute Nix store path from Claude Code's settings |
+| `hooks/default.nix` | Claude managed settings and `/etc/codex/requirements.toml`, through the build-time hook contract |
 | `codex/default.nix` | narrowly merged into mutable `~/.codex/config.toml` |
 | `mcp/servers.nix` | `~/.config/nix-config/ai/` review artifacts |
 

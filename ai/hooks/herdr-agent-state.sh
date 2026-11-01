@@ -1,7 +1,6 @@
 #!/bin/sh
-# installed by herdr
-# managed by herdr; reinstalling or updating the integration overwrites this file.
-# add custom hooks beside this file instead of editing it.
+# Derived from Herdr's integration; managed by nix-config. The input object
+# check below keeps valid non-object JSON from failing a managed observer.
 # HERDR_INTEGRATION_ID=claude
 # HERDR_INTEGRATION_VERSION=8
 
@@ -47,6 +46,9 @@ if hook_input_file:
             hook_input = json.loads(content)
     except Exception:
         hook_input = {}
+
+if not isinstance(hook_input, dict):
+    hook_input = {}
 
 hook_event_name = str(hook_input.get("hook_event_name") or "")
 is_subagent = bool(hook_input.get("agent_id"))

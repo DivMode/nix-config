@@ -63,6 +63,63 @@ self-updating native install behind a Nix launcher
 stream by days. The separate Claude desktop cask is intentionally
 absent.
 
+## Agent hooks
+
+`agent-hooks.nix` installs machine-managed hooks for Claude Code and Codex.
+`ai/hooks/default.nix` is the single declaration of every handler, its kind,
+event, matcher, command, and explicit timeout (at most 15 seconds). Repositories
+cannot add agent hooks: Claude's `allowManagedHooksOnly` and Codex's
+`allow_managed_hooks_only` skip unmanaged hook sources, including session hooks.
+No plugins are force-enabled through managed Claude settings.
+
+Claude still accepts Agent SDK hooks registered in-process. Using that residual
+requires a program that embeds Claude, which is reviewed as code; editing
+configuration cannot register an SDK hook. Under managed-only mode, Claude's
+`/goal` cannot run and plugin hooks stop unless the plugin is force-enabled in
+managed `enabledPlugins`. None are force-enabled here.
+
+An `observe` handler never blocks. A `deny` handler is allowed only on
+PreToolUse and may refuse a specific forbidden command only through
+`permissionDecision: "deny"` JSON with exit 0. Stop, SubagentStop, PreCompact,
+and UserPromptSubmit handlers are forbidden because they can force or stall
+model turns. Broken input or a handler's own failure must never become a denial.
+
+Every managed command runs through the pinned-Python supervisor. It passes
+stdin to the handler, kills its process group before the client timeout, and
+always exits 0, including on its own errors. Observers emit no stdout; deny
+handlers can emit only a validated PreToolUse permission denial after a
+successful exit. All other stdout is discarded, and stderr is limited to one
+short line. The contract executes these exact supervised commands. Fixtures
+cover exit-2 failures, hangs, observer blocking output, and non-deny controls;
+the raw exit-2 fixture still proves the build gate catches an unsupervised hook.
+
+Both managed files are outputs of the hook-contract derivation. Before writing
+them, it runs each real command with malformed, empty, null, and harmless event
+payloads under `env -i`, a bare PATH and no HOME tools. It checks exit
+status, output controls, and deliberate guard denials; separate flake checks
+prove rejection of an exit-2 hook and a Stop declaration, including the
+expected failure reason.
+
+Claude's validated JSON is installed atomically at
+`/Library/Application Support/ClaudeCode/managed-settings.json`, owned by
+root:wheel, mode 0644, in a mode-0755 directory. A receipt prevents overwriting
+an unmanaged or externally changed policy. If installation stops after the
+policy rename, the expected policy bytes permit repairing its stale or missing
+receipt; bytes matching neither the receipt nor the desired policy are refused.
+No launchd reconciler is needed:
+macOS preserves this directory at boot. The ccstatusline `statusLine` lives
+there too because managed-only mode ignores a user status line. Home Manager
+removes the old `hooks` and `statusLine` keys from the live user settings.
+
+Codex's `/etc/codex/requirements.toml` is owned by nix-darwin's
+`environment.etc`. Its PreToolUse guard is inert unless a delegation launch
+sets `CODEX_ORCHESTRATOR_DELEGATED=1`; both dispatch and resume do so. Ordinary
+owner sessions can commit. Delegation supplies no inline hook or trust bypass.
+`[features] hooks = true` is pinned in the requirements file so local feature
+configuration cannot disable the managed guard. Codex's legacy `notify`
+command runs outside managed hooks; it is fire-and-forget and cannot block or
+continue a turn.
+
 ## Dock and macOS defaults
 
 `dock.nix` is the Dock source of truth. Finder is supplied implicitly by macOS;

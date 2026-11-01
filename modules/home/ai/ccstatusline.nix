@@ -7,8 +7,9 @@
 #
 # Returned as a plain attribute set rather than a module so the settings and the
 # statusLine value can be consumed by two different owners: the ccstatusline
-# config file is a symlink, while Claude Code's settings.json is an activation-
-# installed real file. See ../projects.md for why those differ.
+# config file is a user symlink, while Claude Code's statusLine must be in the
+# root-owned managed settings under allowManagedHooksOnly. See
+# ../../darwin/agent-hooks.nix.
 {
   inputs,
   lib,
@@ -263,8 +264,7 @@ in
 {
   inherit package;
 
-  # Written to Claude Code's settings.json, which reads it on startup to invoke
-  # the formatter.
+  # Written to Claude Code's managed-settings.json, read on startup.
   statusLine = {
     type = "command";
     command = lib.getExe package;

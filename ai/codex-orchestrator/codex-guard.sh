@@ -1,11 +1,10 @@
 # PreToolUse hook for Codex jobs Claude delegates through /codex-orchestrator:codex-delegate.
-# Packaged by modules/home/ai with writeShellApplication (strict mode, shellcheck, jq on PATH),
+# Packaged by ai/hooks with writeShellApplication (strict mode, shellcheck, jq on PATH),
 # so this file has no shebang.
 #
 # Delegated jobs run without a sandbox. This hook rejects committing, pushing, shipping, and
-# deploying before the command runs. Those are Claude's job after review. It is passed inline
-# on each job's command line (`-c hooks.PreToolUse=[...]` with --dangerously-bypass-hook-trust),
-# so the user's own Codex sessions never load it and no file is written into the repository.
+# deploying before the command runs. Those are Claude's job after review. Machine-managed
+# requirements load it for every session; only delegated launches set the environment gate.
 #
 # Each command is split into simple commands. Quotes, brackets, backticks, and redirections become
 # spaces, so `bash -c '...'`, `$(...)`, `env X=1 ...`, and `cmd>/dev/null` expose their words. For
@@ -15,6 +14,8 @@
 # search and is skipped. Known limits: a mention such as `echo "git push"` is refused (harmless),
 # and an interpreter one-liner or a script that runs these internally gets through. This guards
 # against mistakes, not a determined bypass.
+
+[[ "${CODEX_ORCHESTRATOR_DELEGATED:-}" == "1" ]] || exit 0
 
 deny() {
   jq -n --arg r "delegated Codex job: $1. Leave changes uncommitted; Claude commits and ships after review" \
@@ -42,9 +43,15 @@ subcommand() {
 }
 
 input="$(cat)"
-# Fail closed: a command this hook cannot read is not run.
-if ! cmd="$(printf '%s' "$input" | jq -r '.tool_input.command // empty | if type == "array" then join(" ") else . end')"; then
-  deny "the guard could not read this command"
+# A broken payload or dependency is not a policy denial. Only a readable,
+# specifically forbidden command may be refused, always through exit-0 JSON.
+if ! cmd="$(printf '%s' "$input" | jq -r '
+  select(type == "object") | .tool_input | select(type == "object") | .command |
+  if type == "string" then .
+  elif type == "array" and all(.[]; type == "string") then join(" ")
+  else empty end
+' 2>/dev/null)"; then
+  exit 0
 fi
 [[ -n "$cmd" ]] || exit 0
 

@@ -186,6 +186,27 @@ Do not introduce a test runner, dependency, helper service, or generalized
 harness without showing why existing mechanisms cannot verify the requested
 behavior and ensuring the expansion is within the authorized scope.
 
+**Tests use the frameworks' own features, never a custom harness.** The test
+stack is Vitest, and in Alchemy projects `alchemy/Test` and Alchemy Domain
+(Stories, `testClient`). That is also the default for every new project.
+Before writing or moving any test, read those frameworks' documentation for
+the feature you need, and use it:
+
+- Anything that needs a real browser or a DOM runs in **Vitest Browser Mode**
+  (its Playwright provider, `vitest/browser`, `vi.mock` for service
+  boundaries). Never launch a browser yourself (`chromium.launch()`), never
+  start a dev server from a test to host components, never write a separate
+  Playwright runner or config, and never hand-write module fakes served by a
+  custom server.
+- Server behaviour runs through Alchemy's layers: Domain Stories and
+  `testClient` for the model and its Api, `alchemy/Test` (Vitest integration,
+  local stack mode) for Workers and deployed resources.
+- If the framework truly lacks the feature, say so and stop before building
+  anything custom; custom test infrastructure needs the owner's explicit
+  permission. "The repository already does it this way" is not permission:
+  existing custom harnesses are debt to migrate, not patterns to copy or
+  extend.
+
 Investigate every observed failure. Attribute pre-existing, environmental, or
 nondeterministic failures only with evidence; never rerun hoping for green.
 Separate unrelated repairs from the authorized task. Do not delete, skip, or

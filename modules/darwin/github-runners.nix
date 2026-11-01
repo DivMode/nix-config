@@ -69,10 +69,13 @@ let
       connectItem="/etc/profiles/per-user/$(id -un)/bin/nix-config-connect-item"
       mapfile -t declared < ${runnerList}
 
+      # Errexit does not apply inside `$(not_online)`, so a failed listing
+      # must return non-zero itself; the caller's assignment then stops the
+      # script instead of reading every runner as missing.
       not_online() {
         local listed
         listed=$(gh api --paginate "repos/$repository/actions/runners" \
-          --jq '.runners[] | select(.status == "online") | .name')
+          --jq '.runners[] | select(.status == "online") | .name') || return 1
         local name
         for name in "''${declared[@]}"; do
           grep -qxF -- "$name" <<<"$listed" || printf '%s\n' "$name"
@@ -119,6 +122,11 @@ let
       done
       echo "error: not online after 5 minutes: $(tr '\n' ' ' <<<"$missing")" >&2
       echo "see /var/log/github-runners/<name>/launchd-stderr.log" >&2
+      # Not recovered automatically: GitHub deletes a runner that has been
+      # offline for 14 days, but its local `.runner` remains, so the module
+      # never configures it again. Only root can remove that state
+      # (/var/lib/github-runners/<name>/.runner and .credentials*); the next
+      # start then registers it with the token written above.
       exit 1
     '';
   };

@@ -15,6 +15,7 @@
     ./nix.nix
     ./power.nix
     ./spotlight.nix
+    ./sysv-shm.nix
     ./sudo.nix
     ./xcode.nix
   ];

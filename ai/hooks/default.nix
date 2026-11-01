@@ -85,6 +85,23 @@ let
     }
   ];
 
+  supervise =
+    hook:
+    hook
+    // {
+      supervised = true;
+      argv = [
+        (lib.getExe pkgs.python3)
+        "${./.}/supervisor.py"
+        "--kind"
+        hook.kind
+        "--timeout"
+        (toString hook.timeout)
+        "--"
+      ]
+      ++ hook.argv;
+    };
+
   hooksFor =
     client: handlers:
     lib.mapAttrs (
@@ -116,16 +133,17 @@ let
       );
       codex = (pkgs.formats.toml { }).generate "${name}-codex.toml" {
         allow_managed_hooks_only = true;
+        features.hooks = true;
         hooks = hooksFor "codex" handlers;
       };
     in
     pkgs.runCommand name { } ''
-      ${lib.getExe pkgs.python3} ${./contract.py} \
+      ${lib.getExe pkgs.python3} ${./.}/contract.py \
         ${manifest} ${claude} ${codex} "$out" \
         ${lib.getExe' pkgs.coreutils "env"} ${lib.makeBinPath [ pkgs.coreutils ]}
     '';
 
-  managed = contract "managed-agent-hooks" declarations;
+  managed = contract "managed-agent-hooks" (map supervise declarations);
   badHook = pkgs.writeShellScript "bad-agent-hook" ''
     IFS= read -r input || true
     if [[ "$input" == '{' ]]; then
@@ -139,14 +157,54 @@ let
     event = "SessionStart";
     matcher = "*";
     kind = "observe";
-    timeout = 1;
+    timeout = 3;
     argv = [ (toString badHook) ];
   };
+  supervisorFixture = pkgs.writeText "agent-hook-supervisor-fixtures.py" ''
+    import json
+    import sys
+    import time
+
+    mode = sys.argv[1]
+    if mode == "exit":
+        print('{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny"}}')
+        print("missing hook dependency\n" + "x" * 10000, file=sys.stderr)
+        sys.exit(2)
+    if mode == "sleep":
+        time.sleep(60)
+    if mode == "observe":
+        print('{"decision":"block"}')
+    if mode == "deny":
+        print('{"continue":false}')
+  '';
+  supervisorFixtures =
+    map
+      (
+        mode:
+        fixture
+        // {
+          name = "supervisor-${mode}";
+          kind = if mode == "exit" || mode == "deny" then "deny" else "observe";
+          event = if mode == "exit" || mode == "deny" then "PreToolUse" else "SessionStart";
+          argv = [
+            (lib.getExe pkgs.python3)
+            (toString supervisorFixture)
+            mode
+          ];
+        }
+      )
+      [
+        "exit"
+        "sleep"
+        "observe"
+        "deny"
+      ];
 in
 {
   inherit managed;
   tests = {
     agent-hooks = managed;
+    agent-hooks-supervisor = contract "agent-hooks-supervisor" (map supervise supervisorFixtures);
     agent-hooks-reject-exit = pkgs.testers.testBuildFailure' {
       drv = contract "agent-hooks-bad-exit" [ fixture ];
       expectedBuilderLogEntries = [ "agent-hooks: bad-hook: exit 2: missing hook dependency" ];

@@ -209,6 +209,7 @@
               agent-hooks
               agent-hooks-reject-exit
               agent-hooks-reject-stop
+              agent-hooks-supervisor
               ;
             shell-bootstrap-hashes =
               let

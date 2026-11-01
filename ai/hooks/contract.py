@@ -11,6 +11,8 @@ import sys
 import tempfile
 import tomllib
 
+from supervisor import permission_denial
+
 
 FORBIDDEN_EVENTS = {"Stop", "SubagentStop", "PreCompact", "UserPromptSubmit"}
 
@@ -52,15 +54,7 @@ def output_denies(hook, output):
                 continue
             require(not has_control(value), "observer emitted blocking/continuation control")
         return False
-    value = json.loads(output)
-    require(isinstance(value, dict) and set(value) == {"hookSpecificOutput"},
-            "deny hook emitted controls other than a permission denial")
-    specific = value["hookSpecificOutput"]
-    require(isinstance(specific, dict)
-            and set(specific) <= {"hookEventName", "permissionDecision", "permissionDecisionReason"}
-            and specific.get("hookEventName") == "PreToolUse"
-            and specific.get("permissionDecision") == "deny"
-            and isinstance(specific.get("permissionDecisionReason", ""), str),
+    require(permission_denial(output) is not None,
             "deny hook emitted something other than PreToolUse permissionDecision deny")
     return True
 
@@ -79,6 +73,11 @@ def run(hook, text, environment, scratch, env_program, bare_path):
             process.communicate()
             raise ValueError("hook exceeded its declared timeout") from None
     require(process.returncode == 0, f"exit {process.returncode}: {stderr.strip()}")
+    if hook.get("supervised"):
+        require(len(stderr.encode("utf-8")) <= 241 and stderr.count("\n") <= 1,
+                "supervisor stderr must be one short bounded line")
+        if hook["kind"] == "observe":
+            require(stdout == "", "supervised observer emitted stdout")
     return output_denies(hook, stdout)
 
 
@@ -112,6 +111,7 @@ def main():
     require(isinstance(claude, dict) and claude.get("allowManagedHooksOnly") is True,
             "Claude managed settings must be an object with managed-only hooks")
     require(codex.get("allow_managed_hooks_only") is True, "Codex must use managed-only hooks")
+    require(codex.get("features", {}).get("hooks") is True, "Codex managed hooks feature must be pinned on")
     for client, config in [("claude", claude), ("codex", codex)]:
         require(config["hooks"] == rendered_hooks(handlers, client), f"{client} hooks differ from declarations")
 

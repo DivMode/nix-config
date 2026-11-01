@@ -28,8 +28,9 @@ let
 
   marker = "# Managed by nix-config (modules/darwin/sysv-shm.nix); activation rewrites this file.";
   conf = pkgs.writeText "sysctl.conf" (
-    # The marker goes last: how launchd's boot-time reader treats a comment
-    # line is unverified, and it must not stand in front of the values.
+    # launchd's boot-time reader skips `#` lines (launchctl.c in Apple's
+    # launchd source; the installed /sbin/launchd compares the first byte to
+    # `#`, 2026-11-01 review). Last anyway, behind the values.
     lib.concatLines (lib.mapAttrsToList (name: value: "${name}=${toString value}") shm ++ [ marker ])
   );
 in
@@ -49,7 +50,7 @@ in
     if [[ -L "$sysctlConf" && "$(readlink "$sysctlConf")" == /etc/static/sysctl.conf ]]; then
       rm "$sysctlConf"
     fi
-    if [[ -e "$sysctlConf" ]] && ! grep -qxF ${lib.escapeShellArg marker} "$sysctlConf"; then
+    if [[ -L "$sysctlConf" ]] || { [[ -e "$sysctlConf" ]] && ! grep -qxF ${lib.escapeShellArg marker} "$sysctlConf"; }; then
       echo >&2 "error: $sysctlConf exists and was not written by nix-config; merge it into modules/darwin/sysv-shm.nix and remove it"
       exit 1
     fi

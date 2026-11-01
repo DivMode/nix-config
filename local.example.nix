@@ -117,6 +117,16 @@
     # };
   };
 
+  # Self-hosted GitHub Actions runners (modules/darwin/github-runners.nix),
+  # registered to one repository as runners mac-1 .. mac-<count> with the
+  # default labels (self-hosted, macOS, ARM64). Omit to run none. The
+  # registration token is issued by the owner's `gh` login and stored in the
+  # onePassword.vault above, through Connect.
+  githubRunners = {
+    repository = "example-owner/example-repository";
+    count = 4;
+  };
+
   # SMB shares mounted at login by modules/home/network-shares.nix. Leave
   # `mounts` empty to disable the module entirely.
   #

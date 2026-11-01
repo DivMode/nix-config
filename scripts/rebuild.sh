@@ -96,6 +96,19 @@ if ! outcome=$("$note_bin" save "$vault" "nix-config local.nix" "$local_file"); 
 fi
 echo "==> local.nix backup in 1Password: $outcome and verified"
 
+# ── Register the self-hosted GitHub Actions runners ─────────────────────────
+# Present only when local.nix declares githubRunners. A runner GitHub does not
+# list as online gets a fresh registration token (issued by the owner's `gh`
+# login, stored in 1Password through Connect); the step then waits until every
+# runner is online and fails loudly when one is not.
+register_bin=/run/current-system/sw/bin/nix-config-github-runners-register
+if [[ -x "$register_bin" ]]; then
+  if ! "$register_bin"; then
+    echo "ERROR: activation succeeded, but the GitHub Actions runners are not all online (see above)." >&2
+    exit 1
+  fi
+fi
+
 # Warn, never fail, about a declared kubeconfig this Mac lacks; setup-mac.sh restores them.
 "$repository/scripts/kubeconfigs.sh" --check || true
 

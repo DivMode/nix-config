@@ -7,6 +7,7 @@
     ./dock.nix
     ./firewall.nix
     ./fonts.nix
+    ./github-runners.nix
     ./github-ssh.nix
     ./homebrew.nix
     ./log-rotation.nix

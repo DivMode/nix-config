@@ -35,6 +35,14 @@ then read back (waiting up to 60 s for Connect to catch up) to verify the exact
 text. Connect cannot write Document items, hence a Secure Note. A failure says
 that activation succeeded but the backup is not current, and exits non-zero.
 
+When `local.nix` declares `githubRunners`, the script then runs
+`nix-config-github-runners-register`: every declared runner GitHub does not
+list as online gets a registration token from the owner's `gh` login, stored
+in 1Password through Connect and written to the token file the runners read;
+it waits up to five minutes for all of them to come online, empties the token
+file, and exits non-zero otherwise. A registration token expires after an
+hour; a registered runner keeps its own credential in its state directory.
+
 Do not hand-assemble the underlying command. It is recorded here only so the
 script's final step is reviewable:
 

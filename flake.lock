@@ -1,5 +1,22 @@
 {
   "nodes": {
+    "alchemy-src": {
+      "flake": false,
+      "locked": {
+        "lastModified": 1792802367,
+        "narHash": "sha256-PAt3bqSRGQwrykQK4049hR8ZT6qed92g9LQykcf86iE=",
+        "owner": "alchemy-run",
+        "repo": "alchemy",
+        "rev": "c78e72bc1c172ede20747ac0b8a2175ef1de31a1",
+        "type": "github"
+      },
+      "original": {
+        "owner": "alchemy-run",
+        "ref": "v2.0.0-beta.84",
+        "repo": "alchemy",
+        "type": "github"
+      }
+    },
     "anthropic-skills": {
       "flake": false,
       "locked": {
@@ -302,6 +319,7 @@
     },
     "root": {
       "inputs": {
+        "alchemy-src": "alchemy-src",
         "anthropic-skills": "anthropic-skills",
         "codex-orchestrator": "codex-orchestrator",
         "gcx-src": "gcx-src",

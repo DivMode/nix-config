@@ -189,7 +189,10 @@ else
     .nodes as $nodes
     | ($nodes.root.inputs | [to_entries[].value]) as $rootKeys
     | $nodes | to_entries[]
+    # alchemy-src is excluded: its tag must equal the Alchemy release the
+    # projects install (flake.nix), never the latest upstream release.
     | select(.key != "root"
+             and .key != "alchemy-src"
              and .value.original.type == "github"
              and ((.value.original.ref // "") | test("^v?[0-9]")))
     | .key as $k

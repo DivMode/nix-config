@@ -54,6 +54,12 @@ let
     ]
   );
 
+  # Alchemy's own alchemy-domain skill, from the release-tag pin (flake.nix
+  # alchemy-src), for every project: the owner uses Alchemy everywhere. The
+  # same portable SKILL.md tree serves both clients, linked whole so its
+  # references/ directory comes with it.
+  alchemyDomainSkill = "${inputs.alchemy-src}/packages/domain/skills/alchemy-domain";
+
   # Impeccable's Claude Code skill directory, with its engine binary beside
   # it. The skill's scripts/impeccable launcher runs
   # scripts/bin/<os>-<arch>/impeccable when that binary reports the version in
@@ -430,7 +436,14 @@ in
       # Directory paths, which the module links as whole trees under
       # ~/.claude/skills/<name>/ — so a skill that grows references/ or
       # rules/ beside its SKILL.md needs no change here.
-      skills = ai.skills // ai.claudeSkills // anthropicClaudeSkills // { impeccable = impeccableSkill; };
+      skills =
+        ai.skills
+        // ai.claudeSkills
+        // anthropicClaudeSkills
+        // {
+          impeccable = impeccableSkill;
+          alchemy-domain = alchemyDomainSkill;
+        };
     };
 
     # Session launchers, declared beside the client they launch.
@@ -527,6 +540,12 @@ in
       codexSkillFiles
       // mattPocockCodexSkills
       // gcxCodexSkills
+      // {
+        ".codex/skills/alchemy-domain" = {
+          source = alchemyDomainSkill;
+          recursive = true;
+        };
+      }
       // sharedCodexSkills
       // {
         # Codex reads this as global user instructions for every project, from

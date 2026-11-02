@@ -60,9 +60,10 @@
     # (packages/domain/skills/alchemy-domain). The tag, not main: upstream main
     # already changes the Domain API the skill teaches (Api.testClient became
     # clientInProcess, Story stubs changed), so a main-tracking skill would
-    # teach calls the installed package does not have. Prerelease tags are
-    # not moved by `./scripts/update.sh` (it moves plain vX.Y.Z tags only):
-    # move this tag by hand when the projects move to a new Alchemy release.
+    # teach calls the installed package does not have. `./scripts/update.sh`
+    # excludes this input from its release-tag moves, because upstream's
+    # latest release is not necessarily the one the projects install: move
+    # this tag by hand when the projects move to a new Alchemy release.
     # Apache-2.0, referenced not vendored.
     alchemy-src = {
       url = "github:alchemy-run/alchemy/v2.0.0-beta.84";

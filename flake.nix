@@ -55,6 +55,20 @@
       flake = false;
     };
 
+    # Alchemy, pinned to the release tag of the @alchemy.run/domain version the
+    # projects install, for the alchemy-domain skill that package ships
+    # (packages/domain/skills/alchemy-domain). The tag, not main: upstream main
+    # already changes the Domain API the skill teaches (Api.testClient became
+    # clientInProcess, Story stubs changed), so a main-tracking skill would
+    # teach calls the installed package does not have. Prerelease tags are
+    # not moved by `./scripts/update.sh` (it moves plain vX.Y.Z tags only):
+    # move this tag by hand when the projects move to a new Alchemy release.
+    # Apache-2.0, referenced not vendored.
+    alchemy-src = {
+      url = "github:alchemy-run/alchemy/v2.0.0-beta.84";
+      flake = false;
+    };
+
     # Grafana's gcx CLI, pinned to a release tag. One input feeds two
     # consumers: modules/home/development.nix builds the CLI binary from it
     # (nixpkgs packages gcx, but its pinned release trails upstream), and

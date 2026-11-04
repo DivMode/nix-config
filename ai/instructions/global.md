@@ -153,8 +153,9 @@ Run CPU-heavy work (test suites, release builds, browser e2e) in parallel;
 never wait for another session or repository. Use
 `cpu-lock run --shared --label "<repo>: <what>" -- …` to label the work so
 `cpu-lock status` shows what is running. It never blocks. It runs the command
-at `nice` 10 (the self-hosted CI runners too), so heavy work takes every idle
-core but never lags the owner's desktop; never run heavy work outside it.
+under macOS's utility QoS clamp at `nice` 10 (the self-hosted CI runners too), so
+heavy work takes every idle core but never lags the owner's desktop; never run
+heavy work outside it.
 Exclusive mode no longer exists: `--exclusive` is accepted for compatibility and
 treated as shared.
 

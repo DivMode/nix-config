@@ -1,13 +1,14 @@
 """Label concurrent runs without blocking; record locks track liveness only."""
 
 import argparse
+import ctypes
 from datetime import datetime, timezone
+import errno
 import fcntl
 import json
 import math
 import os
 from pathlib import Path
-import shutil
 import signal
 import subprocess
 import sys
@@ -100,14 +101,12 @@ def publish(path, record):
         temporary.unlink(missing_ok=True)
 
 
-# Heavy work (test suites, builds) runs below the owner's apps: it still takes
-# every idle core, but the scheduler serves interactive work first, so a full
-# machine never lags the desktop. Never raises priority a caller already lowered.
+# Heavy work runs below interactive apps. Never raise priority a caller lowered.
 BACKGROUND_NICE = 10
 
 
 def lower_priority():
-    # Runs in the child before exec: a refusal must never stop the command,
+    # Runs before spawning (or in Popen's child): a refusal never stops the command,
     # which then simply runs at its inherited priority.
     try:
         if os.getpriority(os.PRIO_PROCESS, 0) < BACKGROUND_NICE:
@@ -116,20 +115,82 @@ def lower_priority():
         pass
 
 
-# macOS schedules by QoS class far more than by nice: the utility clamp keeps
-# the command on every core, below interactive work, and drops its disk I/O a
-# tier. Children inherit it. Without taskpolicy (not macOS) the command runs as is.
-TASKPOLICY = "/usr/sbin/taskpolicy"
+def spawn_utility(command, environment):
+    """Spawn directly with taskpolicy's inheritable macOS utility QoS clamp."""
+    # Darwin's spawn.h defines both opaque objects as void pointers, and
+    # sys/_types/_sigset_t.h defines sigset_t as uint32_t.
+    libc = ctypes.CDLL("/usr/lib/libSystem.B.dylib")
+    object_pointer = ctypes.POINTER(ctypes.c_void_p)
+    strings = ctypes.POINTER(ctypes.c_char_p)
+    for name, types in (
+        ("posix_spawnattr_init", [object_pointer]),
+        ("posix_spawnattr_destroy", [object_pointer]),
+        ("posix_spawnattr_setflags", [object_pointer, ctypes.c_short]),
+        ("posix_spawnattr_setsigdefault", [object_pointer, ctypes.POINTER(ctypes.c_uint32)]),
+        ("posix_spawnattr_set_qos_clamp_np", [object_pointer, ctypes.c_uint64]),
+        ("posix_spawn_file_actions_init", [object_pointer]),
+        ("posix_spawn_file_actions_destroy", [object_pointer]),
+        ("posix_spawn_file_actions_addinherit_np", [object_pointer, ctypes.c_int]),
+        ("posix_spawn", [ctypes.POINTER(ctypes.c_int), ctypes.c_char_p,
+                         object_pointer, object_pointer, strings, strings]),
+    ):
+        function = getattr(libc, name)
+        function.argtypes = types
+        function.restype = ctypes.c_int
 
+    def check(error):
+        # These APIs return errno, rather than setting ctypes' errno.
+        if error:
+            raise OSError(error, os.strerror(error), command[0])
 
-def launch_argv(command):
-    # Wrap only a command that resolves to an executable: taskpolicy reports a
-    # missing or unexecutable one as its own exit 66, so anything else goes to
-    # Popen unwrapped and keeps cpu-lock's 127/126 mapping.
-    resolved = shutil.which(command[0])
-    if os.path.exists(TASKPOLICY) and resolved is not None:
-        return [TASKPOLICY, "-c", "utility", *command]
-    return list(command)
+    argv = (ctypes.c_char_p * (len(command) + 1))(*map(os.fsencode, command))
+    envp = (ctypes.c_char_p * (len(environment) + 1))(
+        *(os.fsencode(f"{key}={value}") for key, value in environment.items()))
+    attr = ctypes.c_void_p()
+    actions = ctypes.c_void_p()
+    check(libc.posix_spawnattr_init(ctypes.byref(attr)))
+    try:
+        # sys/spawn.h: SETSIGDEF | SETSID | CLOEXEC_DEFAULT, preserving Popen's
+        # restored signal defaults, new session, and close_fds=True behavior.
+        check(libc.posix_spawnattr_setflags(ctypes.byref(attr), 0x0004 | 0x0400 | 0x4000))
+        defaults = ctypes.c_uint32(sum(1 << (getattr(signal, name) - 1)
+                                      for name in ("SIGPIPE", "SIGXFZ", "SIGXFSZ")
+                                      if hasattr(signal, name)))
+        check(libc.posix_spawnattr_setsigdefault(ctypes.byref(attr), ctypes.byref(defaults)))
+        # xnu/bsd/sys/spawn_internal.h: POSIX_SPAWN_PROC_CLAMP_UTILITY = 1.
+        # system_cmds/taskpolicy/taskpolicy.c uses this same attribute for -c utility.
+        check(libc.posix_spawnattr_set_qos_clamp_np(ctypes.byref(attr), 1))
+        check(libc.posix_spawn_file_actions_init(ctypes.byref(actions)))
+        try:
+            for fd in (0, 1, 2):
+                try:
+                    flags = fcntl.fcntl(fd, fcntl.F_GETFD)
+                except OSError as error:
+                    if error.errno != errno.EBADF:
+                        raise
+                else:
+                    # A closed standard stream can be reused by publish() for
+                    # its CLOEXEC record; preserve exec's close-on-exec behavior.
+                    if not flags & fcntl.FD_CLOEXEC:
+                        check(libc.posix_spawn_file_actions_addinherit_np(ctypes.byref(actions), fd))
+            # posix_spawnp shell-interprets ENOEXEC (Libc/sys/posix_spawn.c).
+            # Use posix_spawn and Popen's PATH search/error precedence instead.
+            paths = ([command[0]] if os.path.dirname(command[0]) else
+                     [os.path.join(path, command[0]) for path in os.get_exec_path(environment)])
+            saved_error = None
+            pid = ctypes.c_int()
+            for path in paths:
+                error = libc.posix_spawn(ctypes.byref(pid), os.fsencode(path),
+                                         ctypes.byref(actions), ctypes.byref(attr), argv, envp)
+                if not error:
+                    return pid.value
+                if saved_error is None and error not in (errno.ENOENT, errno.ENOTDIR):
+                    saved_error = error
+            check(saved_error or error)
+        finally:
+            libc.posix_spawn_file_actions_destroy(ctypes.byref(actions))
+    finally:
+        libc.posix_spawnattr_destroy(ctypes.byref(attr))
 
 
 def run(args, directory, command_umask):
@@ -142,19 +203,19 @@ def run(args, directory, command_umask):
         "start": datetime.now(timezone.utc).isoformat(),
         "cwd": os.getcwd(),
     }
-    child = None
+    child_pid = None
     received = None
 
     def forward(signum, _frame):
         nonlocal received
-        if child is None:
+        if child_pid is None:
             received = signum
         else:
             # The child leads its own session, so the terminal and an outer
             # killer reach only this wrapper: signal the whole group, or a
             # `just` child dies and leaves its cargo and test processes running.
             try:
-                os.killpg(child.pid, signum)
+                os.killpg(child_pid, signum)
             except ProcessLookupError:
                 pass
 
@@ -169,11 +230,17 @@ def run(args, directory, command_umask):
             # A new session avoids delivering terminal signals twice. Neither
             # the command nor any daemon it leaves behind inherits record fds.
             os.umask(command_umask)
-            child = subprocess.Popen(launch_argv(args.command), env=environment, close_fds=True,
-                                     start_new_session=True, preexec_fn=lower_priority)
+            if sys.platform == "darwin":
+                lower_priority()
+                child_pid = spawn_utility(args.command, environment)
+            else:
+                child = subprocess.Popen(args.command, env=environment, close_fds=True,
+                                         start_new_session=True, preexec_fn=lower_priority)
+                child_pid = child.pid
             if received is not None:
                 forward(received, None)
-            code = child.wait()
+            code = (os.waitstatus_to_exitcode(os.waitpid(child_pid, 0)[1])
+                    if sys.platform == "darwin" else child.wait())
             return code if code >= 0 else 128 - code
     finally:
         holder.unlink(missing_ok=True)

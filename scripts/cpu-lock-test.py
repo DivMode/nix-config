@@ -1,6 +1,7 @@
 """Exercise the real CLI and kernel locks with independent concurrent processes."""
 
 from datetime import datetime
+import errno
 import json
 import os
 from pathlib import Path
@@ -14,6 +15,40 @@ import unittest
 
 SCRIPT = Path(__file__).with_name("cpu-lock.py")
 THIS = Path(__file__).resolve()
+
+
+def observed_priority():
+    result = {"nice": os.getpriority(os.PRIO_PROCESS, 0)}
+    if sys.platform == "darwin":
+        import ctypes
+
+        # Darwin sys/proc_info.h: PROC_PIDTHREADID64INFO returns proc_threadinfo.
+        # Its pth_maxpriority is the kernel's effective limit, unlike pthread's
+        # requested QoS. xnu/osfmk/kern/task_policy.c caps it at the task clamp.
+        class ThreadInfo(ctypes.Structure):
+            _fields_ = [("user_time", ctypes.c_uint64), ("system_time", ctypes.c_uint64)] + [
+                (name, ctypes.c_int32) for name in (
+                    "cpu_usage", "policy", "run_state", "flags", "sleep_time",
+                    "current_priority", "priority", "max_priority")
+            ] + [("name", ctypes.c_char * 64)]
+
+        libc = ctypes.CDLL("/usr/lib/libSystem.B.dylib", use_errno=True)
+        libc.pthread_threadid_np.argtypes = [ctypes.c_void_p, ctypes.POINTER(ctypes.c_uint64)]
+        libc.pthread_threadid_np.restype = ctypes.c_int
+        libc.proc_pidinfo.argtypes = [ctypes.c_int, ctypes.c_int, ctypes.c_uint64,
+                                     ctypes.c_void_p, ctypes.c_int]
+        libc.proc_pidinfo.restype = ctypes.c_int
+        thread_id = ctypes.c_uint64()
+        error = libc.pthread_threadid_np(None, ctypes.byref(thread_id))
+        if error:
+            raise OSError(error, os.strerror(error))
+        info = ThreadInfo()
+        size = libc.proc_pidinfo(os.getpid(), 15, thread_id.value,
+                                ctypes.byref(info), ctypes.sizeof(info))
+        if size != ctypes.sizeof(info):
+            raise RuntimeError(f"proc_pidinfo returned {size} bytes: errno={ctypes.get_errno()}")
+        result["max_priority"] = info.max_priority
+    return result
 
 
 def worker():
@@ -30,6 +65,22 @@ def worker():
         sys.exit(int(sys.argv[4]))
     elif action == "die":
         os.kill(os.getpid(), int(sys.argv[4]))
+    elif action == "priority":
+        print(json.dumps(observed_priority()), flush=True)
+    elif action == "launch-priority":
+        import importlib.util
+        from unittest import mock
+        print(json.dumps(observed_priority()), flush=True)
+        spec = importlib.util.spec_from_file_location("cpu_lock_module", SCRIPT)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        # Change only the target, so the real lowering hook must act even when
+        # the suite already inherits nice 10. No scheduler syscall is mocked.
+        target = int(sys.argv[4])
+        sys.argv = [str(SCRIPT), sys.argv[5], "run", "--shared", "--label", "priority", "--",
+                    sys.executable, str(THIS), "worker", str(marker), "priority"]
+        with mock.patch.object(module, "BACKGROUND_NICE", target):
+            sys.exit(module.main())
     elif action == "signal":
         def received(signum, _frame):
             marker.with_suffix(".signal").write_text(str(signum))
@@ -56,7 +107,7 @@ def worker():
     elif action == "daemon":
         daemon = subprocess.Popen([sys.executable, str(THIS), "worker",
                                    str(marker.with_name(marker.name + "-daemon")), "hold"],
-                                  stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                                  stdout=subprocess.DEVNULL,
                                   stderr=subprocess.DEVNULL, close_fds=False)
         marker.with_suffix(".pid").write_text(str(daemon.pid))
     if action in ("hold", "daemon"):
@@ -91,14 +142,15 @@ class CpuLockTests(unittest.TestCase):
     def cli(self, *args):
         return [sys.executable, str(SCRIPT), str(self.root / "unused-default"), *args]
 
-    def start(self, mode, label, action="hold", *extra, wait=None, command=None):
+    def start(self, mode, label, action="hold", *extra, wait=None, command=None, close_stdin=False):
         marker = self.root / label
         command = command or [sys.executable, str(THIS), "worker", str(marker), action, *extra]
         wait_args = [] if wait is None else ["--wait", wait]
         process = subprocess.Popen(self.cli("run", "--" + mode, *wait_args,
                                            "--label", label, "--", *command),
                                    env=self.environment, cwd=self.root, text=True,
-                                   stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+                                   stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                   preexec_fn=(lambda: os.closerange(0, 1)) if close_stdin else None)
         self.processes.append(process)
         return process, marker
 
@@ -200,28 +252,32 @@ class CpuLockTests(unittest.TestCase):
                 self.assertEqual(self.status(), "idle\n")
 
     def test_daemon_does_not_inherit_lock(self):
-        parent, marker = self.start("exclusive", "parent", "daemon")
-        self.ready(marker)
-        self.until(marker.with_suffix(".pid").exists)
-        daemon_marker = marker.with_name(marker.name + "-daemon")
-        daemon_pid = int(marker.with_suffix(".pid").read_text())
-        try:
-            self.ready(daemon_marker)
-            # Keep the same inode visible after normal holder cleanup, so status
-            # detects an inherited record lock even though it cannot block runs.
-            retained = self.directory / "holders" / "0"
-            retained.hardlink_to(self.directory / "holders" / str(parent.pid))
-            self.assertIn('holder: shared label="parent"', self.status())
-            self.release(marker)
-            self.finish(parent)
-            os.kill(daemon_pid, 0)
-            self.assertIn('stale holder: shared label="parent"', self.status())
-            retained.unlink()
-            follower, _ = self.start("exclusive", "after-daemon", "exit", "0", wait="0.5")
-            self.finish(follower)
-            self.assertEqual(self.status(), "idle\n")
-        finally:
-            os.kill(daemon_pid, signal.SIGTERM)
+        for close_stdin in (False, True):
+            with self.subTest(close_stdin=close_stdin):
+                label = "parent-closed" if close_stdin else "parent-open"
+                parent, marker = self.start("exclusive", label, "daemon", close_stdin=close_stdin)
+                self.ready(marker)
+                self.until(marker.with_suffix(".pid").exists)
+                daemon_marker = marker.with_name(marker.name + "-daemon")
+                daemon_pid = int(marker.with_suffix(".pid").read_text())
+                try:
+                    self.ready(daemon_marker)
+                    # Keep the same inode visible after normal holder cleanup, so status
+                    # detects an inherited record lock even though it cannot block runs.
+                    # Closed stdin lets publish() allocate its CLOEXEC record as fd 0.
+                    retained = self.directory / "holders" / "0"
+                    retained.hardlink_to(self.directory / "holders" / str(parent.pid))
+                    self.assertIn(f'holder: shared label="{label}"', self.status())
+                    self.release(marker)
+                    self.finish(parent)
+                    os.kill(daemon_pid, 0)
+                    self.assertIn(f'stale holder: shared label="{label}"', self.status())
+                    retained.unlink()
+                    follower, _ = self.start("exclusive", "after-daemon", "exit", "0", wait="0.5")
+                    self.finish(follower)
+                    self.assertEqual(self.status(), "idle\n")
+                finally:
+                    os.kill(daemon_pid, signal.SIGTERM)
 
     def test_dead_records_are_stale_and_do_not_block(self):
         process, marker = self.start("exclusive", "killed")
@@ -250,15 +306,6 @@ class CpuLockTests(unittest.TestCase):
         follower, _ = self.start("shared", "after-reuse", "exit", "0", wait="0.5")
         self.finish(follower)
 
-    def test_command_runs_below_interactive_priority(self):
-        probe = [sys.executable, "-c",
-                 "import os; print(os.getpriority(os.PRIO_PROCESS, 0))"]
-        result = subprocess.run(self.cli("run", "--shared", "--label", "nice", "--", *probe),
-                                env=self.environment, cwd=self.root, capture_output=True,
-                                text=True, check=True)
-        own = os.getpriority(os.PRIO_PROCESS, 0)
-        self.assertEqual(int(result.stdout), max(own, 10))
-
     def test_lower_priority_only_lowers_and_survives_refusal(self):
         import importlib.util
         from unittest import mock
@@ -280,31 +327,78 @@ class CpuLockTests(unittest.TestCase):
                     mock.patch.object(module.os, "setpriority", side_effect=error):
                 module.lower_priority()  # must not raise: the command still runs
 
-    def test_command_runs_under_the_utility_clamp_when_taskpolicy_exists(self):
-        import importlib.util
-        from unittest import mock
-        spec = importlib.util.spec_from_file_location("cpu_lock_module", SCRIPT)
-        module = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(module)
-        with mock.patch.object(module.os.path, "exists", return_value=True):
-            self.assertEqual(module.launch_argv([sys.executable, "-V"]),
-                             [module.TASKPOLICY, "-c", "utility", sys.executable, "-V"])
-            # A command that does not resolve stays unwrapped, for the 127/126 mapping.
-            self.assertEqual(module.launch_argv(["no-such-command-xyz"]), ["no-such-command-xyz"])
-        with mock.patch.object(module.os.path, "exists", return_value=False):
-            self.assertEqual(module.launch_argv([sys.executable, "-V"]), [sys.executable, "-V"])
+    def test_launch_applies_priority_and_utility_clamp(self):
+        inherited = os.getpriority(os.PRIO_PROCESS, 0)
+        # One step below the caller makes lowering observable; a caller already
+        # at nice 19 has no headroom, so the child must simply keep 19.
+        target = min(19, max(10, inherited + 1))
+        command = [sys.executable, str(THIS), "worker", str(self.root / "priority"),
+                   "launch-priority", str(target), str(self.directory)]
+        if sys.platform == "darwin":
+            reference = subprocess.run(
+                ["/usr/sbin/taskpolicy", "-c", "utility", sys.executable, str(THIS),
+                 "worker", str(self.root / "reference"), "priority"], env=self.environment,
+                cwd=self.root, capture_output=True, text=True, check=True, timeout=30)
+            utility = json.loads(reference.stdout)
+            # A distinct starting clamp makes omitting the production utility
+            # attribute observable even under a utility-clamped test runner.
+            command = ["/usr/sbin/taskpolicy", "-c", "background", *command]
+        result = subprocess.run(command, env=self.environment, cwd=self.root,
+                                capture_output=True, text=True, check=True, timeout=30)
+        before, child = map(json.loads, result.stdout.splitlines())
+        print(f"launch priority: before={before}, child={child}", flush=True)
+        self.assertEqual(before["nice"], inherited)
+        self.assertEqual(child["nice"], target)
+        if sys.platform == "darwin":
+            self.assertLess(before["max_priority"], utility["max_priority"])
+            self.assertEqual(child["max_priority"], utility["max_priority"])
+        self.assertEqual(self.status(), "idle\n")
 
-    def test_missing_and_unexecutable_commands_keep_127_and_126(self):
-        missing = subprocess.run(self.cli("run", "--shared", "--label", "missing", "--",
-                                          "no-such-command-xyz"),
-                                 env=self.environment, cwd=self.root, capture_output=True)
-        self.assertEqual(missing.returncode, 127, missing.stderr)
-        plain = self.root / "not-executable"
-        plain.write_text("echo hi\n")
-        plain.chmod(0o644)
-        denied = subprocess.run(self.cli("run", "--shared", "--label", "denied", "--", str(plain)),
-                                env=self.environment, cwd=self.root, capture_output=True)
-        self.assertEqual(denied.returncode, 126, denied.stderr)
+    def test_exec_errors_and_command_behavior_match_direct_exec(self):
+        fixtures = (
+            ("missing-interpreter", "#!/no-such-cpu-lock-interpreter\nprintf interpreted\\n\n",
+             0o755, 127, errno.ENOENT, b""),
+            ("invalid-format", "printf 'shell-interpreted\\n'\n",
+             0o755, 126, errno.ENOEXEC, b""),
+            ("not-executable", "#!/bin/sh\nprintf interpreted\\n\n",
+             0o644, 126, errno.EACCES, b""),
+            ("normal", "#!/bin/sh\nprintf '%s\\n' \"$1\"\n",
+             0o755, 0, None, b"an argument with spaces\n"),
+            ("exit-66", "#!/bin/sh\nprintf '%s\\n' \"$1\"\nexit 66\n",
+             0o755, 66, None, b"an argument with spaces\n"),
+        )
+        cases = [("not-on-path", ["no-such-cpu-lock-command"], 127, errno.ENOENT, b"")]
+        for name, source, mode, code, error, output in fixtures:
+            path = self.root / name
+            path.write_text(source)
+            path.chmod(mode)
+            # Exercise explicit paths and PATH lookup without shell fallback.
+            for executable in (str(path), path.name):
+                cases.append((name, [executable, "an argument with spaces"], code, error, output))
+        environment = dict(self.environment, PATH=str(self.root))
+        for name, command, code, error, output in cases:
+            with self.subTest(command=command):
+                try:
+                    direct = subprocess.run(command, env=environment, cwd=self.root,
+                                            capture_output=True)
+                except OSError as failure:
+                    self.assertEqual(failure.errno, error)
+                    # exec has no child exit status on failure; use the shell's
+                    # conventional 127 (not found) / 126 (cannot execute).
+                    direct_code = 127 if failure.errno == errno.ENOENT else 126
+                    direct_output = b""
+                else:
+                    self.assertIsNone(error)
+                    direct_code, direct_output = direct.returncode, direct.stdout
+                self.assertEqual((direct_code, direct_output), (code, output))
+                wrapped = subprocess.run(self.cli("run", "--shared", "--label", name,
+                                                  "--", *command), env=environment,
+                                         cwd=self.root, capture_output=True)
+                print(f"exec {command[0]}: direct={direct_code} cpu-lock={wrapped.returncode}",
+                      flush=True)
+                self.assertEqual((wrapped.returncode, wrapped.stdout), (direct_code, direct_output),
+                                 wrapped.stderr)
+                self.assertEqual(self.status(), "idle\n")
 
     def test_nested_modes_export_shared_identity(self):
         for outer, inner in (("shared", "shared"), ("exclusive", "exclusive"),

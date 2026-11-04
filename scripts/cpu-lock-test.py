@@ -250,6 +250,15 @@ class CpuLockTests(unittest.TestCase):
         follower, _ = self.start("shared", "after-reuse", "exit", "0", wait="0.5")
         self.finish(follower)
 
+    def test_command_runs_below_interactive_priority(self):
+        probe = [sys.executable, "-c",
+                 "import os; print(os.getpriority(os.PRIO_PROCESS, 0))"]
+        result = subprocess.run(self.cli("run", "--shared", "--label", "nice", "--", *probe),
+                                env=self.environment, cwd=self.root, capture_output=True,
+                                text=True, check=True)
+        own = os.getpriority(os.PRIO_PROCESS, 0)
+        self.assertEqual(int(result.stdout), max(own, 10))
+
     def test_nested_modes_export_shared_identity(self):
         for outer, inner in (("shared", "shared"), ("exclusive", "exclusive"),
                              ("exclusive", "shared"), ("shared", "exclusive")):

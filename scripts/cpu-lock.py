@@ -106,8 +106,13 @@ BACKGROUND_NICE = 10
 
 
 def lower_priority():
-    if os.getpriority(os.PRIO_PROCESS, 0) < BACKGROUND_NICE:
-        os.setpriority(os.PRIO_PROCESS, 0, BACKGROUND_NICE)
+    # Runs in the child before exec: a refusal must never stop the command,
+    # which then simply runs at its inherited priority.
+    try:
+        if os.getpriority(os.PRIO_PROCESS, 0) < BACKGROUND_NICE:
+            os.setpriority(os.PRIO_PROCESS, 0, BACKGROUND_NICE)
+    except OSError:
+        pass
 
 
 def run(args, directory, command_umask):

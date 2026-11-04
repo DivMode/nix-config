@@ -7,6 +7,7 @@
     ./dock.nix
     ./firewall.nix
     ./fonts.nix
+    ./fseventsd-guard.nix
     ./github-runners.nix
     ./github-ssh.nix
     ./homebrew.nix

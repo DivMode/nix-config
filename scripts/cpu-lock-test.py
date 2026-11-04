@@ -250,6 +250,36 @@ class CpuLockTests(unittest.TestCase):
         follower, _ = self.start("shared", "after-reuse", "exit", "0", wait="0.5")
         self.finish(follower)
 
+    def test_command_runs_below_interactive_priority(self):
+        probe = [sys.executable, "-c",
+                 "import os; print(os.getpriority(os.PRIO_PROCESS, 0))"]
+        result = subprocess.run(self.cli("run", "--shared", "--label", "nice", "--", *probe),
+                                env=self.environment, cwd=self.root, capture_output=True,
+                                text=True, check=True)
+        own = os.getpriority(os.PRIO_PROCESS, 0)
+        self.assertEqual(int(result.stdout), max(own, 10))
+
+    def test_lower_priority_only_lowers_and_survives_refusal(self):
+        import importlib.util
+        from unittest import mock
+        spec = importlib.util.spec_from_file_location("cpu_lock_module", SCRIPT)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        for inherited, expected_call in ((0, 10), (10, None), (15, None)):
+            with self.subTest(inherited=inherited), \
+                    mock.patch.object(module.os, "getpriority", return_value=inherited), \
+                    mock.patch.object(module.os, "setpriority") as setpriority:
+                module.lower_priority()
+                if expected_call is None:
+                    setpriority.assert_not_called()
+                else:
+                    setpriority.assert_called_once_with(module.os.PRIO_PROCESS, 0, expected_call)
+        for error in (PermissionError(1, "EPERM"), OSError(13, "EACCES")):
+            with self.subTest(error=error), \
+                    mock.patch.object(module.os, "getpriority", return_value=0), \
+                    mock.patch.object(module.os, "setpriority", side_effect=error):
+                module.lower_priority()  # must not raise: the command still runs
+
     def test_nested_modes_export_shared_identity(self):
         for outer, inner in (("shared", "shared"), ("exclusive", "exclusive"),
                              ("exclusive", "shared"), ("shared", "exclusive")):

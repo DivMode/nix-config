@@ -149,7 +149,12 @@ lib.mkIf (cfg != null) {
 
   # The module's PATH holds only what `actions/checkout` needs. Jobs also run
   # the system tools a macOS user has (curl, unzip, security, xcrun).
+  # Jobs run below the owner's apps (`nice` 10, the same as `cpu-lock run`):
+  # they still take every idle core, but four concurrent database gates once
+  # put load at 62 on 30 cores and lagged the desktop (2026-11-03). Every job
+  # process inherits the listener's priority.
   launchd.daemons = lib.genAttrs (map (name: "github-runner-${name}") names) (_: {
+    serviceConfig.Nice = 10;
     path = lib.mkAfter [
       "/usr/bin"
       "/bin"

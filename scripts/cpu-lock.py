@@ -99,6 +99,22 @@ def publish(path, record):
         temporary.unlink(missing_ok=True)
 
 
+# Heavy work (test suites, builds) runs below the owner's apps: it still takes
+# every idle core, but the scheduler serves interactive work first, so a full
+# machine never lags the desktop. Never raises priority a caller already lowered.
+BACKGROUND_NICE = 10
+
+
+def lower_priority():
+    # Runs in the child before exec: a refusal must never stop the command,
+    # which then simply runs at its inherited priority.
+    try:
+        if os.getpriority(os.PRIO_PROCESS, 0) < BACKGROUND_NICE:
+            os.setpriority(os.PRIO_PROCESS, 0, BACKGROUND_NICE)
+    except OSError:
+        pass
+
+
 def run(args, directory, command_umask):
     pid = os.getpid()
     holder = directory / "holders" / str(pid)
@@ -137,7 +153,7 @@ def run(args, directory, command_umask):
             # the command nor any daemon it leaves behind inherits record fds.
             os.umask(command_umask)
             child = subprocess.Popen(args.command, env=environment, close_fds=True,
-                                     start_new_session=True)
+                                     start_new_session=True, preexec_fn=lower_priority)
             if received is not None:
                 forward(received, None)
             code = child.wait()

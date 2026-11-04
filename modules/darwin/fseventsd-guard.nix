@@ -48,8 +48,8 @@ let
     started=$(t 10 ps -o lstart= -p "$pid")
     [[ -n "$started" ]] || exit 0
     same_process() {
-      [[ "$(t 10 ps -o lstart= -p "$pid" 2>/dev/null)" == "$started" ]] \
-        && [[ "$(t 10 ps -o comm= -p "$pid" 2>/dev/null)" == *fseventsd ]]
+      [[ "$(t 5 ps -o lstart= -p "$pid" 2>/dev/null)" == "$started" ]] \
+        && [[ "$(t 5 ps -o comm= -p "$pid" 2>/dev/null)" == *fseventsd ]]
     }
 
     # "fseventsd [377]: 64-bit    Footprint: 137 MB (16384 bytes per page)"
@@ -74,13 +74,13 @@ let
     now=$(date +%s)
 
     # The hot streak counts consecutive one-minute samples of the same process;
-    # a gap over 150 s (a slow capture, sleep) starts it again.
+    # a gap over 90 s (a missed minute, a slow capture, sleep) starts it again.
     cpu_share=0
     hot=0
     if [[ -f "$state/last" ]] && read -r last_pid last_started last_now last_cpu last_hot < "$state/last" \
       && [[ "$last_pid" == "$pid" && "$last_started" == "''${started// /_}" ]] && (( now > last_now )); then
       cpu_share=$(( (cpu_seconds - last_cpu) * 100 / (now - last_now) ))
-      if (( cpu_share >= cpu_percent && now - last_now <= 150 )); then hot=$(( last_hot + 1 )); fi
+      if (( cpu_share >= cpu_percent && now - last_now <= 90 )); then hot=$(( last_hot + 1 )); fi
     fi
     echo "$pid ''${started// /_} $now $cpu_seconds $hot" > "$state/last"
     echo "$(date '+%F %T') pid=$pid footprint_mb=$footprint_mb cpu_percent=$cpu_share hot_minutes=$hot" >> "$state/samples.log"
@@ -89,16 +89,25 @@ let
       [[ ! -f "$state/last-capture" ]] || (( $(date +%s) - $(stat -f %m "$state/last-capture") >= 3600 ))
     }
 
-    # Prune first, then write only with room to spare: at most 2 GB of evidence
-    # and never below 10 GB free on the volume.
+    # Prune first, then write only with room for one whole capture: at most
+    # 2 GB of evidence, and never below 10 GB free on the volume. A capture is
+    # about 0.5 MB at normal size; the log is capped at 200 MB before gzip, and
+    # every other output is a fixed-size summary or a 5 s sample.
+    capture_mb=256
     capture() {
       ls -1d "$evidence"/*/ 2>/dev/null | sort -r | tail -n +"$keep_evidence" | while read -r old; do
         rm -r "$old"
       done
-      local used free
+      local used free oldest
       used=$(du -sm "$evidence" | awk '{print $1}')
+      while [[ -n "$used" ]] && (( used + capture_mb > max_evidence_mb )); do
+        oldest=$(ls -1d "$evidence"/*/ 2>/dev/null | sort | head -n 1)
+        [[ -n "$oldest" ]] || break
+        rm -r "$oldest"
+        used=$(du -sm "$evidence" | awk '{print $1}')
+      done
       free=$(df -m "$evidence" | awk 'NR == 2 {print $4}')
-      if [[ -z "$used" || -z "$free" ]] || (( used >= max_evidence_mb || free < min_free_mb )); then
+      if [[ -z "$used" || -z "$free" ]] || (( used + capture_mb > max_evidence_mb || free < min_free_mb + capture_mb )); then
         say "not saving evidence: ''${used:-?} MB kept, ''${free:-?} MB free"
         return
       fi
@@ -122,12 +131,8 @@ let
     if (( footprint_mb >= restart_mb )); then
       if capture_due; then capture "restart"; fi
 
-      # The capture can take minutes: check again that this is still the same
-      # process and still over the limit before signalling it.
-      if ! same_process; then
-        say "fseventsd pid $pid exited during the capture; not signalling"
-        exit 0
-      fi
+      # The capture can take minutes: measure again before deciding, and check
+      # identity right before the signal.
       footprint_mb=$(footprint_of "$pid")
       if [[ -z "$footprint_mb" ]] || (( footprint_mb < restart_mb )); then
         say "fseventsd pid $pid is at ''${footprint_mb:-?} MB now; not restarting"
@@ -151,10 +156,15 @@ let
         exit 1
       fi
 
+      if ! same_process; then
+        say "fseventsd pid $pid exited before the restart; not signalling"
+        exit 0
+      fi
       kill -TERM "$pid"
-      for _ in $(seq 1 15); do
+      # KILL 15 s after TERM, measured from TERM, whatever the checks cost.
+      deadline=$(( SECONDS + 15 ))
+      while (( SECONDS < deadline )) && same_process; do
         sleep 1
-        same_process || break
       done
       if same_process; then kill -KILL "$pid"; fi
       new=""

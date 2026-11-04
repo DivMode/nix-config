@@ -149,12 +149,28 @@ lib.mkIf (cfg != null) {
 
   # The module's PATH holds only what `actions/checkout` needs. Jobs also run
   # the system tools a macOS user has (curl, unzip, security, xcrun).
-  # Jobs run below the owner's apps (`nice` 10, the same as `cpu-lock run`):
-  # they still take every idle core, but four concurrent database gates once
-  # put load at 62 on 30 cores and lagged the desktop (2026-11-03). Every job
-  # process inherits the listener's priority.
-  launchd.daemons = lib.genAttrs (map (name: "github-runner-${name}") names) (_: {
+  # Jobs run below the owner's apps, as `cpu-lock run` does: clamped to the
+  # utility QoS class (`taskpolicy -c utility`) and `nice` 10. Utility still
+  # runs on the performance cores, so jobs take every idle core, but the
+  # scheduler serves interactive work first and their disk I/O drops a tier.
+  # Every job process inherits both (taskinfo on a grandchild, 2026-11-03:
+  # `eff qos clamp: THREAD_QOS_UTILITY`). The arguments are the launchd
+  # module's own (`/bin/sh -c "wait4path … && exec <command>"`), prefixed.
+  launchd.daemons = lib.genAttrs (map (name: "github-runner-${name}") names) (daemon: {
+    # The module launches runners as `Interactive`, the class of a foreground
+    # app, which exempts every job from macOS's background throttling; four
+    # concurrent database gates then lagged the desktop at load 62 on 30 cores
+    # (2026-11-03). `Standard` is an ordinary daemon.
+    serviceConfig.ProcessType = lib.mkForce "Standard";
     serviceConfig.Nice = 10;
+    serviceConfig.ProgramArguments = lib.mkForce [
+      "/usr/sbin/taskpolicy"
+      "-c"
+      "utility"
+      "/bin/sh"
+      "-c"
+      "/bin/wait4path /nix/store && exec ${config.launchd.daemons.${daemon}.command}"
+    ];
     path = lib.mkAfter [
       "/usr/bin"
       "/bin"

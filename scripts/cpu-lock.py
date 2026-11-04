@@ -115,6 +115,18 @@ def lower_priority():
         pass
 
 
+# macOS schedules by QoS class far more than by nice: the utility clamp keeps
+# the command on every core, below interactive work, and drops its disk I/O a
+# tier. Children inherit it. Without taskpolicy (not macOS) the command runs as is.
+TASKPOLICY = "/usr/sbin/taskpolicy"
+
+
+def launch_argv(command):
+    if os.path.exists(TASKPOLICY):
+        return [TASKPOLICY, "-c", "utility", *command]
+    return list(command)
+
+
 def run(args, directory, command_umask):
     pid = os.getpid()
     holder = directory / "holders" / str(pid)
@@ -152,7 +164,7 @@ def run(args, directory, command_umask):
             # A new session avoids delivering terminal signals twice. Neither
             # the command nor any daemon it leaves behind inherits record fds.
             os.umask(command_umask)
-            child = subprocess.Popen(args.command, env=environment, close_fds=True,
+            child = subprocess.Popen(launch_argv(args.command), env=environment, close_fds=True,
                                      start_new_session=True, preexec_fn=lower_priority)
             if received is not None:
                 forward(received, None)

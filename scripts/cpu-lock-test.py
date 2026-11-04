@@ -280,6 +280,18 @@ class CpuLockTests(unittest.TestCase):
                     mock.patch.object(module.os, "setpriority", side_effect=error):
                 module.lower_priority()  # must not raise: the command still runs
 
+    def test_command_runs_under_the_utility_clamp_when_taskpolicy_exists(self):
+        import importlib.util
+        from unittest import mock
+        spec = importlib.util.spec_from_file_location("cpu_lock_module", SCRIPT)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        with mock.patch.object(module.os.path, "exists", return_value=True):
+            self.assertEqual(module.launch_argv(["make", "-j"]),
+                             [module.TASKPOLICY, "-c", "utility", "make", "-j"])
+        with mock.patch.object(module.os.path, "exists", return_value=False):
+            self.assertEqual(module.launch_argv(["make", "-j"]), ["make", "-j"])
+
     def test_nested_modes_export_shared_identity(self):
         for outer, inner in (("shared", "shared"), ("exclusive", "exclusive"),
                              ("exclusive", "shared"), ("shared", "exclusive")):

@@ -287,10 +287,24 @@ class CpuLockTests(unittest.TestCase):
         module = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(module)
         with mock.patch.object(module.os.path, "exists", return_value=True):
-            self.assertEqual(module.launch_argv(["make", "-j"]),
-                             [module.TASKPOLICY, "-c", "utility", "make", "-j"])
+            self.assertEqual(module.launch_argv([sys.executable, "-V"]),
+                             [module.TASKPOLICY, "-c", "utility", sys.executable, "-V"])
+            # A command that does not resolve stays unwrapped, for the 127/126 mapping.
+            self.assertEqual(module.launch_argv(["no-such-command-xyz"]), ["no-such-command-xyz"])
         with mock.patch.object(module.os.path, "exists", return_value=False):
-            self.assertEqual(module.launch_argv(["make", "-j"]), ["make", "-j"])
+            self.assertEqual(module.launch_argv([sys.executable, "-V"]), [sys.executable, "-V"])
+
+    def test_missing_and_unexecutable_commands_keep_127_and_126(self):
+        missing = subprocess.run(self.cli("run", "--shared", "--label", "missing", "--",
+                                          "no-such-command-xyz"),
+                                 env=self.environment, cwd=self.root, capture_output=True)
+        self.assertEqual(missing.returncode, 127, missing.stderr)
+        plain = self.root / "not-executable"
+        plain.write_text("echo hi\n")
+        plain.chmod(0o644)
+        denied = subprocess.run(self.cli("run", "--shared", "--label", "denied", "--", str(plain)),
+                                env=self.environment, cwd=self.root, capture_output=True)
+        self.assertEqual(denied.returncode, 126, denied.stderr)
 
     def test_nested_modes_export_shared_identity(self):
         for outer, inner in (("shared", "shared"), ("exclusive", "exclusive"),

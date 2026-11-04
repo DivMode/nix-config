@@ -7,6 +7,7 @@ import json
 import math
 import os
 from pathlib import Path
+import shutil
 import signal
 import subprocess
 import sys
@@ -122,7 +123,11 @@ TASKPOLICY = "/usr/sbin/taskpolicy"
 
 
 def launch_argv(command):
-    if os.path.exists(TASKPOLICY):
+    # Wrap only a command that resolves to an executable: taskpolicy reports a
+    # missing or unexecutable one as its own exit 66, so anything else goes to
+    # Popen unwrapped and keeps cpu-lock's 127/126 mapping.
+    resolved = shutil.which(command[0])
+    if os.path.exists(TASKPOLICY) and resolved is not None:
         return [TASKPOLICY, "-c", "utility", *command]
     return list(command)
 

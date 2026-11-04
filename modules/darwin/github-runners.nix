@@ -154,22 +154,19 @@ lib.mkIf (cfg != null) {
   # runs on the performance cores, so jobs take every idle core, but the
   # scheduler serves interactive work first and their disk I/O drops a tier.
   # Every job process inherits both (taskinfo on a grandchild, 2026-11-03:
-  # `eff qos clamp: THREAD_QOS_UTILITY`). The arguments are the launchd
-  # module's own (`/bin/sh -c "wait4path … && exec <command>"`), prefixed.
-  launchd.daemons = lib.genAttrs (map (name: "github-runner-${name}") names) (daemon: {
+  # `eff qos clamp: THREAD_QOS_UTILITY`). The clamp prefixes the launchd
+  # module's own arguments (`/bin/sh -c "wait4path … && exec <command>"`).
+  launchd.daemons = lib.genAttrs (map (name: "github-runner-${name}") names) (_: {
     # The module launches runners as `Interactive`, the class of a foreground
     # app, which exempts every job from macOS's background throttling; four
     # concurrent database gates then lagged the desktop at load 62 on 30 cores
     # (2026-11-03). `Standard` is an ordinary daemon.
     serviceConfig.ProcessType = lib.mkForce "Standard";
     serviceConfig.Nice = 10;
-    serviceConfig.ProgramArguments = lib.mkForce [
+    serviceConfig.ProgramArguments = lib.mkBefore [
       "/usr/sbin/taskpolicy"
       "-c"
       "utility"
-      "/bin/sh"
-      "-c"
-      "/bin/wait4path /nix/store && exec ${config.launchd.daemons.${daemon}.command}"
     ];
     path = lib.mkAfter [
       "/usr/bin"

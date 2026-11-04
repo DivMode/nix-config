@@ -159,6 +159,21 @@ heavy work outside it.
 Exclusive mode no longer exists: `--exclusive` is accepted for compatibility and
 treated as shared.
 
+**Never generate synthetic load to reproduce or imitate contention.** No CPU or
+I/O work unrelated to the behavior under test — spin loops, `yes`, `openssl
+speed`, stress tools, scripts that start N busy workers — and no `taskpolicy`
+throttling of a test to imitate a slow machine. The QoS clamp cannot protect the
+desktop from hundreds of always-runnable processes: on 2026-11-03 one job's
+480-worker burner put load at 550, lagged the owner's Mac, and failed every
+other session's tests. A failure that appears only under load still gets
+investigated: find what it waits on or races with, then fix that — in the test
+(controlled time such as fake timers or Effect `TestClock`, deterministic
+scheduling) or in production code when the race is real — and show the
+regression check failing for the relevant reason when feasible. Not synthetic
+load: benchmarks the owner asks for, tests whose required behavior is itself
+concurrency (real subprocesses, contending clients), and real parallel work —
+suites, builds, gates — of which you run as much as the work needs.
+
 Tests must protect meaningful required behavior, not justify an implementation,
 increase test counts, or satisfy a coverage target alone.
 

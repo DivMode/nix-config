@@ -103,7 +103,11 @@ let
       while [[ -n "$used" ]] && (( used + capture_mb > max_evidence_mb )); do
         oldest=$(ls -1d "$evidence"/*/ 2>/dev/null | sort | head -n 1)
         [[ -n "$oldest" ]] || break
-        rm -r "$oldest"
+        # A deletion that fails or stalls ends the capture, never the run.
+        if ! t 60 rm -r "$oldest"; then
+          say "could not prune $oldest; not saving evidence"
+          return
+        fi
         used=$(du -sm "$evidence" | awk '{print $1}')
       done
       free=$(df -m "$evidence" | awk 'NR == 2 {print $4}')

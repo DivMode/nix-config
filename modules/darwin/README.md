@@ -191,6 +191,17 @@ Screenshots are stored in the writable `~/Documents/Screenshots` directory
 created collision-safely by Home Manager. Tap-to-click and battery percentage
 are intentionally unset for the desktop baseline.
 
+`fseventsd-guard.nix` works around a macOS 27.0/27.0.1 bug (FB25046068): after
+heavy file churn, fseventsd pins a core for days and its heap grows without
+bound (70 GB here on 2026-11-02, until swap ran out). A root launch daemon
+samples its footprint and CPU share every minute into
+`/var/db/fseventsd-guard/samples.log`. Past 512 MB, or after 10 minutes above 80%
+of a core, it saves stacks, heap, ports and log to `/var/log/fseventsd-guard/`
+(at most hourly, 30 kept). Past 2 GB it saves evidence and restarts the daemon
+with TERM, then KILL (`kickstart -k` is refused under SIP), at most 12 times a
+day. FSEvents clients that were running at the restart stop receiving events
+until their process restarts.
+
 `spotlight.nix` installs a launch daemon that runs at load and whenever a volume
 mounts. It asks `diskutil` whether each mounted volume is internal and reconciles
 Spotlight indexing and searching off only when macOS reports `Internal = false`.

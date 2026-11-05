@@ -33,6 +33,38 @@
         "type": "github"
       }
     },
+    "app-store-preflight-skills": {
+      "flake": false,
+      "locked": {
+        "lastModified": 1792228894,
+        "narHash": "sha256-BOmuqdtnc81DOru+6gEsywEgpbvv7YRC+bcOXb68wow=",
+        "owner": "truongduy2611",
+        "repo": "app-store-preflight-skills",
+        "rev": "cfd9c73577300f9310ca892fefd38fbe1abd73cb",
+        "type": "github"
+      },
+      "original": {
+        "owner": "truongduy2611",
+        "repo": "app-store-preflight-skills",
+        "type": "github"
+      }
+    },
+    "asc-skills": {
+      "flake": false,
+      "locked": {
+        "lastModified": 1793031444,
+        "narHash": "sha256-zTTzfSj3tSwDqz3WXVWgvGeUkcDslSIM3eEOcPqglEw=",
+        "owner": "rorkai",
+        "repo": "app-store-connect-cli-skills",
+        "rev": "7de1ef7cc831f62d205dfa589063f3831f66391b",
+        "type": "github"
+      },
+      "original": {
+        "owner": "rorkai",
+        "repo": "app-store-connect-cli-skills",
+        "type": "github"
+      }
+    },
     "brew-src": {
       "flake": false,
       "locked": {
@@ -321,6 +353,8 @@
       "inputs": {
         "alchemy-src": "alchemy-src",
         "anthropic-skills": "anthropic-skills",
+        "app-store-preflight-skills": "app-store-preflight-skills",
+        "asc-skills": "asc-skills",
         "codex-orchestrator": "codex-orchestrator",
         "gcx-src": "gcx-src",
         "home-manager": "home-manager",
@@ -331,7 +365,58 @@
         "mattpocock-skills": "mattpocock-skills",
         "nix-darwin": "nix-darwin",
         "nix-homebrew": "nix-homebrew",
-        "nixpkgs": "nixpkgs_2"
+        "nixpkgs": "nixpkgs_2",
+        "swift-concurrency-skill": "swift-concurrency-skill",
+        "swift-testing-skill": "swift-testing-skill",
+        "swiftui-skill": "swiftui-skill"
+      }
+    },
+    "swift-concurrency-skill": {
+      "flake": false,
+      "locked": {
+        "lastModified": 1779034066,
+        "narHash": "sha256-ECb3m9It8OyAiOvfAAPfUlOVdwP0tYvTv78plbW1o7g=",
+        "owner": "twostraws",
+        "repo": "Swift-Concurrency-Agent-Skill",
+        "rev": "bee3f69ba17142da148d3c5406f148ed62592b69",
+        "type": "github"
+      },
+      "original": {
+        "owner": "twostraws",
+        "repo": "Swift-Concurrency-Agent-Skill",
+        "type": "github"
+      }
+    },
+    "swift-testing-skill": {
+      "flake": false,
+      "locked": {
+        "lastModified": 1779032983,
+        "narHash": "sha256-HqPo0nnLjyX99qBotTgIEzXehnoVAyZDqwJHDfwxodw=",
+        "owner": "twostraws",
+        "repo": "Swift-Testing-Agent-Skill",
+        "rev": "2d6bba14a3c8bf3694f218b92fffe617c41ae43e",
+        "type": "github"
+      },
+      "original": {
+        "owner": "twostraws",
+        "repo": "Swift-Testing-Agent-Skill",
+        "type": "github"
+      }
+    },
+    "swiftui-skill": {
+      "flake": false,
+      "locked": {
+        "lastModified": 1793033598,
+        "narHash": "sha256-HOEP7KiY3gQRuE1ttj55BzuXBzV1ksn5UYRm54bV5HA=",
+        "owner": "twostraws",
+        "repo": "SwiftUI-Agent-Skill",
+        "rev": "f2920b63995263f57b3e198674e89a602efba6d2",
+        "type": "github"
+      },
+      "original": {
+        "owner": "twostraws",
+        "repo": "SwiftUI-Agent-Skill",
+        "type": "github"
       }
     },
     "systems": {

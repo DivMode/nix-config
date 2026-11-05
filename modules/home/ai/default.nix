@@ -60,6 +60,60 @@ let
   # references/ directory comes with it.
   alchemyDomainSkill = "${inputs.alchemy-src}/packages/domain/skills/alchemy-domain";
 
+  # iOS and App Store skills for both clients (flake.nix asc-skills and its
+  # neighbours). Each is a portable SKILL.md tree, linked whole so its
+  # references/ come with it.
+  #
+  # The asc pack is a selection, not all of it: every description is paid for
+  # in every session's context, so only the skills an iOS app's build, sign,
+  # TestFlight and review cycle uses are linked. Left out: Apple Ads, ASO,
+  # analytics, in-app events, localization, macOS notarization, pricing,
+  # RevenueCat, subscriptions, and the What's New writer. A selected skill
+  # that names an unselected one only loses that pointer. Checked at
+  # 7de1ef7c: the selected skills' cross-references stay inside the set
+  # (signing-setup and xcode-build to ad-hoc-distribution, release-flow and
+  # submission-health to each other) except release-flow's note on
+  # multi-item submissions, which names asc-in-app-events.
+  #
+  # The asc skills suggest `asc auth login`, which keeps the App Store Connect
+  # key in the macOS keychain. The machine credential policy overrides that:
+  # a project hands asc its key through its own secret loader.
+  iosSkills =
+    listToAttrs (
+      map (name: nameValuePair name "${inputs.asc-skills}/skills/${name}") [
+        "asc-cli-usage"
+        "asc-workflow"
+        "asc-id-resolver"
+        "asc-app-create-ui"
+        "asc-signing-setup"
+        "asc-ad-hoc-distribution"
+        "asc-xcode-build"
+        "asc-build-lifecycle"
+        "asc-testflight-orchestration"
+        "asc-crash-triage"
+        "asc-metadata-sync"
+        "asc-shots-pipeline"
+        "asc-screenshot-resize"
+        "asc-submission-health"
+        "asc-release-flow"
+      ]
+    )
+    // {
+      # The repository root is the skill: SKILL.md, references/ and LICENSE.
+      app-store-preflight-skills = "${inputs.app-store-preflight-skills}";
+      swiftui-pro = "${inputs.swiftui-skill}/swiftui-pro";
+      swift-concurrency-pro = "${inputs.swift-concurrency-skill}/swift-concurrency-pro";
+      swift-testing-pro = "${inputs.swift-testing-skill}/swift-testing-pro";
+    };
+
+  iosCodexSkills = mapAttrs' (
+    name: path:
+    nameValuePair ".codex/skills/${name}" {
+      source = path;
+      recursive = true;
+    }
+  ) iosSkills;
+
   # Impeccable's Claude Code skill directory, with its engine binary beside
   # it. The skill's scripts/impeccable launcher runs
   # scripts/bin/<os>-<arch>/impeccable when that binary reports the version in
@@ -440,6 +494,7 @@ in
         ai.skills
         // ai.claudeSkills
         // anthropicClaudeSkills
+        // iosSkills
         // {
           impeccable = impeccableSkill;
           alchemy-domain = alchemyDomainSkill;
@@ -540,6 +595,7 @@ in
       codexSkillFiles
       // mattPocockCodexSkills
       // gcxCodexSkills
+      // iosCodexSkills
       // {
         ".codex/skills/alchemy-domain" = {
           source = alchemyDomainSkill;

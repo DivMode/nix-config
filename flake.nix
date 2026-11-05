@@ -70,6 +70,38 @@
       flake = false;
     };
 
+    # iOS and App Store skills, for every native Apple project on this Mac
+    # (modules/home/ai selects the directories). All MIT, referenced not
+    # vendored, and moved by `nix flake update`.
+    #
+    # asc-skills teaches the `asc` App Store Connect CLI that homebrew.nix
+    # installs. Its commits follow asc releases ("sync skills with asc X"), so
+    # when Homebrew moves asc, update this input in the same change; a skill
+    # written for a newer or older asc teaches commands the binary lacks.
+    asc-skills = {
+      url = "github:rorkai/app-store-connect-cli-skills";
+      flake = false;
+    };
+    # Rejection-pattern preflight against the App Review Guidelines; its
+    # SKILL.md records which guideline revision it is synced to.
+    app-store-preflight-skills = {
+      url = "github:truongduy2611/app-store-preflight-skills";
+      flake = false;
+    };
+    # Paul Hudson's Swift skills, one repository each.
+    swiftui-skill = {
+      url = "github:twostraws/SwiftUI-Agent-Skill";
+      flake = false;
+    };
+    swift-concurrency-skill = {
+      url = "github:twostraws/Swift-Concurrency-Agent-Skill";
+      flake = false;
+    };
+    swift-testing-skill = {
+      url = "github:twostraws/Swift-Testing-Agent-Skill";
+      flake = false;
+    };
+
     # Grafana's gcx CLI, pinned to a release tag. One input feeds two
     # consumers: modules/home/development.nix builds the CLI binary from it
     # (nixpkgs packages gcx, but its pinned release trails upstream), and

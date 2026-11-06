@@ -44,6 +44,9 @@ let
     "in"
     "just"
     "kill"
+    # Not a builtin: ../darwin/membrake.nix puts the membrake command on every
+    # PATH, and agents are told to run `membrake status`.
+    "membrake"
     "nix"
     # Not a builtin: default.nix declares a `nixup` alias, and zsh expands
     # aliases before function lookup, so a project of this name would generate

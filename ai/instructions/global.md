@@ -153,9 +153,17 @@ Run CPU-heavy work (test suites, release builds, browser e2e) in parallel;
 never wait for another session or repository. Use
 `cpu-lock run --shared --label "<repo>: <what>" -- …` to label the work so
 `cpu-lock status` shows what is running. It never blocks. It runs the command
-under macOS's utility QoS clamp at `nice` 10 (the self-hosted CI runners too),
-below the owner's interactive apps. This does not prevent memory or other
-shared-resource exhaustion; never run heavy work outside it.
+under macOS's utility QoS clamp at `nice` 10, below the owner's interactive
+apps and below the self-hosted CI runners, which outrank agent work so the
+gate is not starved. Never run heavy work outside it.
+
+Memory is guarded by `membrake`, a root daemon. When memory gets tight it
+freezes (`SIGSTOP`) the newest heavy agent job, freezes them all if the Mac
+heads for the cliff, resumes them one at a time when memory recovers, and kills
+only at the cliff. A command that stops making progress may be frozen, not
+hung: check `membrake status` (or `/var/log/membrake/events.log`) before
+killing or rerunning it. Rerunning a frozen command adds back the memory it was
+frozen to save. It resumes on its own.
 Exclusive mode no longer exists: `--exclusive` is accepted for compatibility and
 treated as shared.
 

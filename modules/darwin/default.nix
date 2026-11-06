@@ -12,6 +12,7 @@
     ./github-ssh.nix
     ./homebrew.nix
     ./log-rotation.nix
+    ./membrake.nix
     ./macos-defaults.nix
     ./nix.nix
     ./power.nix

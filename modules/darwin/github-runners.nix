@@ -149,23 +149,36 @@ lib.mkIf (cfg != null) {
 
   # The module's PATH holds only what `actions/checkout` needs. Jobs also run
   # the system tools a macOS user has (curl, unzip, security, xcrun).
-  # Jobs run below the owner's apps, as `cpu-lock run` does: clamped to the
-  # utility QoS class (`taskpolicy -c utility`) and `nice` 10. Utility still
-  # runs on the performance cores, so jobs take every idle core, but the
-  # scheduler serves interactive work first and their disk I/O drops a tier.
-  # Every job process inherits both (taskinfo on a grandchild, 2026-11-03:
-  # `eff qos clamp: THREAD_QOS_UTILITY`). The clamp prefixes the launchd
-  # module's own arguments (`/bin/sh -c "wait4path … && exec <command>"`).
+  # Jobs run below the owner's apps but above agent work. Agent work runs
+  # under `cpu-lock`'s utility QoS clamp (scheduler priority 20); the owner's
+  # apps run at 37-47 (`ps -o pri`, 2026-11-05: Chrome 46-47). The runners
+  # used the same utility clamp until 2026-11-05, when `ps` showed all 140
+  # runner processes and all 356 agent processes at priority 20 under load
+  # 70-80 on 30 cores, and PR gates timed out in their database job while
+  # ten sessions type-checked. Three settings held them there, and each was
+  # measured on its own on 2026-11-05:
+  #  - the utility QoS clamp (`taskpolicy -c utility`): replaced by
+  #    `taskpolicy -d utility`, which lowers only their disk I/O
+  #    (setiopolicy_np, inherited by every child; a child of it read 31);
+  #  - `Nice = 10`: removed; the runners then read nice 0 but still 20;
+  #  - `ProcessType = Standard`: `launchctl print` showed the runners as
+  #    `spawn type = daemon (3)` at priority 20 and the membrake daemon
+  #    (`Interactive`) as `spawn type = interactive (4)` at 31. So the runners
+  #    keep the module's `Interactive` class.
+  # That puts CI at 31: above agent work (20), below the owner's apps (37-47).
+  # The launchd module's own arguments follow the taskpolicy prefix
+  # (`/bin/sh -c "wait4path … && exec …"`).
   launchd.daemons = lib.genAttrs (map (name: "github-runner-${name}") names) (_: {
-    # The module launches runners as `Interactive`, the class of a foreground
-    # app, which exempts every job from macOS's background throttling; four
-    # concurrent database gates then lagged the desktop at load 62 on 30 cores
-    # (2026-11-03). `Standard` is an ordinary daemon.
-    serviceConfig.ProcessType = lib.mkForce "Standard";
-    serviceConfig.Nice = 10;
+    # The module launches runners as `Interactive`. On 2026-11-03 four
+    # concurrent database gates lagged the desktop at load 62 on 30 cores in
+    # that class, with no disk or memory limit, and the runners moved to
+    # `Standard`, which (above) also put CI level with agent work and starved
+    # PR gates. They are `Interactive` again with their disk I/O lowered, and
+    # membrake (./membrake.nix) now guards memory. If the desktop lags under
+    # CI again, look at disk and memory before CPU class.
     serviceConfig.ProgramArguments = lib.mkBefore [
       "/usr/sbin/taskpolicy"
-      "-c"
+      "-d"
       "utility"
     ];
     path = lib.mkAfter [

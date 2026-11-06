@@ -278,6 +278,26 @@
         "type": "github"
       }
     },
+    "membrake": {
+      "inputs": {
+        "nixpkgs": [
+          "nixpkgs"
+        ]
+      },
+      "locked": {
+        "lastModified": 1793935821,
+        "narHash": "sha256-Zf2zq4Z/XejrxzeiiMARAsHulOQD8nbPu7DxkooC37M=",
+        "owner": "DivMode",
+        "repo": "membrake",
+        "rev": "8f02874e9c806eddc8c4248903a668f22dda42a4",
+        "type": "github"
+      },
+      "original": {
+        "owner": "DivMode",
+        "repo": "membrake",
+        "type": "github"
+      }
+    },
     "nix-darwin": {
       "inputs": {
         "nixpkgs": [
@@ -363,6 +383,7 @@
         "impeccable": "impeccable",
         "llm-agents": "llm-agents",
         "mattpocock-skills": "mattpocock-skills",
+        "membrake": "membrake",
         "nix-darwin": "nix-darwin",
         "nix-homebrew": "nix-homebrew",
         "nixpkgs": "nixpkgs_2",

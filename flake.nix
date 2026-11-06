@@ -143,6 +143,14 @@
       url = "github:homebrew/homebrew-cask";
       flake = false;
     };
+
+    # The memory brake (modules/darwin/membrake.nix): our own public
+    # repository, moved by `nix flake update`. It builds with this flake's
+    # nixpkgs so there is one nixpkgs in the closure.
+    membrake = {
+      url = "github:DivMode/membrake";
+      inputs.nixpkgs.follows = "nixpkgs";
+    };
   };
 
   outputs =

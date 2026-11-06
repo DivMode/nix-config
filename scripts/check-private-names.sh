@@ -223,27 +223,39 @@ cannot_inspect() { # <what git could not do>
   exit 1
 }
 
+# Every search for a private name distinguishes grep's exits: 1 is "no match",
+# the only clean result; 2 or more is "could not search", which refuses the
+# check. A search that discards its status (`|| true`, a test in an `if`, a
+# process substitution) reads an error as "nothing found" and lets the name
+# through. The searches run in this shell, not in a substitution, so the exit
+# reaches here.
+cannot_search() { # <what grep could not search>
+  echo "error: cannot check ${mode#--} — grep could not search $1:" >&2
+  sed 's/^/  /' "$git_error" >&2
+  exit 1
+}
+
+# The first private term in $2, or nothing: sets $term.
+first_term() { # <what is searched> <text>
+  local found status=0
+  found=$(printf '%s\n' "$2" | grep -oiF -f "$terms_file" 2>"$git_error") || status=$?
+  if ((status > 1)); then cannot_search "$1"; fi
+  term=${found%%$'\n'*}
+}
+
 # Report every line of $2 that names a private term, as "$1:<line>".
 #
 # -a, not -I: -I skips whatever grep calls binary, and a name inside a binary
 # file, or text with one stray byte, is published just the same.
-#
-# grep exits 1 for no match and 2 when it could not search at all; only the
-# first is a clean result. The search runs outside a process substitution so
-# that a 2 fails the check instead of reading as "nothing found".
 scan_lines() {
-  local matches status=0 match line_number line_text term
+  local matches status=0 match line_number line_text
   matches=$(printf '%s\n' "$2" | grep -inaF -f "$terms_file" 2>"$git_error") || status=$?
-  if ((status > 1)); then
-    echo "error: cannot check ${mode#--} — grep could not search $1:" >&2
-    sed 's/^/  /' "$git_error" >&2
-    exit 1
-  fi
+  if ((status > 1)); then cannot_search "$1"; fi
   while IFS= read -r match; do
     [[ -n "$match" ]] || continue
     line_number=${match%%:*}
     line_text=${match#*:}
-    term=$(printf '%s\n' "$line_text" | grep -oiF -f "$terms_file" | head -n1)
+    first_term "$1:$line_number" "$line_text"
     report "$1:$line_number — \"$term\""
   done <<<"$matches"
 }
@@ -273,7 +285,8 @@ elif [[ "$mode" == "--commits" ]]; then
       case "$line" in
         '+++ b/'*)
           file=${line#+++ b/}
-          if term=$(printf '%s\n' "$file" | grep -oiF -f "$terms_file" | head -n1) && [[ -n "$term" ]]; then
+          first_term "the path $file" "$file"
+          if [[ -n "$term" ]]; then
             report "$subject — adds path \"$file\" containing \"$term\""
           fi
           continue
@@ -282,8 +295,8 @@ elif [[ "$mode" == "--commits" ]]; then
       columns=${line:0:parents}
       [[ "$columns" == *+* && "$columns" != *-* && "$columns" =~ ^[\ +]+$ ]] || continue
       added=${line:parents}
-      term=$(printf '%s\n' "$added" | grep -oiF -f "$terms_file" | head -n1) || true
-      [[ -n "$term" ]] && report "$subject — $file adds \"$term\""
+      first_term "$file in $subject" "$added"
+      if [[ -n "$term" ]]; then report "$subject — $file adds \"$term\""; fi
     done < "$work_dir/changes"
   done <<< "$commits"
 else
@@ -296,7 +309,8 @@ else
   fi
 
   while IFS= read -r -d '' file; do
-    if term=$(printf '%s\n' "$file" | grep -oiF -f "$terms_file" | head -n1) && [[ -n "$term" ]]; then
+    first_term "the path $file" "$file"
+    if [[ -n "$term" ]]; then
       report "$file — path contains \"$term\""
     fi
 

@@ -464,6 +464,28 @@ def strip_runner(tokens):
     return None
 
 
+def peel(tokens):
+    """One layer off a command: (what it runs, whether the layer was the memory
+    queue), or None when `tokens` already start with the program.
+
+    A layer is a runner (see strip_runner), a wrapper such as `sudo` or `env`
+    with its own flags (`env -u NAME`, `env -i`, `sudo -E` are not the program;
+    nor is the argument of the flags that take one), or a leading VAR=value."""
+    head = os.path.basename(tokens[0])
+    inner = strip_runner(tokens)
+    if inner is not None:
+        return inner, head in QUEUE_RUNNERS
+    if head in WRAPPERS or ASSIGNMENT_RE.match(tokens[0]):
+        tokens = tokens[1:]
+        while tokens and tokens[0].startswith("-"):
+            flag = tokens.pop(0)
+            if flag in {"-u", "--unset", "-C", "--chdir", "-S", "--split-string",
+                        "-p", "--prompt", "-g", "--group", "-h", "--host"} and tokens:
+                tokens.pop(0)
+        return tokens, False
+    return None
+
+
 def runs_script_string(command, scripts=None):
     """True when `sh|bash|zsh -c` or `eval` is in an executable position.
 
@@ -674,7 +696,13 @@ def check_command(command, typed=True):
 # Judged on the segment's program after runners are peeled (check() records
 # whether a queue runner was among them), so `membrake exec -- vitest` and
 # `timeout 60 cpu-lock run -- vitest` pass while `timeout 60 vitest` does not.
-# Inspection (--version, --help, tsc --showConfig, cargo metadata) passes.
+# Inspection (--version, --help, tsc --showConfig, cargo metadata) passes, but
+# only where it asks the program being judged: among that program's own options
+# (before any `--`), from a launcher about itself (`npx --version vitest` prints
+# npx's version), or to the program a launcher runs (`npx vitest --version`).
+# Past a `--`, in a just recipe's arguments, or after a bun, pnpm or yarn
+# script's name (npm reads its own flags there), a flag is handed to something
+# that compiles or runs first (see walk()).
 # Scripts a command runs are not judged: a script already run under the queue
 # is queued as a whole, and judging its lines would deny the wrapped form.
 HEAVY_DENIAL = ('heavy command outside the memory queue: run it as membrake exec '
@@ -684,31 +712,78 @@ HEAVY_PROGRAMS = {"tsc", "tsgo", "tsgolint", "vitest", "jest", "playwright", "xc
 HEAVY_CARGO = {"build", "test", "clippy", "bench", "nextest", "check"}
 HEAVY_SWIFT = {"build", "test"}
 PACKAGE_MANAGERS = {"bun", "pnpm", "npm", "yarn"}
-HEAVY_SCRIPT_RE = re.compile(r"(?<![a-z])(?:test|check|typecheck|verify|build|gate|lint)", re.I)
+# A just recipe or package script is heavy when its name says it runs tests,
+# checks or builds: a heavy word that is a whole piece of the name (`unit-test`,
+# `ci:build`, `scripts/verify.sh`) or that starts it (`tests`, `typecheck-all`).
+# A word inside another (`latest`, `contest`, `rebuild`) is not one.
+HEAVY_WORDS = ("test", "check", "typecheck", "verify", "build", "gate", "lint")
+NAME_PIECES_RE = re.compile(r"[:\-_/.]")
 INSPECTION_FLAGS = {"--version", "-V", "--help", "-h", "-help", "-version", "--showConfig",
                     "--init", "-list", "-showsdks", "-showBuildSettings", "-usage"}
 # Playwright subcommands that download or open files rather than run tests.
 PLAYWRIGHT_LIGHT = {"install", "install-deps", "show-report", "show-trace"}
 # Flags whose value is a separate word, so it is not mistaken for a command.
 PACKAGE_VALUE_FLAGS = {"--filter", "-F", "-C", "--dir", "--prefix", "--cwd", "--workspace"}
-JUST_VALUE_FLAGS = {"-f", "--justfile", "-d", "--working-directory", "--dotenv-path",
-                    "--chooser", "--shell", "--color", "--unstable-format"}
+# `just --help`; --set takes two words, of which only the first is skipped.
+JUST_VALUE_FLAGS = {"-f", "--justfile", "-d", "--working-directory", "-E", "--dotenv-path",
+                    "--chooser", "--shell", "--color", "--unstable-format", "--alias-style",
+                    "--ceiling", "--command-color", "--cygpath", "--dotenv-filename",
+                    "--dump-format", "--evaluate-format", "--group", "--indentation",
+                    "--justfile-name", "--list-heading", "--list-prefix", "--set",
+                    "--shell-arg", "--tempdir", "--timestamp-format"}
 JUST_INSPECTION = {"--list", "-l", "--summary", "--show", "-s", "--dry-run", "-n",
                    "--evaluate", "--dump", "--fmt", "--choose", "--version", "--help", "-h"}
+# `cargo --help` and `cargo test --help`: options that take a separate word, which
+# stands between `cargo` and its subcommand (`cargo --config net.offline=true
+# test`). The same for `swift build --help`, SwiftPM's options.
+CARGO_VALUE_FLAGS = {"--config", "-Z", "--color", "-C", "--manifest-path", "-m", "--target-dir",
+                     "--lockfile-path", "--explain"}
+SWIFT_VALUE_FLAGS = {"--package-path", "--scratch-path", "--cache-path", "--config-path",
+                     "--security-path", "-c", "--configuration", "--triple", "--sdk",
+                     "--toolchain", "--swift-sdk", "--sanitize", "-Xcc", "-Xswiftc", "-Xlinker",
+                     "-Xcxx", "-j", "--jobs", "--build-system"}
 
 
-def positionals(args, value_flags):
-    """The words of `args` that are neither flags nor the value of a flag."""
+def heavy_name(name):
+    """True for a just recipe or package script named for tests, checks or builds."""
+    name = name.lower()
+    return name.startswith(HEAVY_WORDS) or any(p in HEAVY_WORDS for p in NAME_PIECES_RE.split(name))
+
+
+def walk(args, value_flags=()):
+    """Classify the words of `args` as a program's option parser would.
+
+    Pairs of (kind, index into args): "flag" (starts with `-`), "value" (the word
+    after a flag in `value_flags`), "word", "dash" (the `--`), and "rest" for each
+    word after it. Only what comes before `--` can be an option of this program;
+    what follows belongs to whatever it runs (`cargo test -- --help` compiles, then
+    hands --help to the test binary)."""
     out, i = [], 0
     while i < len(args):
+        if args[i] == "--":
+            out.append(("dash", i))
+            out.extend(("rest", j) for j in range(i + 1, len(args)))
+            break
         if args[i] in value_flags:
+            out.append(("flag", i))
+            if i + 1 < len(args):
+                out.append(("value", i + 1))
             i += 2
-        elif args[i].startswith("-"):
-            i += 1
         else:
-            out.append(args[i])
+            out.append(("flag" if args[i].startswith("-") else "word", i))
             i += 1
     return out
+
+
+def positionals(args, value_flags=()):
+    """The words of `args` that are neither options nor the value of an option."""
+    return [args[i] for kind, i in walk(args, value_flags) if kind in ("word", "rest")]
+
+
+def inspecting(args, value_flags=()):
+    """True when `args` ask the program itself for help, a version or its
+    configuration: an inspection flag among its own options (see walk())."""
+    return any(kind == "flag" and args[i] in INSPECTION_FLAGS for kind, i in walk(args, value_flags))
 
 
 # Programs that launch another program named by their first positional word:
@@ -716,27 +791,103 @@ def positionals(args, value_flags):
 # (`pnpm exec vitest`, `yarn dlx tsc`), and `nix develop|shell` through `-c`.
 PACKAGE_LAUNCHERS = {"npx", "bunx", "pnpx"}
 PACKAGE_LAUNCH_SUBCOMMANDS = {"exec", "dlx", "x"}
+# Each launcher's own options: those that take a separate word (so the word after
+# `--package typescript` is the program, not the package) and those whose word is
+# a shell command line (`npx -c 'tsc --noEmit'`, `pnpm dlx -c '…'`). npm's and
+# bun's are from `npm exec --help` and `bunx --help`; pnpm and yarn are not
+# installed here, so theirs are not checked against a binary.
+NPM_EXEC = ({"--package", "-p", "--workspace", "-w", "--allow-scripts", "--prefix", "--cache",
+             "--registry", "--userconfig", "--globalconfig", "--loglevel"}, {"--call", "-c"})
+BUN_X = ({"--package", "-p"}, set())
+PNPM_DLX = ({"--package", "-p", "--filter", "-F", "--dir", "-C", "--reporter", "--loglevel",
+             "--allow-build", "--workspace-concurrency"}, {"--shell-mode", "-c"})
+YARN_DLX = ({"--package", "-p"}, set())
+LAUNCHER_OPTIONS = {"npx": NPM_EXEC, "npm": NPM_EXEC, "bunx": BUN_X, "bun": BUN_X,
+                    "pnpx": PNPM_DLX, "pnpm": PNPM_DLX, "yarn": YARN_DLX}
 
 
-def launched(args, value_flags):
-    """The program and arguments a launcher runs, or None."""
-    words = positionals(args, value_flags)
-    if not words:
-        return None
-    i = args.index(words[0])
-    return os.path.basename(words[0]), args[i + 1:]
+def package_command(word):
+    """The program a launcher word names: `vitest@latest` and `@scope/tool@1.2`
+    run `vitest` and `tool`."""
+    name = os.path.basename(word)
+    return name.split("@", 1)[0] or name
+
+
+def heavy_line(text):
+    """True when a shell command line, such as an `npx --call` string, runs a
+    heavy command outside the queue."""
+    for segment in split_segments(text):
+        try:
+            tokens = shlex.split(segment)
+        except ValueError:
+            tokens = [t.strip("'\"") for t in segment.split()]
+        queued = False
+        while tokens:
+            layer = peel(tokens)
+            if layer is None:
+                break
+            tokens, via_queue = layer
+            queued = queued or via_queue
+        if tokens and not queued and is_heavy(os.path.basename(tokens[0]), tokens[1:]):
+            return True
+    return False
+
+
+def launcher_heavy(launcher, args):
+    """True when `launcher` (`npx`, or `exec`/`dlx` of a package manager) with
+    these arguments runs a heavy command. Its own options come first; the first
+    word after them is the program, and everything after that is the program's.
+    An inspection flag among the launcher's options asks the launcher itself, which
+    runs nothing (`npx --version vitest` prints npx's version)."""
+    value_flags, call_flags = LAUNCHER_OPTIONS[launcher]
+    parts = walk(args, value_flags | call_flags)
+    for n, (kind, i) in enumerate(parts):
+        word = args[i]
+        if kind == "flag":
+            if word in INSPECTION_FLAGS:
+                return False
+            if word in call_flags and n + 1 < len(parts):
+                return heavy_line(args[parts[n + 1][1]])
+            for flag in call_flags:
+                if flag.startswith("--") and word.startswith(flag + "="):
+                    return heavy_line(word[len(flag) + 1:])
+        elif kind in ("word", "rest"):
+            return is_heavy(package_command(word), args[i + 1:])
+    return False
+
+
+def manager_flags(prog):
+    return PACKAGE_VALUE_FLAGS | ({"-w"} if prog == "npm" else set())
 
 
 def is_heavy(prog, args):
     """True when this program, run bare, is one of the known heavy commands."""
     if prog in PACKAGE_LAUNCHERS:
-        inner = launched(args, PACKAGE_VALUE_FLAGS)
-        return inner is not None and is_heavy(*inner)
+        return launcher_heavy(prog, args)
     if prog in PACKAGE_MANAGERS:
-        words = positionals(args, PACKAGE_VALUE_FLAGS)
-        if words[:1] and words[0] in PACKAGE_LAUNCH_SUBCOMMANDS:
-            inner = launched(args[args.index(words[0]) + 1:], PACKAGE_VALUE_FLAGS)
-            return inner is not None and is_heavy(*inner)
+        parts = walk(args, manager_flags(prog))
+        words = [i for kind, i in parts if kind == "word"]
+        if not words:
+            return False
+        # Flags before the subcommand are the manager's own: `npm --version
+        # exec vitest` prints a version.
+        if any(kind == "flag" and args[i] in INSPECTION_FLAGS and i < words[0] for kind, i in parts):
+            return False
+        if args[words[0]] in PACKAGE_LAUNCH_SUBCOMMANDS:
+            return launcher_heavy(prog, args[words[0] + 1:])
+        # A script: `test`, or `run NAME` for a heavy name. Flags after the script
+        # are its own arguments, except where the manager reads them first: npm
+        # until `--`, and bun's built-in `bun test`.
+        if args[words[0]] == "test":
+            script_at = words[0]
+        elif args[words[0]] in ("run", "run-script") and len(words) > 1 \
+                and heavy_name(args[words[1]]):
+            script_at = words[1]
+        else:
+            return False
+        reads_flags_after = prog == "npm" or (prog == "bun" and script_at == words[0])
+        return not any(kind == "flag" and args[i] in INSPECTION_FLAGS
+                       and (i < script_at or reads_flags_after) for kind, i in parts)
     if prog == "nix":
         for flag in ("-c", "--command"):
             if flag in args and args.index(flag) + 1 < len(args):
@@ -744,31 +895,38 @@ def is_heavy(prog, args):
                 return is_heavy(os.path.basename(args[i + 1]), args[i + 2:])
         return False
     if prog in SHELL_INTERPRETERS:  # `bash scripts/run-gate.sh`
-        words = positionals(args, set())
+        words = positionals(args)
         return bool(words) and fnmatch.fnmatch(os.path.basename(words[0]), "run-gate*")
     if fnmatch.fnmatch(prog, "run-gate*"):
         return True
     if prog == "just":
-        if any(a in JUST_INSPECTION for a in args):
-            return False
-        return any(HEAVY_SCRIPT_RE.match(w) for w in positionals(args, JUST_VALUE_FLAGS))
-    if any(a in INSPECTION_FLAGS for a in args):
+        # just's options come before the first recipe; after it a flag is that
+        # recipe's argument (`just test --dry-run` runs test).
+        parts = walk(args, JUST_VALUE_FLAGS)
+        for kind, i in parts:
+            if kind in ("word", "dash", "rest"):
+                break
+            if kind == "flag" and args[i] in JUST_INSPECTION:
+                return False
+        # Only the recipe name is judged. Its arguments are free text (`just wt
+        # fix/test-flakes` names a branch), and just cannot be told apart from
+        # a second recipe without reading the justfile; `just build test` is
+        # caught by its first recipe.
+        recipe = next((args[i] for kind, i in parts if kind in ("word", "rest")), None)
+        return recipe is not None and heavy_name(recipe)
+    value_flags = CARGO_VALUE_FLAGS if prog == "cargo" else SWIFT_VALUE_FLAGS if prog == "swift" else ()
+    if inspecting(args, value_flags):
         return False
     if prog == "playwright":
-        words = positionals(args, set())
+        words = positionals(args)
         return bool(words) and words[0] not in PLAYWRIGHT_LIGHT
     if prog in HEAVY_PROGRAMS:
         return True
     if prog in ("cargo", "swift"):
         # `cargo +nightly test`: a toolchain selector is not the subcommand.
-        words = [w for w in positionals(args, set()) if not w.startswith("+")]
+        words = [args[i] for kind, i in walk(args, value_flags)
+                 if kind == "word" and not args[i].startswith("+")]
         return bool(words) and words[0] in (HEAVY_CARGO if prog == "cargo" else HEAVY_SWIFT)
-    if prog in PACKAGE_MANAGERS:
-        words = positionals(args, PACKAGE_VALUE_FLAGS | ({"-w"} if prog == "npm" else set()))
-        if words[:1] == ["test"]:
-            return True
-        return words[:1] in (["run"], ["run-script"]) and len(words) > 1 \
-            and bool(HEAVY_SCRIPT_RE.match(words[1]))
     return False
 
 
@@ -790,24 +948,11 @@ def check(segment, typed=True):
                     "`env -i`). Agent commands run with it false so nothing they run can reach the "
                     "1Password desktop app or raise a Touch ID prompt. The steps that need the owner "
                     "have declared commands that ask deliberately; see the credentials rules.")
-        head = os.path.basename(tokens[0])
-        inner = strip_runner(tokens)
-        if inner is not None:
-            queued = queued or head in QUEUE_RUNNERS
-            tokens = inner
-            continue
-        if head in WRAPPERS or re.match(r"^[A-Za-z_][A-Za-z0-9_]*=", tokens[0]):
-            tokens = tokens[1:]
-            # A wrapper's own flags (`env -u NAME`, `env -i`, `sudo -E`,
-            # `nohup -p`) are not the program; skip them, and the argument of
-            # the flags that take one, so the real program is what gets judged.
-            while tokens and tokens[0].startswith("-"):
-                flag = tokens.pop(0)
-                if flag in {"-u", "--unset", "-C", "--chdir", "-S", "--split-string",
-                            "-p", "--prompt", "-g", "--group", "-h", "--host"} and tokens:
-                    tokens.pop(0)
-            continue
-        break
+        layer = peel(tokens)
+        if layer is None:
+            break
+        tokens, via_queue = layer
+        queued = queued or via_queue
     if not tokens:
         return None
 

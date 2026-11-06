@@ -150,22 +150,24 @@ convert a compile-time error into a runtime one.
 ## Tests and verification
 
 Run CPU-heavy work (test suites, release builds, browser e2e) in parallel;
-never wait for another session or repository. Use
-`cpu-lock run --shared --label "<repo>: <what>" -- …` to label the work so
-`cpu-lock status` shows what is running. It never blocks. It runs the command
-under macOS's utility QoS clamp at `nice` 10, below the owner's interactive
-apps and below the self-hosted CI runners, which outrank agent work so the
-gate is not starved. Never run heavy work outside it.
+never wait for another session or repository. Run it as
+`membrake exec --label "<repo>: <what>" -- …` (`cpu-lock run … -- …` is an
+alias). When memory is short it waits for a turn; otherwise it starts at once.
+Either way the command runs under macOS's utility QoS clamp at `nice` 10, below
+the owner's interactive apps and below the self-hosted CI runners, which
+outrank agent work so the gate is not starved. Never run heavy work outside it;
+the command guard denies known-heavy commands (`tsc`, `vitest`, `cargo test`,
+`pnpm test`, `just verify` and the like) that skip it. Run long heavy commands
+in the background, so a tool timeout cannot kill a command that is still
+queued. `membrake status` shows the queue and the frozen jobs.
 
 Memory is guarded by `membrake`, a root daemon. When memory gets tight it
 freezes (`SIGSTOP`) the newest heavy agent job, freezes them all if the Mac
 heads for the cliff, resumes them one at a time when memory recovers, and kills
-only at the cliff. A command that stops making progress may be frozen, not
-hung: check `membrake status` (or `/var/log/membrake/events.log`) before
-killing or rerunning it. Rerunning a frozen command adds back the memory it was
-frozen to save. It resumes on its own.
-Exclusive mode no longer exists: `--exclusive` is accepted for compatibility and
-treated as shared.
+only at the cliff. A command that stops making progress may be queued or
+frozen, not hung: check `membrake status` (or `/var/log/membrake/events.log`)
+before killing or rerunning it. Rerunning a queued or frozen command adds back
+the memory it was held to save. It starts or resumes on its own.
 
 **Never generate synthetic load to reproduce or imitate contention.** No CPU or
 I/O work unrelated to the behavior under test — spin loops, `yes`, `openssl

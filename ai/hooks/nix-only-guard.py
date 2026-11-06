@@ -9,6 +9,7 @@ The rule this enforces: desired state is declared in the Nix configuration and
 applied by `darwin-rebuild switch`. Nothing else may touch the machine.
 """
 
+import fnmatch
 import json
 import os
 import re
@@ -436,6 +437,9 @@ COMMAND_WRAPPERS = {
     "xargs": {"-I", "-J", "-L", "-n", "-P", "-s", "-E", "-R", "-S", "-d", "-a"},
     "nohup": set(), "command": set(), "exec": {"-a"}, "time": set(),
 }
+# The two names of the memory queue's runner (cpu-lock is an alias for
+# `membrake exec`).
+QUEUE_RUNNERS = {"cpu-lock", "membrake"}
 SHELL_C_FLAG_RE = re.compile(r"-[A-Za-z]*c[A-Za-z]*")  # -c, -lc, -ec
 
 
@@ -445,7 +449,8 @@ def strip_runner(tokens):
     check() judges the program at the head of a segment, so a runner in front
     hid it: `gtimeout 60 rm -r ~/Library/x` and `cpu-lock run … -- mkdir
     ~/Library/x` were both allowed, and cpu-lock is the wrapper the global
-    policy requires for heavy work (measured 2026-10-31)."""
+    policy requires for heavy work (measured 2026-10-31). `membrake exec … --
+    cmd` is the same runner, and cpu-lock is now an alias for it."""
     if not tokens:
         return None
     head = os.path.basename(tokens[0])
@@ -454,7 +459,7 @@ def strip_runner(tokens):
         while i < len(tokens) and tokens[i].startswith("-"):
             i += 1 + (tokens[i] in COMMAND_WRAPPERS[head])
         return tokens[i + (head != "nice"):]  # timeout's duration is not the program
-    if head == "cpu-lock":
+    if head == "cpu-lock" or (head == "membrake" and tokens[1:2] == ["exec"]):
         return tokens[tokens.index("--") + 1:] if "--" in tokens else []
     return None
 
@@ -467,7 +472,7 @@ def runs_script_string(command, scripts=None):
     inside double quotes, where they still run), redirections and their
     operands, and the separators `;` `&` `|` and newline. Each word is judged
     by where it stands: after a separator, keyword, assignment, or wrapper
-    such as `gtimeout 60` or `cpu-lock run … --`, it is the program; anything
+    such as `gtimeout 60` or `membrake exec … --`, it is the program; anything
     else is an argument.
 
     When `scripts` is a list, every file this command would execute as shell
@@ -493,7 +498,7 @@ def runs_script_string(command, scripts=None):
             skip -= 1
         elif mode == "dashdash":
             if text == "--":
-                mode = "cmd"  # cpu-lock runs what follows its `--`
+                mode = "cmd"  # cpu-lock and membrake exec run what follows their `--`
         elif mode == "shell":
             if text in ("-o", "+o", "-O", "+O"):
                 skip = 1
@@ -515,7 +520,7 @@ def runs_script_string(command, scripts=None):
                 return hit()
             elif name in COMMAND_WRAPPERS:
                 mode, wrapper, duration = "wrapper", name, name in ("timeout", "gtimeout")
-            elif name == "cpu-lock":
+            elif name in QUEUE_RUNNERS:
                 mode = "dashdash"
             elif name in SHELL_INTERPRETERS or name in ("source", "."):
                 mode = "shell"
@@ -658,7 +663,116 @@ def check_command(command, typed=True):
     return None
 
 
-def check(segment):
+# Heavy work goes through the memory queue. On 2026-11-05 about ten agent
+# sessions and the CI runners ran 31 tsc, 8 tsgolint and 92 node processes at
+# once and the Mac swapped itself into a kernel kill of system daemons
+# (modules/darwin/membrake.nix has the evidence). `membrake exec` waits for a
+# turn when memory is short and otherwise runs the command at once, so the
+# global instructions require it for heavy work; this rule makes the
+# requirement hold for an agent that skipped the prose.
+#
+# Judged on the segment's program after runners are peeled (check() records
+# whether a queue runner was among them), so `membrake exec -- vitest` and
+# `timeout 60 cpu-lock run -- vitest` pass while `timeout 60 vitest` does not.
+# Inspection (--version, --help, tsc --showConfig, cargo metadata) passes.
+# Scripts a command runs are not judged: a script already run under the queue
+# is queued as a whole, and judging its lines would deny the wrapped form.
+HEAVY_DENIAL = ('heavy command outside the memory queue: run it as membrake exec '
+                '--label "<repo>: <what>" -- <command> (it waits for memory when the Mac '
+                'is full; run long ones in the background)')
+HEAVY_PROGRAMS = {"tsc", "tsgo", "tsgolint", "vitest", "jest", "playwright", "xcodebuild"}
+HEAVY_CARGO = {"build", "test", "clippy", "bench", "nextest", "check"}
+HEAVY_SWIFT = {"build", "test"}
+PACKAGE_MANAGERS = {"bun", "pnpm", "npm", "yarn"}
+HEAVY_SCRIPT_RE = re.compile(r"(?<![a-z])(?:test|check|typecheck|verify|build|gate|lint)", re.I)
+INSPECTION_FLAGS = {"--version", "-V", "--help", "-h", "-help", "-version", "--showConfig",
+                    "--init", "-list", "-showsdks", "-showBuildSettings", "-usage"}
+# Playwright subcommands that download or open files rather than run tests.
+PLAYWRIGHT_LIGHT = {"install", "install-deps", "show-report", "show-trace"}
+# Flags whose value is a separate word, so it is not mistaken for a command.
+PACKAGE_VALUE_FLAGS = {"--filter", "-F", "-C", "--dir", "--prefix", "--cwd", "--workspace"}
+JUST_VALUE_FLAGS = {"-f", "--justfile", "-d", "--working-directory", "--dotenv-path",
+                    "--chooser", "--shell", "--color", "--unstable-format"}
+JUST_INSPECTION = {"--list", "-l", "--summary", "--show", "-s", "--dry-run", "-n",
+                   "--evaluate", "--dump", "--fmt", "--choose", "--version", "--help", "-h"}
+
+
+def positionals(args, value_flags):
+    """The words of `args` that are neither flags nor the value of a flag."""
+    out, i = [], 0
+    while i < len(args):
+        if args[i] in value_flags:
+            i += 2
+        elif args[i].startswith("-"):
+            i += 1
+        else:
+            out.append(args[i])
+            i += 1
+    return out
+
+
+# Programs that launch another program named by their first positional word:
+# `npx vitest`, `bunx tsc`. Package managers do the same through a subcommand
+# (`pnpm exec vitest`, `yarn dlx tsc`), and `nix develop|shell` through `-c`.
+PACKAGE_LAUNCHERS = {"npx", "bunx", "pnpx"}
+PACKAGE_LAUNCH_SUBCOMMANDS = {"exec", "dlx", "x"}
+
+
+def launched(args, value_flags):
+    """The program and arguments a launcher runs, or None."""
+    words = positionals(args, value_flags)
+    if not words:
+        return None
+    i = args.index(words[0])
+    return os.path.basename(words[0]), args[i + 1:]
+
+
+def is_heavy(prog, args):
+    """True when this program, run bare, is one of the known heavy commands."""
+    if prog in PACKAGE_LAUNCHERS:
+        inner = launched(args, PACKAGE_VALUE_FLAGS)
+        return inner is not None and is_heavy(*inner)
+    if prog in PACKAGE_MANAGERS:
+        words = positionals(args, PACKAGE_VALUE_FLAGS)
+        if words[:1] and words[0] in PACKAGE_LAUNCH_SUBCOMMANDS:
+            inner = launched(args[args.index(words[0]) + 1:], PACKAGE_VALUE_FLAGS)
+            return inner is not None and is_heavy(*inner)
+    if prog == "nix":
+        for flag in ("-c", "--command"):
+            if flag in args and args.index(flag) + 1 < len(args):
+                i = args.index(flag)
+                return is_heavy(os.path.basename(args[i + 1]), args[i + 2:])
+        return False
+    if prog in SHELL_INTERPRETERS:  # `bash scripts/run-gate.sh`
+        words = positionals(args, set())
+        return bool(words) and fnmatch.fnmatch(os.path.basename(words[0]), "run-gate*")
+    if fnmatch.fnmatch(prog, "run-gate*"):
+        return True
+    if prog == "just":
+        if any(a in JUST_INSPECTION for a in args):
+            return False
+        return any(HEAVY_SCRIPT_RE.match(w) for w in positionals(args, JUST_VALUE_FLAGS))
+    if any(a in INSPECTION_FLAGS for a in args):
+        return False
+    if prog == "playwright":
+        words = positionals(args, set())
+        return bool(words) and words[0] not in PLAYWRIGHT_LIGHT
+    if prog in HEAVY_PROGRAMS:
+        return True
+    if prog in ("cargo", "swift"):
+        # `cargo +nightly test`: a toolchain selector is not the subcommand.
+        words = [w for w in positionals(args, set()) if not w.startswith("+")]
+        return bool(words) and words[0] in (HEAVY_CARGO if prog == "cargo" else HEAVY_SWIFT)
+    if prog in PACKAGE_MANAGERS:
+        words = positionals(args, PACKAGE_VALUE_FLAGS | ({"-w"} if prog == "npm" else set()))
+        if words[:1] == ["test"]:
+            return True
+        return words[:1] in (["run"], ["run-script"]) and len(words) > 1 \
+            and bool(HEAVY_SCRIPT_RE.match(words[1]))
+    return False
+
+
+def check(segment, typed=True):
     raw = segment.strip()
     try:
         tokens = shlex.split(raw)
@@ -669,6 +783,7 @@ def check(segment):
 
     # Peel wrappers, runners and leading VAR=value assignments. The biometric
     # rule is judged at every layer, so a runner cannot hide an `env -i`.
+    queued = False
     while tokens:
         if reenables_app_integration(tokens):
             return ("Blocked: setting, unsetting or dropping OP_BIOMETRIC_UNLOCK_ENABLED (including "
@@ -678,6 +793,7 @@ def check(segment):
         head = os.path.basename(tokens[0])
         inner = strip_runner(tokens)
         if inner is not None:
+            queued = queued or head in QUEUE_RUNNERS
             tokens = inner
             continue
         if head in WRAPPERS or re.match(r"^[A-Za-z_][A-Za-z0-9_]*=", tokens[0]):
@@ -703,6 +819,11 @@ def check(segment):
     credential = credential_boundary(raw, prog)
     if credential:
         return credential
+
+    # Before ALLOWED_PROGRAMS: `nix develop -c cargo test` is allowed as nix but
+    # launches a heavy command.
+    if typed and not queued and is_heavy(prog, args):
+        return HEAVY_DENIAL
 
     if prog in ALLOWED_PROGRAMS:
         return None
@@ -875,7 +996,7 @@ def command_verdict(command, cwd=None, depth=0, seen=None, typed=True):
     if reason:
         return reason
     for segment in split_segments(command):
-        reason = check(segment)
+        reason = check(segment, typed)
         if reason:
             return reason
     scripts = []

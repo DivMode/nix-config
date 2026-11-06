@@ -264,7 +264,8 @@ leak_sha=$(git -C "$other" rev-parse HEAD)
 git -C "$other" switch -q main
 
 check_in() { # <repo> <local.nix> <check args...> → status; output in check-output
-  (cd "$1" && NIX_CONFIG_LOCAL="$2" "$nixcfg/scripts/check-private-names.sh" "${@:3}") >"$work_dir/check-output" 2>&1
+  (cd "$1" && PATH="${CHECK_PATH_PREFIX:+$CHECK_PATH_PREFIX:}$PATH" NIX_CONFIG_LOCAL="$2" \
+    "$nixcfg/scripts/check-private-names.sh" "${@:3}") >"$work_dir/check-output" 2>&1
 }
 expect_check() { # <blocked|passed> <case> <repo> <local.nix> <check args...>; NEEDLE= names the refusal
   local result=passed
@@ -371,6 +372,71 @@ drop_blob "$broken" staged.txt
 NEEDLE="cannot check" expect_check blocked "a staged file git cannot read" \
   "$broken" "$local_nix" --staged
 git -C "$broken" reset -q
+
+# A search that could not run has found nothing only by accident. grep exits 1
+# for "no match" and 2 or more when it could not search; every search in the
+# scan - the paths of a tree, of a commit, and the lines a commit adds - must
+# refuse on the second, not pass. The stand-in grep cannot search (exit 2)
+# when asked to print the match (-o) from text naming FAIL-SEARCH, which is the
+# search that names the term, and is otherwise the real grep.
+mkdir -p "$work_dir/failing-grep"
+cat > "$work_dir/failing-grep/grep" <<'SH'
+#!/usr/bin/env bash
+input=$(cat)
+if [[ " $* " == *" -oiF "* && "$input" == *FAIL-SEARCH* ]]; then
+  echo "injected grep inspection error" >&2
+  exit 2
+fi
+printf '%s\n' "$input" | exec "$REAL_GREP" "$@"
+SH
+chmod +x "$work_dir/failing-grep/grep"
+export REAL_GREP
+REAL_GREP=$(command -v grep)
+
+searched="$physical/searched"
+git init -q -b main "$searched"
+git -C "$searched" config user.name "Fixture User"
+git -C "$searched" config user.email "fixture@example.invalid"
+printf 'clean\n' > "$searched/base.txt"
+git -C "$searched" add base.txt
+git -C "$searched" commit -q -m "clean base"
+git -C "$searched" switch -q -c fail-path
+printf 'clean\n' > "$searched/FAIL-SEARCH-path.txt"
+git -C "$searched" add FAIL-SEARCH-path.txt
+git -C "$searched" commit -q -m "a file whose path the search cannot read"
+git -C "$searched" switch -q -c fail-line main
+printf 'FAIL-SEARCH in a line a commit adds\n' > "$searched/line.txt"
+git -C "$searched" add line.txt
+git -C "$searched" commit -q -m "a line the search cannot read"
+git -C "$searched" switch -q -c fail-name main
+printf 'fixture-private-name FAIL-SEARCH\n' > "$searched/name.txt"
+git -C "$searched" add name.txt
+git -C "$searched" commit -q -m "a name on a line the search cannot read"
+git -C "$searched" switch -q main
+
+git -C "$searched" switch -q fail-path
+CHECK_PATH_PREFIX="$work_dir/failing-grep" NEEDLE="grep could not search" \
+  expect_check blocked "a tree path that grep could not search" "$searched" "$local_nix" --tree
+git -C "$searched" switch -q main
+git -C "$searched" checkout -q fail-path -- FAIL-SEARCH-path.txt
+CHECK_PATH_PREFIX="$work_dir/failing-grep" NEEDLE="grep could not search" \
+  expect_check blocked "a staged path that grep could not search" "$searched" "$local_nix" --staged
+git -C "$searched" reset -q --hard main
+CHECK_PATH_PREFIX="$work_dir/failing-grep" NEEDLE="grep could not search" \
+  expect_check blocked "a path a commit adds that grep could not search" \
+  "$searched" "$local_nix" --commits fail-path --not main
+CHECK_PATH_PREFIX="$work_dir/failing-grep" NEEDLE="grep could not search" \
+  expect_check blocked "a line a commit adds that grep could not search" \
+  "$searched" "$local_nix" --commits fail-line --not main
+git -C "$searched" switch -q fail-name
+CHECK_PATH_PREFIX="$work_dir/failing-grep" NEEDLE="grep could not search" \
+  expect_check blocked "the match grep found but could not print" "$searched" "$local_nix" --tree
+git -C "$searched" switch -q main
+# The stand-in changes nothing when no search fails.
+CHECK_PATH_PREFIX="$work_dir/failing-grep" \
+  expect_check passed "a clean tree through the stand-in grep" "$searched" "$local_nix" --tree
+CHECK_PATH_PREFIX="$work_dir/failing-grep" \
+  expect_check passed "a clean range through the stand-in grep" "$searched" "$local_nix" --commits main
 
 # The names git prints are quoted unless asked otherwise ("caf\303\251.txt"), and
 # a quoted name names no file: a staged file with a non-ASCII name was skipped.

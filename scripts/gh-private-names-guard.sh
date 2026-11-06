@@ -19,6 +19,15 @@
 #   cannot read or that is binary - it treats the write as public. An
 #   occasional refusal is the price; the alternative is a leak.
 #
+#   Text gh composes itself is not text the wrapper can see: the commit
+#   messages behind `pr create --fill`, `--fill-first` and `--fill-verbose`, a
+#   saved failed run (`--recover`), an issue template (`issue create
+#   --template`), a release's tag annotation (`--notes-from-tag`) and the notes
+#   GitHub generates (`--generate-notes`). Toward a public or possibly public
+#   repository `--fill*` is refused unless --title and --body (or --body-file)
+#   are given, since those take precedence; the others are refused outright,
+#   because explicit text does not replace what they add.
+#
 #   It does NOT stop opaque code: gh extensions, shell aliases and `gh
 #   copilot` run programs it cannot read, so they are let through only when
 #   their command line is clean AND nothing but private repositories is in
@@ -46,9 +55,15 @@
 #   1. The command is found the way gh finds it (cobra's rule: a flag in front
 #      of the command takes the next word unless it is known not to), then
 #      aliases are expanded from `gh alias list`: multi-word names, longest
-#      first, `$1`..`$n` substituted and the rest appended, as gh does.
-#   2. A genuine help request, `gh help`, and commands that cannot post to a
-#      repository go to gh at once; so do reads.
+#      first, found across flags and under any spelling of a group (`cs post`
+#      is `codespace post`), `$1`..`$n` substituted and the rest appended, as
+#      gh does. This comes before any exemption below: an alias can be filed
+#      beneath a group that cannot post (`config post`). Where no alias is
+#      found exactly but the group has some, they are inspected as if typed
+#      and nothing exempts the command.
+#   2. A genuine help request (-h, or --help whose last value is true: `--help
+#      --help=false` runs the command), `gh help`, and commands that cannot
+#      post to a repository go to gh at once; so do reads.
 #   3. Flags are then read with the arity of THIS command (the tables below: a
 #      word after a flag that takes a value is that value, never an option, a
 #      file or a repository). A flag the tables do not know leaves the command
@@ -127,21 +142,29 @@ no_post_group() {
   return 1
 }
 
-# gh's own short names, as gh spells them in `gh <command> --help` ALIASES.
+# gh's own short names for a group, as gh spells them in `gh <command> --help`
+# ALIASES: <group word> → $canonical_name.
+canonical_name=""
+canonical_group() {
+  case "$1" in
+    agent-tasks | agent | agents) canonical_name=agent-task ;;
+    at) canonical_name=attestation ;;
+    cs) canonical_name=codespace ;;
+    ext | extensions) canonical_name=extension ;;
+    rs) canonical_name=ruleset ;;
+    skills) canonical_name=skill ;;
+    a11y) canonical_name=accessibility ;;
+    *) canonical_name=$1 ;;
+  esac
+}
+
 canonicalize() {
   if [[ "$group" == api ]]; then
     pair=api
     return 0
   fi
-  case "$group" in
-    agent-tasks | agent | agents) group=agent-task ;;
-    at) group=attestation ;;
-    cs) group=codespace ;;
-    ext | extensions) group=extension ;;
-    rs) group=ruleset ;;
-    skills) group=skill ;;
-    a11y) group=accessibility ;;
-  esac
+  canonical_group "$group"
+  group=$canonical_name
   case "$group:$action" in
     *:ls) action=list ;;
     *:new) action=create ;;
@@ -467,7 +490,10 @@ positional_kind() { # <position> → $kind
 # The group is the first word that is not a flag or a flag's value, the action
 # the next (cobra's rule: a flag it does not know takes the next word). gh
 # accepts flags before either (`gh -R owner/repo pr comment`, `gh pr -R
-# owner/repo create`).
+# owner/repo create`). `-h` is one it does not know: gh defines only `--help`,
+# and pflag answers a stray `-h` with help itself, so the word after `-h` is
+# taken (observed with gh 2.103.3: `gh config -h x post` runs the alias `config
+# post`, `gh config --help x post` prints config's help).
 #   group, group_index, action, action_index, pair
 #   flag_before_action  a flag other than -R or --help came first, and could
 #                       have taken the next word: never a read then (`gh pr -t
@@ -484,7 +510,7 @@ find_command() {
           literal=true
           continue
           ;;
-        --help | -h | --version) continue ;;
+        --help | --version) continue ;;
         -R | --repo)
           i=$(( i + 1 ))
           continue
@@ -536,10 +562,43 @@ find_command() {
 #                     just before them, which might have taken them as its value
 #   any_unsure        some flag's arity is not known: no repository word can
 #                     then prove a destination private
-#   help_flag         --help (or -h where it is help) that is not a value
+#   help_flag         a genuine help request: -h (where it is help), or --help
+#                     whose last value is true, that is not somebody's value
+#   st_*              the last value of the boolean flags the decision turns
+#                     on, as note_bool() keeps it: on, off or maybe
 role=() opt=() val=() pos_idx=() real_repos=() repo_words=()
-any_unsure=false help_flag=false unsure=false
+any_unsure=false help_flag=false unsure=false short_help=false
+st_help=off st_fill=off st_fill_first=off st_fill_verbose=off
 ai=0
+
+# One more occurrence of a boolean flag. pflag lets the last value win and takes
+# any strconv.ParseBool spelling (observed with gh 2.103.3: `--help --help=false`
+# goes on to run the command, `--help=false --help` prints help, `--help=T`
+# does too, and a value that is not a ParseBool spelling is an error that posts
+# nothing). A word after a flag of unknown arity might be that flag's value
+# rather than an option, so what it says may or may not count: the state is
+# then "maybe", which grants nothing and refuses what a fill would.
+note_bool() { # <state variable> <value>
+  local var=$1 old=${!1} new
+  case "$2" in
+    1 | t | T | TRUE | true | True) new=on ;;
+    *) new=off ;;
+  esac
+  if $unsure && [[ "$new" != "$old" ]]; then new=maybe; fi
+  printf -v "$var" '%s' "$new"
+}
+
+note_flag() { # <flag> <value>
+  case "$1" in
+    --help) note_bool st_help "$2" ;;
+    --fill) note_bool st_fill "$2" ;;
+    -f)
+      if [[ "$pair" == "pr create" ]]; then note_bool st_fill "$2"; fi
+      ;;
+    --fill-first) note_bool st_fill_first "$2" ;;
+    --fill-verbose) note_bool st_fill_verbose "$2" ;;
+  esac
+}
 
 note_repo() { # <value of -R>
   repo_words+=("$1")
@@ -563,7 +622,8 @@ take_value() { # <flag>
 
 parse_args() {
   role=() opt=() val=() pos_idx=() real_repos=() repo_words=()
-  any_unsure=$flag_before_action help_flag=false unsure=false
+  any_unsure=$flag_before_action help_flag=false unsure=false short_help=false
+  st_help=off st_fill=off st_fill_first=off st_fill_verbose=off
   local n=${#args[@]} arg name rest c j rc literal=false uncertain
   for (( ai = 0; ai < n; ai++ )); do
     arg=${args[ai]}
@@ -606,6 +666,7 @@ parse_args() {
           rc=0
           flag_arity "$name" || rc=$?
           if (( rc == 2 )); then any_unsure=true; fi
+          note_flag "$name" "${arg#*=}"
           unsure=false
           continue
           ;;
@@ -619,7 +680,9 @@ parse_args() {
               unsure=false
               ;;
             1)
-              if [[ "$arg" == --help || "$arg" == -h ]] && ! $unsure; then help_flag=true; fi
+              # -h is pflag's own help request, which nothing after it cancels.
+              if [[ "$arg" == -h ]] && ! $unsure; then short_help=true; fi
+              note_flag "$arg" true
               unsure=false
               ;;
             *)
@@ -648,7 +711,12 @@ parse_args() {
               fi
               break
             elif (( rc == 1 )); then
-              if [[ "$c" == -h ]] && ! $unsure; then help_flag=true; fi
+              if [[ "$c" == -h ]] && ! $unsure; then short_help=true; fi
+              if [[ "${arg:j+1:1}" == "=" && "$c" == -f ]]; then
+                note_flag "$c" "${arg:j+2}"
+                break
+              fi
+              note_flag "$c" true
             else
               any_unsure=true
               uncertain=true
@@ -664,6 +732,7 @@ parse_args() {
     pos_idx+=("$ai")
     unsure=false
   done
+  if $short_help || [[ "$st_help" == on ]]; then help_flag=true; fi
 }
 
 # Was this boolean flag given, bare (`--private`, not `--private=false`)?
@@ -732,6 +801,21 @@ split_words() { # <string> → $alias_words
 # indented lines when it spans several. A multi-word name prints as it is
 # typed ("issue post: ..."). Returns 1 when there is no such alias.
 alias_listing="" alias_listed=false
+# Is this line of the listing the alias called <name>? gh files an alias beneath
+# its command group under any spelling of the group, so `cs post` and
+# `codespace post` are one alias (observed with gh 2.103.3: with `cs post` set,
+# `gh codespace post` runs it).
+alias_line_is() { # <line> <name>
+  local key first
+  [[ "$1" != [[:space:]]* && "$1" == *": "* ]] || return 1
+  key=${1%%: *}
+  [[ "$key" == "$2" ]] && return 0
+  [[ "$key" == *" "* && "$2" == *" "* ]] || return 1
+  canonical_group "${key%% *}"
+  first=$canonical_name
+  canonical_group "${2%% *}"
+  [[ "$first" == "$canonical_name" && "${key#* }" == "${2#* }" ]]
+}
 load_aliases() {
   $alias_listed && return 0
   alias_listing=$("$real_gh" alias list 2>/dev/null) ||
@@ -746,8 +830,8 @@ alias_expansion() { # <name> → $expansion
       [[ "$line" == [[:space:]]* ]] || return 0
       line=${line#"${line%%[![:space:]]*}"}
       expansion+="${expansion:+ }$line"
-    elif [[ "$line" == "$1: "* ]]; then
-      expansion=${line#"$1: "}
+    elif alias_line_is "$line" "$1"; then
+      expansion=${line#*: }
       case "$expansion" in
         \|* | \>*)
           expansion=""
@@ -771,22 +855,34 @@ alias_expansion() { # <name> → $expansion
 }
 
 # gh's own rule (observed with gh 2.103.3): the alias is the longest name, of
-# one or more words, typed from the command on; each extra word replaces `$1`,
-# `$2`... in turn in the expansion's TEXT, until no `$` is left, after which the
-# remaining words are appended; the text is then split like a shell would. A
-# shell alias (`!...`) runs `sh`. gh also finds a multi-word name across a flag
-# (`gh config --help mine` runs `config mine`), which this does not follow:
-# every alias that starts with the typed group is then inspected as if typed.
-opaque=""
+# one or more words, found the way gh finds a subcommand: the group word, then
+# the next word that is not a flag or a flag's value (find_command has located
+# both), then the words right after. Every other argument, the flags between
+# the words included, is passed on in order (`gh config --help=false post foo`
+# runs the alias `config post` with `--help=false foo`). Each extra word replaces
+# `$1`, `$2`... in turn in the expansion's TEXT, until no `$` is left, after
+# which the remaining words are appended; the text is then split like a shell
+# would. A shell alias (`!...`) runs `sh`.
+#
+# Where no alias matches exactly but the group is one of gh's own, gh may still
+# reach an alias beneath it (a name of more words, or a flag this guard reads
+# differently from gh). The group's aliases are then inspected as if typed and
+# nothing exempts the command: alias_uncertain.
+opaque="" alias_uncertain=false
 expand_alias() {
-  local words=() name found=0 k j typed=() rest_args=() extra=() text placeholder first line key
+  local name found=0 k j n=${#args[@]} idx=() consumed typed=() rest_args=() extra=() text placeholder line key
   load_aliases
-  for (( j = group_index; j < ${#args[@]} && j < group_index + 5; j++ )); do
-    [[ "${args[j]}" != -* ]] || break
-    words+=("${args[j]}")
-  done
-  for (( k = ${#words[@]}; k >= 1; k-- )); do
-    name="${words[*]:0:k}"
+  idx=("$group_index")
+  if (( action_index >= 0 )); then
+    idx+=("$action_index")
+    for (( j = action_index + 1; j < n && ${#idx[@]} < 5; j++ )); do
+      [[ "${args[j]}" != -* ]] || break
+      idx+=("$j")
+    done
+  fi
+  for (( k = ${#idx[@]}; k >= 1; k-- )); do
+    name=""
+    for (( j = 0; j < k; j++ )); do name+="${name:+ }${args[idx[j]]}"; done
     if alias_expansion "$name"; then
       found=$k
       break
@@ -794,7 +890,13 @@ expand_alias() {
   done
   if (( found > 0 )); then
     typed=("${args[@]}")
-    rest_args=("${typed[@]:group_index+found}")
+    for (( j = group_index + 1; j < n; j++ )); do
+      consumed=false
+      for (( k = 0; k < found; k++ )); do
+        if (( idx[k] == j )); then consumed=true; fi
+      done
+      if ! $consumed; then rest_args+=("${typed[j]}"); fi
+    done
     if [[ "$expansion" == '!'* ]]; then
       # A shell alias runs arbitrary shell; its text is checked with the rest.
       opaque="the shell alias \"$name\""
@@ -816,11 +918,15 @@ expand_alias() {
     if (( ${#extra[@]} > 0 )); then args+=("${extra[@]}"); fi
     find_command
   elif known_group "$group"; then
-    first=${args[group_index]}
     while IFS= read -r line; do
-      [[ "$line" == "$first "* && "$line" == *": "* ]] || continue
+      [[ "$line" != [[:space:]]* && "$line" == *": "* ]] || continue
       key=${line%%: *}
+      [[ "$key" == *" "* ]] || continue
+      canonical_group "${key%% *}"
+      [[ "$canonical_name" == "$group" ]] || continue
       if alias_expansion "$key"; then
+        alias_uncertain=true
+        if [[ "$expansion" == '!'* ]]; then opaque="the shell alias \"$key\""; fi
         split_words "$expansion"
         args+=("${alias_words[@]}")
       fi
@@ -1135,6 +1241,50 @@ collect_any() {
   done
 }
 
+# Text gh composes from somewhere the wrapper cannot read: commit messages
+# (`pr create --fill`, `--fill-first`, `--fill-verbose`), a saved failed run
+# (`--recover`), an issue template named on the command line, a release's tag
+# annotation or the notes GitHub generates. Explicit --title and --body take
+# precedence over --fill (`gh pr create --help`), so with both the wrapper sees
+# everything that is posted. The others are not made safe by explicit text, or
+# by anything the wrapper can see: gh rejects --template together with --body or
+# --body-file, accepts --recover only in an interactive session, and adds
+# --notes to the notes it generates. This runs only for a destination that is,
+# or may be, public.
+refuse_unseen_text() {
+  local filling state
+  case "$pair" in
+    "pr create")
+      if has_opt --recover; then
+        refuse "pr create --recover takes text saved by a failed earlier run, which the guard cannot see; pass --title and --body explicitly"
+      fi
+      filling=false
+      for state in "$st_fill" "$st_fill_first" "$st_fill_verbose"; do
+        if [[ "$state" != off ]]; then filling=true; fi
+      done
+      if $filling && { $any_unsure || ! has_opt -t --title || ! has_opt -b --body -F --body-file; }; then
+        refuse "pr create --fill takes text from commit messages the guard cannot see; pass --title and --body explicitly"
+      fi
+      ;;
+    "issue create")
+      if has_opt --recover; then
+        refuse "issue create --recover takes text saved by a failed earlier run, which the guard cannot see; pass --title and --body explicitly"
+      fi
+      if has_opt -T --template; then
+        refuse "issue create --template takes its body from a template the guard cannot see; pass --body explicitly"
+      fi
+      ;;
+    "release create")
+      if has_opt --notes-from-tag; then
+        refuse "release create --notes-from-tag takes its notes from a tag annotation or commit message the guard cannot see; pass --notes or --notes-file explicitly"
+      fi
+      if has_opt --generate-notes; then
+        refuse "release create --generate-notes posts notes GitHub generates, which the guard cannot see; write them and pass --notes or --notes-file"
+      fi
+      ;;
+  esac
+}
+
 # ---------------------------------------------------------------------------
 # The decision.
 # ---------------------------------------------------------------------------
@@ -1148,7 +1298,7 @@ find_command
 if ! command_exists; then expand_alias; fi
 
 if [[ -z "$opaque" ]]; then
-  if no_post_group "$group"; then exec "$real_gh" "$@"; fi
+  if ! $alias_uncertain && no_post_group "$group"; then exec "$real_gh" "$@"; fi
   if [[ "$group" == extension ]]; then
     # Managing extensions is local. Running one is not: it is a program that
     # makes its own requests and never comes back through this wrapper.
@@ -1161,10 +1311,12 @@ fi
 
 parse_args
 
-# A genuine help request - --help (or -h where gh does not use it for
-# something else) that is not somebody's value - prints help and posts nothing.
-# (An extension is another matter: gh hands it every argument, --help included.)
-if [[ -z "$opaque" ]] && $help_flag; then exec "$real_gh" "$@"; fi
+# A genuine help request - -h (where gh does not use it for something else), or
+# --help whose last value is true, that is not somebody's value - prints help
+# and posts nothing. (An extension is another matter: gh hands it every
+# argument, --help included; and words taken from an alias this guard could not
+# pin down are not the user's.)
+if [[ -z "$opaque" ]] && ! $alias_uncertain && $help_flag; then exec "$real_gh" "$@"; fi
 
 if [[ -z "$opaque" && "$group" != api ]] && ! $flag_before_action && command_exists && read_command; then
   exec "$real_gh" "$@"
@@ -1238,6 +1390,8 @@ fi
 
 resolve_destination
 if [[ -z "$opaque" && "$destination" == private ]]; then exec "$real_gh" "$@"; fi
+
+refuse_unseen_text
 
 work_dir=$(mktemp -d)
 trap 'rm -rf "$work_dir"' EXIT

@@ -553,6 +553,158 @@ if ! run "$public" "" alias list || [[ "$(cat "$work_dir/output")" != "$(cat "$a
   fail "alias list did not reach gh and print its aliases:" "$work_dir/output"
 fi
 
+# Sixth review (independent, of ce45786). Each group below is one finding. The
+# gh behaviour each rests on was observed with the pinned gh 2.103.3 against a
+# throwaway GH_CONFIG_DIR (shell aliases that only echo) and a refused local
+# port, so nothing was posted.
+
+# 1. Help is a boolean flag whose last value wins: `--help --help=false` goes
+# on to run the command, so a help request is only genuine when the effective
+# value is true. `-h`, where gh defines no `-h`, is pflag's own help request
+# and nothing after it, `--help=false` included, cancels it.
+blocked "--help cancelled by a later --help=false" \
+  "$private" "" pr create --help --help=false -R fixture-owner/public-repo -t "$leak" -b ok
+blocked "--help=true cancelled by a later --help=false" \
+  "$private" "" pr create --help=true --help=false -R fixture-owner/public-repo -t "$leak" -b ok
+blocked "--help cancelled by a later --help=False (any ParseBool spelling)" \
+  "$private" "" pr create --help --help=False -R fixture-owner/public-repo -t "$leak" -b ok
+blocked "--help=false on its own" \
+  "$private" "" pr create --help=false -R fixture-owner/public-repo -t "$leak" -b ok
+blocked "--help=0 on its own" \
+  "$private" "" pr create --help=0 -R fixture-owner/public-repo -t "$leak" -b ok
+blocked "--help whose later --help=false may be the value of a flag of unknown arity" \
+  "$private" "" pr create --help --some-new-flag --help=false -R fixture-owner/public-repo -t "$leak" -b ok
+passed "--help restored by a later --help=true" \
+  "$private" "" pr create --help=false --help -R fixture-owner/public-repo -t "$leak" -b ok
+passed "--help=T, which is true" \
+  "$private" "" pr create --help=T -R fixture-owner/public-repo -t "$leak" -b ok
+passed "-h with a later --help=false, which cannot cancel it" \
+  "$private" "" issue create -h --help=false -R fixture-owner/public-repo -t "$leak"
+passed "-h=false, which pflag still takes as help" \
+  "$private" "" issue create -h=false -R fixture-owner/public-repo -t "$leak"
+blocked "--help after a flag of unknown arity, which may be its value" \
+  "$private" "" pr create --some-new-flag --help -R fixture-owner/public-repo -t "$leak" -b ok
+
+# 2. gh registers an alias beneath an existing command group, under any
+# spelling of the group (`cs post` is reached as `codespace post`), and finds
+# it across flags: a flag that takes no value leaves the next word as the alias
+# (`config --help=false post`), a flag it does not know takes it, and `-h`,
+# which gh does not define, takes the next word (`config -h x post`). Every flag
+# between the group and the alias is passed on to the expansion, in order. The
+# alias is resolved before any read or non-posting group lets the command
+# through; where it cannot be resolved, the aliases beneath the group are
+# inspected as if typed and nothing is exempted.
+cat >> "$aliases" <<ALIASES
+config post: pr comment 1 -R fixture-owner/public-repo -b fixture-private-name
+config clean: pr comment 1 -R fixture-owner/private-repo -b "$leak"
+config say: pr comment 1 -R fixture-owner/public-repo -b
+config run: '!echo hi'
+cs post: issue comment 1 -R fixture-owner/public-repo -b fixture-private-name
+rs say: issue comment 1 -R fixture-owner/public-repo -b ok
+rs helpme: issue comment 1 -R fixture-owner/public-repo -b fixture-private-name --help
+ALIASES
+blocked "a flag-separated alias under a non-posting group (--help=false)" \
+  "$private" "" config --help=false post
+blocked "a flag-separated alias under a non-posting group (-R before the name)" \
+  "$private" "" config -R fixture-owner/private-repo post
+blocked "a flag-separated alias under a non-posting group (a flag of unknown arity and its value)" \
+  "$private" "" config --hostname github.com post
+blocked "an alias under a non-posting group, typed contiguously" \
+  "$private" "" config post
+blocked "an alias registered as cs, reached as codespace" \
+  "$private" "" codespace post
+blocked "an alias registered as cs, reached as cs across a flag" \
+  "$private" "" cs --help=false post
+blocked "an alias that ends in a value flag takes the -h before its name as that value" \
+  "$private" "" config -h "$leak" say
+passed "-h takes the next word, so the alias is the word after it, and -h asks for help" \
+  "$private" "" ruleset -h "$leak" say
+passed "an alias under a non-posting group, aimed at a private repository" \
+  "$private" "" config --help=false clean
+passed "an alias under a group, with --help, which only prints help" \
+  "$private" "" config --help post
+blocked "an action gh does not have, while an alias beneath the group names a private term" \
+  "$private" "" codespace nosuch
+blocked "words of an alias this guard could not pin down never grant help" \
+  "$private" "" ruleset nosuch
+passed "a built-in command of the group, whatever aliases the group holds" \
+  "$public" "" config get editor
+refused "a shell alias under a group, reached across a flag, from a public checkout" \
+  "cannot inspect" "$public" "" config --help=false run
+passed "a shell alias under a group, reached across a flag, from a private checkout" \
+  "$private" "" config --help=false run
+
+# 3. gh builds the title and body from commit messages, a saved failed run or
+# a template the wrapper cannot read. Explicit --title and --body take
+# precedence over --fill (gh pr create --help), so with both the wrapper sees
+# everything that is posted; without both it refuses. --recover is accepted only
+# in an interactive session, --template cannot be combined with --body or
+# --body-file, and --generate-notes adds to --notes.
+fill_message="takes text from commit messages the guard cannot see; pass --title and --body explicitly"
+refused "pr create --fill with no text" \
+  "$fill_message" "$private" "" pr create --fill -R fixture-owner/public-repo
+refused "pr create -f with no text" \
+  "$fill_message" "$private" "" pr create -f -R fixture-owner/public-repo
+refused "pr create --fill-first with no text" \
+  "$fill_message" "$private" "" pr create --fill-first -R fixture-owner/public-repo
+refused "pr create --fill-verbose with no text" \
+  "$fill_message" "$private" "" pr create --fill-verbose -R fixture-owner/public-repo
+refused "pr create --fill from the public checkout" \
+  "$fill_message" "$public" "" pr create --fill
+refused "pr create --fill with a title only" \
+  "$fill_message" "$public" "" pr create --fill --title "clean title"
+refused "pr create --fill with a body only" \
+  "$fill_message" "$public" "" pr create --fill --body "clean body"
+refused "pr create --fill with a title and a flag of unknown arity, which may have taken the body" \
+  "$fill_message" "$public" "" pr create --fill --some-new-flag --title t --body b
+refused "pr create combined -fd with no text" \
+  "$fill_message" "$public" "" pr create -fd
+refused "pr create --fill, then --fill=false for a flag of unknown arity, which may be its value" \
+  "$fill_message" "$public" "" pr create --fill --some-new-flag --fill=false
+refused "pr create --fill=false, then --fill" \
+  "$fill_message" "$public" "" pr create --fill=false --fill
+passed "pr create --fill with a title and a body" \
+  "$public" "" pr create --fill --title "clean title" --body "clean body"
+passed "pr create --fill with a title and a body file" \
+  "$public" "" pr create --fill -t "clean title" -F "$payload_dir/clean.txt"
+passed "pr create --fill-first with a title and a body" \
+  "$public" "" pr create --fill-first -t "clean title" -b "clean body"
+passed "pr create --fill to a private repository" \
+  "$public" "" pr create --fill -R fixture-owner/private-repo
+passed "pr create --fill cancelled by a later --fill=false" \
+  "$public" "" pr create --fill --fill=false
+passed "pr create --fill=false" \
+  "$public" "" pr create --fill=false
+passed "-f in a command where it is not --fill" \
+  "$public" "" variable set CONFIG -f "$payload_dir/clean.txt"
+blocked "a pr create --fill title and body that name a private term" \
+  "$public" "" pr create --fill --title "$leak" --body ok
+blocked "a pr create template file that names a private term" \
+  "$public" "" pr create -t x -T "$payload_dir/payload.txt"
+
+recover_message="takes text saved by a failed earlier run, which the guard cannot see"
+refused "pr create --recover" \
+  "$recover_message" "$private" "" pr create --recover abc -R fixture-owner/public-repo -t t -b b
+refused "issue create --recover" \
+  "$recover_message" "$public" "" issue create --recover abc -t t -b b
+passed "issue create --recover to a private repository" \
+  "$public" "" issue create --recover abc -R fixture-owner/private-repo -t t
+template_message="takes its body from a template the guard cannot see"
+refused "issue create --template" \
+  "$template_message" "$public" "" issue create --template "Bug Report" -t t
+refused "issue create -T" \
+  "$template_message" "$private" "" issue create -T "Bug Report" -t t -R fixture-owner/public-repo
+passed "issue create --template to a private repository" \
+  "$public" "" issue create --template "Bug Report" -R fixture-owner/private-repo -t t
+refused "release create --notes-from-tag" \
+  "tag annotation" "$public" "" release create v1 --notes-from-tag
+refused "release create --generate-notes, which --notes only adds to" \
+  "generates, which the guard cannot see" "$public" "" release create v1 --generate-notes --notes "clean notes"
+passed "release create with explicit notes" \
+  "$public" "" release create v1 --title "clean title" --notes "clean notes"
+passed "release create --generate-notes to a private repository" \
+  "$public" "" release create v1 --generate-notes -R fixture-owner/private-repo
+
 # A second public repository, declared in local.nix publicProjects. Everything
 # above ran with only nix-config listed, which is local.nix without
 # publicProjects: a repository that is not listed is private, whatever its name.

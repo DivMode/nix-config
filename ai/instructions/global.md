@@ -155,11 +155,16 @@ never wait for another session or repository. Run it as
 alias). When memory is short it waits for a turn; otherwise it starts at once.
 Either way the command runs under macOS's utility QoS clamp at `nice` 10, below
 the owner's interactive apps and below the self-hosted CI runners, which
-outrank agent work so the gate is not starved. Never run heavy work outside it;
-the command guard denies known-heavy commands (`tsc`, `vitest`, `cargo test`,
-`pnpm test`, `just verify` and the like) that skip it. Run long heavy commands
-in the background, so a tool timeout cannot kill a command that is still
-queued. `membrake status` shows the queue and the frozen jobs.
+outrank agent work so the gate is not starved. Never run heavy work outside it.
+Where this is enforced: in Claude Code sessions the managed command guard
+refuses known-heavy commands (`tsc`, `vitest`, `cargo test`, `pnpm test`,
+`just verify` and the like, launched directly or through `npx`, `pnpm dlx`,
+`nix develop -c` and similar) that skip the queue. It cannot know every heavy
+command, so a command it allows is not thereby light. In Codex sessions nothing
+refuses them yet (issue #252), so there the rule is an instruction and you keep
+it yourself. Run long heavy commands in the background, so a tool timeout
+cannot kill a command that is still queued. `membrake status` shows the queue
+and the frozen jobs.
 
 Memory is guarded by `membrake`, a root daemon. When memory gets tight it
 freezes (`SIGSTOP`) the newest heavy agent job, freezes them all if the Mac

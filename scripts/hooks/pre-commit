@@ -1,34 +1,50 @@
 #!/usr/bin/env bash
 #
-# Pre-commit: block private names from entering this public repository.
+# Pre-commit: block private names from entering a public repository.
 #
 # Thin on purpose. All the logic — and therefore everything testable — lives in
 # scripts/check-private-names.sh, which can be run by hand against the whole
 # tree with `--tree`.
+#
+# These hooks run in nix-config and in every other public checkout that
+# scripts/install-hooks.sh points core.hooksPath here. Only the private-name
+# check applies to all of them; the steps below it are about nix-config's own
+# files and tools, which another repository does not have.
 
 set -euo pipefail
 
+hooks_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 repository="$(git rev-parse --show-toplevel)"
 
-# The PreToolUse guard denies commands, so a regression in it is expensive in
-# both directions: loosened, it stops protecting the machine; tightened, it
-# blocks work that changes nothing and teaches whoever hit it to look for a way
-# around it. Both directions are asserted, and it runs here because the guard is
-# edited from this repository like anything else.
-python3 "$repository/ai/hooks/nix-only-guard-test.py"
+# nix-config, or one of its linked worktrees: the same git common directory as
+# this hook's own checkout. Git exports GIT_DIR to a hook run from a linked
+# worktree (observed 2026-11-05), which would make the hook's own checkout look
+# like the repository being committed to, so those variables are cleared.
+repository_common_dir="$(git rev-parse --path-format=absolute --git-common-dir)"
+nix_config_common_dir="$(cd "$hooks_dir" && env -u GIT_DIR -u GIT_WORK_TREE -u GIT_COMMON_DIR \
+  git rev-parse --path-format=absolute --git-common-dir)"
 
-# Formatting, the same check `nix fmt` would apply: an unformatted file reached
-# main on 2026-10-06 and every later branch's `nix fmt` rewrote it. `--ci`
-# fails when anything would change (and leaves the fix in the working tree).
-if ! (cd "$repository" && nix fmt -- --ci >/dev/null 2>&1); then
-  echo "pre-commit: files are not formatted; run \`nix fmt\` and stage the result." >&2
-  exit 1
+if [[ "$repository_common_dir" == "$nix_config_common_dir" ]]; then
+  # The PreToolUse guard denies commands, so a regression in it is expensive in
+  # both directions: loosened, it stops protecting the machine; tightened, it
+  # blocks work that changes nothing and teaches whoever hit it to look for a way
+  # around it. Both directions are asserted, and it runs here because the guard is
+  # edited from this repository like anything else.
+  python3 "$repository/ai/hooks/nix-only-guard-test.py"
+
+  # Formatting, the same check `nix fmt` would apply: an unformatted file reached
+  # main on 2026-10-06 and every later branch's `nix fmt` rewrote it. `--ci`
+  # fails when anything would change (and leaves the fix in the working tree).
+  if ! (cd "$repository" && nix fmt -- --ci >/dev/null 2>&1); then
+    echo "pre-commit: files are not formatted; run \`nix fmt\` and stage the result." >&2
+    exit 1
+  fi
+
+  # The private-name guards' own regression tests, when a guard is what changed.
+  if git diff --cached --name-only | grep -q '^scripts/check-private-names\|^scripts/gh-private-names\|^scripts/hooks/'; then
+    bash "$repository/scripts/check-private-names-test.sh" >/dev/null
+    bash "$repository/scripts/gh-private-names-guard-test.sh" >/dev/null
+  fi
 fi
 
-# The private-name guards' own regression tests, when a guard is what changed.
-if git diff --cached --name-only | grep -q '^scripts/check-private-names\|^scripts/gh-private-names\|^scripts/hooks/'; then
-  bash "$repository/scripts/check-private-names-test.sh" >/dev/null
-  bash "$repository/scripts/gh-private-names-guard-test.sh" >/dev/null
-fi
-
-exec "$repository/scripts/check-private-names.sh" --staged
+exec "$hooks_dir/../check-private-names.sh" --staged

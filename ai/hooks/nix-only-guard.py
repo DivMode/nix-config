@@ -731,6 +731,7 @@ JUST_VALUE_FLAGS = {"-f", "--justfile", "-d", "--working-directory", "-E", "--do
                     "--dump-format", "--evaluate-format", "--group", "--indentation",
                     "--justfile-name", "--list-heading", "--list-prefix", "--set",
                     "--shell-arg", "--tempdir", "--timestamp-format"}
+JUST_OVERRIDE_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_-]*=")
 JUST_INSPECTION = {"--list", "-l", "--summary", "--show", "-s", "--dry-run", "-n",
                    "--evaluate", "--dump", "--fmt", "--choose", "--version", "--help", "-h"}
 # `cargo --help` and `cargo test --help`: options that take a separate word, which
@@ -757,7 +758,10 @@ def walk(args, value_flags=()):
     after a flag in `value_flags`), "word", "dash" (the `--`), and "rest" for each
     word after it. Only what comes before `--` can be an option of this program;
     what follows belongs to whatever it runs (`cargo test -- --help` compiles, then
-    hands --help to the test binary)."""
+    hands --help to the test binary). A "rest" word is still a word of the
+    program's own command line: `npm run -- test` runs the script `test`, so
+    callers that look for the command or script name take "word" and "rest"
+    alike and only the flags are confined to what comes before `--`."""
     out, i = [], 0
     while i < len(args):
         if args[i] == "--":
@@ -784,6 +788,29 @@ def inspecting(args, value_flags=()):
     """True when `args` ask the program itself for help, a version or its
     configuration: an inspection flag among its own options (see walk())."""
     return any(kind == "flag" and args[i] in INSPECTION_FLAGS for kind, i in walk(args, value_flags))
+
+
+# What `--version` and `--help` mean to the package managers and launchers
+# themselves, observed with npm 11.19.0 and bun 1.4.3 (`npm -v`, `npm -h`,
+# `bunx -v`, `bunx -h`; `-V` and `--showConfig` are not inspection there, they
+# are unknown options, and `npm exec --showConfig -- vitest run` runs vitest).
+# pnpm and yarn are not installed here: they accept the same four.
+LAUNCHER_INSPECTION = {"--version": "version", "-v": "version", "--help": "help", "-h": "help"}
+
+
+def asks_inspection(flags):
+    """True when these flags, in order, leave a launcher or package manager asked
+    for its own version or help. The last occurrence of each decides, as npm's
+    parser does (`npm --version --version=false exec -- vitest` runs vitest).
+    Only a bare flag or `=true` asks; any other value is a cancellation or
+    something not known to ask, and a command is then judged as the work it runs."""
+    asked = {}
+    for flag in flags:
+        name, attached, value = flag.partition("=")
+        topic = LAUNCHER_INSPECTION.get(name)
+        if topic:
+            asked[topic] = not attached or value == "true"
+    return any(asked.values())
 
 
 # Programs that launch another program named by their first positional word:
@@ -836,24 +863,29 @@ def heavy_line(text):
 def launcher_heavy(launcher, args):
     """True when `launcher` (`npx`, or `exec`/`dlx` of a package manager) with
     these arguments runs a heavy command. Its own options come first; the first
-    word after them is the program, and everything after that is the program's.
-    An inspection flag among the launcher's options asks the launcher itself, which
-    runs nothing (`npx --version vitest` prints npx's version)."""
+    word after them (also past a `--`) is the program, and everything after that
+    is the program's. An inspection flag among the launcher's options asks the
+    launcher itself, which runs nothing (`npx --version vitest` prints npx's
+    version); only the launcher's real ones count, and a later `=false` cancels."""
     value_flags, call_flags = LAUNCHER_OPTIONS[launcher]
     parts = walk(args, value_flags | call_flags)
-    for n, (kind, i) in enumerate(parts):
+    program = next((n for n, (kind, _) in enumerate(parts) if kind in ("word", "rest")), len(parts))
+    options = parts[:program]
+    if asks_inspection(args[i] for kind, i in options if kind == "flag"):
+        return False
+    for n, (kind, i) in enumerate(options):
         word = args[i]
-        if kind == "flag":
-            if word in INSPECTION_FLAGS:
-                return False
-            if word in call_flags and n + 1 < len(parts):
-                return heavy_line(args[parts[n + 1][1]])
-            for flag in call_flags:
-                if flag.startswith("--") and word.startswith(flag + "="):
-                    return heavy_line(word[len(flag) + 1:])
-        elif kind in ("word", "rest"):
-            return is_heavy(package_command(word), args[i + 1:])
-    return False
+        if kind != "flag":
+            continue
+        if word in call_flags and n + 1 < len(options):
+            return heavy_line(args[options[n + 1][1]])
+        for flag in call_flags:
+            if word.startswith(flag + "="):
+                return heavy_line(word[len(flag) + 1:])
+    if program == len(parts):
+        return False
+    at = parts[program][1]
+    return is_heavy(package_command(args[at]), args[at + 1:])
 
 
 def manager_flags(prog):
@@ -866,12 +898,12 @@ def is_heavy(prog, args):
         return launcher_heavy(prog, args)
     if prog in PACKAGE_MANAGERS:
         parts = walk(args, manager_flags(prog))
-        words = [i for kind, i in parts if kind == "word"]
+        words = [i for kind, i in parts if kind in ("word", "rest")]
         if not words:
             return False
         # Flags before the subcommand are the manager's own: `npm --version
         # exec vitest` prints a version.
-        if any(kind == "flag" and args[i] in INSPECTION_FLAGS and i < words[0] for kind, i in parts):
+        if asks_inspection(args[i] for kind, i in parts if kind == "flag" and i < words[0]):
             return False
         if args[words[0]] in PACKAGE_LAUNCH_SUBCOMMANDS:
             return launcher_heavy(prog, args[words[0] + 1:])
@@ -886,8 +918,8 @@ def is_heavy(prog, args):
         else:
             return False
         reads_flags_after = prog == "npm" or (prog == "bun" and script_at == words[0])
-        return not any(kind == "flag" and args[i] in INSPECTION_FLAGS
-                       and (i < script_at or reads_flags_after) for kind, i in parts)
+        return not asks_inspection(args[i] for kind, i in parts
+                                   if kind == "flag" and (i < script_at or reads_flags_after))
     if prog == "nix":
         for flag in ("-c", "--command"):
             if flag in args and args.index(flag) + 1 < len(args):
@@ -903,6 +935,9 @@ def is_heavy(prog, args):
         # just's options come before the first recipe; after it a flag is that
         # recipe's argument (`just test --dry-run` runs test).
         parts = walk(args, JUST_VALUE_FLAGS)
+        # `--set NAME VALUE` takes two words; walk() keeps the first as its value.
+        second = {i + 2 for kind, i in parts if kind == "flag" and args[i] == "--set"}
+        parts = [(kind, i) for kind, i in parts if i not in second]
         for kind, i in parts:
             if kind in ("word", "dash", "rest"):
                 break
@@ -912,7 +947,9 @@ def is_heavy(prog, args):
         # fix/test-flakes` names a branch), and just cannot be told apart from
         # a second recipe without reading the justfile; `just build test` is
         # caught by its first recipe.
-        recipe = next((args[i] for kind, i in parts if kind in ("word", "rest")), None)
+        # Overrides (`just mode=release test`) come before it and are not it.
+        recipe = next((args[i] for kind, i in parts if kind in ("word", "rest")
+                       and not JUST_OVERRIDE_RE.match(args[i])), None)
         return recipe is not None and heavy_name(recipe)
     value_flags = CARGO_VALUE_FLAGS if prog == "cargo" else SWIFT_VALUE_FLAGS if prog == "swift" else ()
     if inspecting(args, value_flags):

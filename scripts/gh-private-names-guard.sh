@@ -24,8 +24,8 @@
 #   saved failed run (`--recover`), an issue template (`issue create
 #   --template`), a release's tag annotation (`--notes-from-tag`) and the notes
 #   GitHub generates (`--generate-notes`). Toward a public or possibly public
-#   repository `--fill*` is refused unless --title and --body (or --body-file)
-#   are given, since those take precedence; the others are refused outright,
+#   repository `--fill*` is refused unless --title and --body (or a --body-file
+#   with a nonempty value) are given, since those take precedence; the others are refused outright,
 #   because explicit text does not replace what they add.
 #
 #   It does NOT stop opaque code: gh extensions, shell aliases and `gh
@@ -569,6 +569,7 @@ find_command() {
 role=() opt=() val=() pos_idx=() real_repos=() repo_words=()
 any_unsure=false help_flag=false unsure=false short_help=false
 st_help=off st_fill=off st_fill_first=off st_fill_verbose=off
+st_generate_notes=off st_notes_from_tag=off
 ai=0
 
 # One more occurrence of a boolean flag. pflag lets the last value win and takes
@@ -597,6 +598,8 @@ note_flag() { # <flag> <value>
       ;;
     --fill-first) note_bool st_fill_first "$2" ;;
     --fill-verbose) note_bool st_fill_verbose "$2" ;;
+    --generate-notes) note_bool st_generate_notes "$2" ;;
+    --notes-from-tag) note_bool st_notes_from_tag "$2" ;;
   esac
 }
 
@@ -624,6 +627,7 @@ parse_args() {
   role=() opt=() val=() pos_idx=() real_repos=() repo_words=()
   any_unsure=$flag_before_action help_flag=false unsure=false short_help=false
   st_help=off st_fill=off st_fill_first=off st_fill_verbose=off
+  st_generate_notes=off st_notes_from_tag=off
   local n=${#args[@]} arg name rest c j rc literal=false uncertain
   for (( ai = 0; ai < n; ai++ )); do
     arg=${args[ai]}
@@ -742,6 +746,31 @@ has_bare_flag() { # <flag>
     if [[ "${role[i]}" == flag && "${opt[i]}" == "$1" ]]; then return 0; fi
   done
   return 1
+}
+
+# The value of the last occurrence of one of these value-taking flags, as
+# $last_val; false when none was given.
+last_value() { # <flag>...
+  local i f found=1
+  last_val=""
+  for (( i = 0; i < ${#args[@]}; i++ )); do
+    [[ "${role[i]}" == value || "${role[i]}" == attached ]] || continue
+    for f in "$@"; do
+      if [[ "${opt[i]}" == "$f" ]]; then
+        last_val=${val[i]}
+        found=0
+      fi
+    done
+  done
+  return "$found"
+}
+
+# Does the command give a body of its own? --body does, whatever it says; a
+# --body-file only when its last value is not empty, since gh reads the file
+# (and counts the body as given) only for a nonempty name.
+body_given() {
+  has_opt -b --body && return 0
+  last_value -F --body-file && [[ -n "$last_val" ]]
 }
 
 # Was one of these flags given (as a flag, not as somebody's value)?
@@ -1246,8 +1275,10 @@ collect_any() {
 # (`--recover`), an issue template named on the command line, a release's tag
 # annotation or the notes GitHub generates. Explicit --title and --body take
 # precedence over --fill (`gh pr create --help`), so with both the wrapper sees
-# everything that is posted. The others are not made safe by explicit text, or
-# by anything the wrapper can see: gh rejects --template together with --body or
+# everything that is posted; a --body-file counts only with a nonempty last
+# value, since gh treats an empty one as no body override and fills the body
+# anyway. The others are not made safe by explicit text, or by anything the
+# wrapper can see: gh rejects --template together with --body or
 # --body-file, accepts --recover only in an interactive session, and adds
 # --notes to the notes it generates. This runs only for a destination that is,
 # or may be, public.
@@ -1262,7 +1293,7 @@ refuse_unseen_text() {
       for state in "$st_fill" "$st_fill_first" "$st_fill_verbose"; do
         if [[ "$state" != off ]]; then filling=true; fi
       done
-      if $filling && { $any_unsure || ! has_opt -t --title || ! has_opt -b --body -F --body-file; }; then
+      if $filling && { $any_unsure || ! has_opt -t --title || ! body_given; }; then
         refuse "pr create --fill takes text from commit messages the guard cannot see; pass --title and --body explicitly"
       fi
       ;;
@@ -1275,10 +1306,10 @@ refuse_unseen_text() {
       fi
       ;;
     "release create")
-      if has_opt --notes-from-tag; then
+      if [[ "$st_notes_from_tag" != off ]]; then
         refuse "release create --notes-from-tag takes its notes from a tag annotation or commit message the guard cannot see; pass --notes or --notes-file explicitly"
       fi
-      if has_opt --generate-notes; then
+      if [[ "$st_generate_notes" != off ]]; then
         refuse "release create --generate-notes posts notes GitHub generates, which the guard cannot see; write them and pass --notes or --notes-file"
       fi
       ;;

@@ -637,7 +637,8 @@ passed "a shell alias under a group, reached across a flag, from a private check
 # 3. gh builds the title and body from commit messages, a saved failed run or
 # a template the wrapper cannot read. Explicit --title and --body take
 # precedence over --fill (gh pr create --help), so with both the wrapper sees
-# everything that is posted; without both it refuses. --recover is accepted only
+# everything that is posted (a body file only when its name is not empty);
+# without both it refuses. --recover is accepted only
 # in an interactive session, --template cannot be combined with --body or
 # --body-file, and --generate-notes adds to --notes.
 fill_message="takes text from commit messages the guard cannot see; pass --title and --body explicitly"
@@ -667,6 +668,20 @@ passed "pr create --fill with a title and a body" \
   "$public" "" pr create --fill --title "clean title" --body "clean body"
 passed "pr create --fill with a title and a body file" \
   "$public" "" pr create --fill -t "clean title" -F "$payload_dir/clean.txt"
+# gh reads a body file only for a nonempty name: an empty one is no body
+# override, and the body is filled from commit messages after all.
+refused "pr create --fill with an empty --body-file value" \
+  "$fill_message" "$private" "" pr create --fill -R fixture-owner/public-repo -t clean --body-file ""
+refused "pr create --fill with an empty -F value" \
+  "$fill_message" "$public" "" pr create --fill -t clean -F ""
+refused "pr create --fill with an empty attached --body-file" \
+  "$fill_message" "$public" "" pr create --fill -t clean --body-file=
+refused "pr create --fill, a body file then an empty one that replaces it" \
+  "$fill_message" "$public" "" pr create --fill -t clean -F "$payload_dir/clean.txt" --body-file ""
+passed "pr create --fill, an empty body file then a real one that replaces it" \
+  "$public" "" pr create --fill -t clean --body-file "" -F "$payload_dir/clean.txt"
+passed "pr create --fill with an empty --body, which gh counts as given" \
+  "$public" "" pr create --fill -t clean --body ""
 passed "pr create --fill-first with a title and a body" \
   "$public" "" pr create --fill-first -t "clean title" -b "clean body"
 passed "pr create --fill to a private repository" \
@@ -700,6 +715,21 @@ refused "release create --notes-from-tag" \
   "tag annotation" "$public" "" release create v1 --notes-from-tag
 refused "release create --generate-notes, which --notes only adds to" \
   "generates, which the guard cannot see" "$public" "" release create v1 --generate-notes --notes "clean notes"
+# Release generation flags count by their effective value, the last one given.
+refused "release create --generate-notes=true" \
+  "generates, which the guard cannot see" "$public" "" release create v1 --generate-notes=true --notes n
+refused "release create --notes-from-tag=true" \
+  "tag annotation" "$public" "" release create v1 --notes-from-tag=true
+refused "release create --generate-notes=false, then --generate-notes" \
+  "generates, which the guard cannot see" "$public" "" release create v1 --generate-notes=false --generate-notes
+refused "release create --notes-from-tag=false, then --notes-from-tag" \
+  "tag annotation" "$public" "" release create v1 --notes-from-tag=false --notes-from-tag
+passed "release create --generate-notes=false" \
+  "$public" "" release create v1 --generate-notes=false --notes "clean notes"
+passed "release create --notes-from-tag=false" \
+  "$public" "" release create v1 --notes-from-tag=false --notes "clean notes"
+passed "release create --generate-notes cancelled by a later --generate-notes=false" \
+  "$public" "" release create v1 --generate-notes --generate-notes=false --notes "clean notes"
 passed "release create with explicit notes" \
   "$public" "" release create v1 --title "clean title" --notes "clean notes"
 passed "release create --generate-notes to a private repository" \

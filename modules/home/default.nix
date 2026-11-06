@@ -52,6 +52,7 @@ in
     ./herdr
     ./karabiner.nix
     ./launchers.nix
+    ./lima.nix
     ./login-apps.nix
     ./media.nix
     ./menu-bar.nix

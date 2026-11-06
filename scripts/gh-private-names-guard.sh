@@ -22,6 +22,17 @@
 # aimed at a public repository, or at a repository it cannot identify, is
 # checked.
 #
+# A second review found six more ways past it: flags before the command
+# (`gh -Rowner/public pr comment` was exempt as if it were `gh --help`), a body
+# or title that reads as `-R` and so named another repository, a duplicated -R,
+# an alias (gh expands it, so its text and its -R were never seen), a command
+# the guard does not know, and Git variables exported by whatever launched gh,
+# which made every public checkout look like some other repository. So the
+# command is now found the way gh finds it, a flag's value is never an option,
+# an alias is expanded from `gh alias list` before anything is decided, and
+# when it is unclear whether a word is an option the command is checked, not
+# trusted.
+#
 # It wraps gh itself rather than hooking one agent client, so Claude Code,
 # Codex, and any script reach GitHub through the same check.
 #
@@ -37,23 +48,6 @@ real_gh=${GH_GUARD_REAL_GH:?}
 checkout=${GH_GUARD_CHECKOUT:?}
 checkouts=${GH_GUARD_CHECKOUTS:?}
 args=("$@")
-group=${args[0]:-}
-
-# The action is the first word after the group that is not a flag, since gh
-# takes flags before it too (`gh pr -R <repo> create`). -R/--repo is skipped
-# with its value. Any other flag there could be taking the next word as its
-# value — `gh pr -t list create` is `pr create` titled "list" — so the command
-# is then never treated as a read.
-action=""
-flag_before_action=false
-for (( i = 1; i < ${#args[@]}; i++ )); do
-  case "${args[i]}" in
-    -R | --repo) i=$(( i + 1 )) ;;
-    --repo=* | -R?*) ;;
-    -*) flag_before_action=true ;;
-    *) action=${args[i]}; break ;;
-  esac
-done
 
 lower() { printf '%s' "$1" | tr '[:upper:]' '[:lower:]'; }
 
@@ -66,15 +60,236 @@ slug_of() {
   lower "$value"
 }
 
+# gh's own command groups. A group not named here is an alias, an extension, or
+# a command newer than this list: it is never taken for a read.
+known_group() {
+  case "$1" in
+    agent-task | alias | api | attestation | auth | browse | cache | codespace | completion | config | \
+      discussion | extension | gist | gpg-key | help | issue | label | org | pr | project | release | repo | \
+      ruleset | run | search | secret | skill | ssh-key | status | variable | workflow) return 0 ;;
+  esac
+  return 1
+}
+
+# How a flag takes its value decides whether the next word is an option or a
+# value, and a value is never an option: `-b '-Rowner/other'` is a body. The
+# lists are of flags with one arity in every command (a flag that is a boolean
+# in one command and takes a value in another is in neither). Any flag in
+# neither list may take the next word, so that word is not trusted as an option.
+takes_value() {
+  case "$1" in
+    -R | --repo | -b | --body | -F | --body-file | -t | --title | -H | -X | -q | -B | -A | -S | -L | -T | -a | -l | \
+      --notes | --notes-file | --assignee | --label | --reviewer | --base | --head | --milestone | --project | \
+      --template | --jq | --json | --search | --state | --limit | --author | --hostname | --input | --field | \
+      --raw-field | --header | --method | --cache | --preview | --name | --branch | --target | --subject | \
+      --description | --discussion-category | --notes-start-tag | --reason | --ref | --workflow | --sort | \
+      --order | --visibility | --topic | --language | --message) return 0 ;;
+  esac
+  return 1
+}
+never_takes_value() {
+  case "$1" in
+    --draft | --web | -w | --fill | --fill-first | --fill-verbose | --dry-run | --no-maintainer-edit | \
+      --prerelease | --generate-notes | --verify-tag | --editor | -e | --paginate | --slurp | --silent | \
+      --verbose | --include | -i | --help | -h | --version | --squash | --merge | --admin | --auto | \
+      --delete-branch | --yes) return 0 ;;
+  esac
+  return 1
+}
+
+# Find the command in $args the way gh does: the group is the first word that
+# is not a flag or a flag's value, the action the next. gh accepts flags before
+# either (`gh -R owner/repo pr comment`, `gh pr -R owner/repo create`).
+#   group, group_index, action
+#   flag_before_action  a flag other than -R came first, and could have taken the
+#                       next word: never a read then (`gh pr -t list create` is
+#                       `pr create` titled "list")
+#   real_repos          what -R/--repo names where it is surely an option
+scan_command() {
+  group="" group_index=-1 action="" flag_before_action=false
+  real_repos=()
+  local i arg value positionals=0 unsure=false literal=false
+  for (( i = 0; i < ${#args[@]}; i++ )); do
+    arg=${args[i]}
+    if ! $literal; then
+      case "$arg" in
+        --)
+          literal=true
+          continue
+          ;;
+        -R | --repo)
+          $unsure || real_repos+=("${args[i + 1]:-}")
+          i=$(( i + 1 ))
+          unsure=false
+          continue
+          ;;
+        --repo=*)
+          $unsure || real_repos+=("${arg#--repo=}")
+          unsure=false
+          continue
+          ;;
+        -R?*)
+          value=${arg#-R}
+          $unsure || real_repos+=("${value#=}")
+          unsure=false
+          continue
+          ;;
+        --*=* | -?=*)
+          (( positionals >= 2 )) || flag_before_action=true
+          unsure=false
+          continue
+          ;;
+        --* | -?)
+          (( positionals >= 2 )) || flag_before_action=true
+          if takes_value "$arg"; then
+            i=$(( i + 1 ))
+            unsure=false
+          elif never_takes_value "$arg"; then
+            unsure=false
+          else
+            unsure=true
+          fi
+          continue
+          ;;
+        -?*)
+          # An attached value (-bText) or combined flags (-de).
+          (( positionals >= 2 )) || flag_before_action=true
+          if takes_value "${arg:0:2}"; then unsure=false; else unsure=true; fi
+          continue
+          ;;
+      esac
+    fi
+    unsure=false
+    positionals=$(( positionals + 1 ))
+    if (( positionals == 1 )); then
+      group=$arg
+      group_index=$i
+    elif (( positionals == 2 )); then
+      action=$arg
+    fi
+  done
+}
+
+# Split an alias expansion into words the way a shell would, without running
+# anything: quotes group, a backslash escapes, nothing is expanded.
+alias_words=()
+split_words() { # <string> → $alias_words
+  alias_words=()
+  local text=$1 word="" started=false quote="" ch i
+  for (( i = 0; i < ${#text}; i++ )); do
+    ch=${text:i:1}
+    if [[ -n "$quote" ]]; then
+      if [[ "$ch" == "$quote" ]]; then
+        quote=""
+      elif [[ "$ch" == "\\" && "$quote" == '"' ]]; then
+        i=$(( i + 1 ))
+        word+=${text:i:1}
+      else
+        word+=$ch
+      fi
+      continue
+    fi
+    case "$ch" in
+      "'" | '"') quote=$ch; started=true ;;
+      "\\") i=$(( i + 1 )); word+=${text:i:1}; started=true ;;
+      [[:space:]])
+        if $started; then
+          alias_words+=("$word")
+          word="" started=false
+        fi
+        ;;
+      *) word+=$ch; started=true ;;
+    esac
+  done
+  if $started; then alias_words+=("$word"); fi
+}
+
+# gh expands an alias itself, so what it posts is in its configuration, not in
+# the arguments. `gh alias list` prints "name: expansion" from the local
+# config: no network, no credentials. The expansion is printed as YAML (observed
+# with gh 2.103.3): quoted when it holds ": " or starts with "!", and a block of
+# indented lines when it spans several. Returns 1 when there is no such alias
+# and 2 when the list cannot be read.
+alias_expansion() { # <name> → $expansion
+  local listing line collecting=false
+  expansion=""
+  listing=$("$real_gh" alias list 2>/dev/null) || return 2
+  while IFS= read -r line; do
+    if $collecting; then
+      [[ "$line" == [[:space:]]* ]] || return 0
+      line=${line#"${line%%[![:space:]]*}"}
+      expansion+="${expansion:+ }$line"
+    elif [[ "$line" == "$1: "* ]]; then
+      expansion=${line#"$1: "}
+      case "$expansion" in
+        \|* | \>*)
+          expansion=""
+          collecting=true
+          ;;
+        \'*\')
+          expansion=${expansion#\'}
+          expansion=${expansion%\'}
+          return 0
+          ;;
+        \"*\")
+          expansion=${expansion#\"}
+          expansion=${expansion%\"}
+          return 0
+          ;;
+        *) return 0 ;;
+      esac
+    fi
+  done <<< "$listing"
+  $collecting
+}
+
+scan_command
+
+# A word that is not one of gh's groups is an alias (or an extension, or
+# something unknown), and it is not a read until shown to be one: expanded here,
+# its text is checked and its own -R and command are found.
+unresolved=false
+if [[ -n "$group" ]] && ! known_group "$group"; then
+  unresolved=true
+  status=0
+  alias_expansion "$group" || status=$?
+  case "$status" in
+    0)
+      if [[ "$expansion" == '!'* ]]; then
+        # A shell alias runs arbitrary shell; any gh it calls comes back here.
+        args+=("$expansion")
+      else
+        split_words "$expansion"
+        typed=("${args[@]}")
+        args=()
+        for (( i = 0; i < ${#typed[@]}; i++ )); do
+          if (( i == group_index )); then
+            for (( j = 0; j < ${#alias_words[@]}; j++ )); do args+=("${alias_words[j]}"); done
+          else
+            args+=("${typed[i]}")
+          fi
+        done
+        scan_command
+        if known_group "$group"; then unresolved=false; fi
+      fi
+      ;;
+    1) ;;
+    *)
+      echo "gh: refused — \"$group\" is not a built-in command, and gh could not list its aliases to say whether it is one." >&2
+      exit 1
+      ;;
+  esac
+fi
+
 # Commands that cannot post anything to a repository.
 case "$group" in
-  "" | -* | auth | alias | completion | config | extension | help | search | status | browse | \
+  "" | auth | alias | completion | config | extension | help | search | status | browse | \
     codespace | org | ssh-key | gpg-key | attestation)
     exec "$real_gh" "$@"
     ;;
   api) ;;
   *)
-    if ! $flag_before_action; then
+    if ! $flag_before_action && ! $unresolved; then
       case "$group:$action" in
         *: | *:list | *:ls | *:view | *:status | *:diff | *:checks | *:checkout | *:co | \
           *:download | *:verify | *:verify-asset | *:watch | *:get | *:set-default | \
@@ -92,7 +307,8 @@ esac
 endpoint=""
 if [[ "$group" == api ]]; then
   method="" fields=false
-  for (( i = 1; i < ${#args[@]}; i++ )); do
+  for (( i = 0; i < ${#args[@]}; i++ )); do
+    (( i == group_index )) && continue
     arg=${args[i]}
     case "$arg" in
       -X | --method) method=${args[i + 1]:-}; i=$(( i + 1 )) ;;
@@ -121,7 +337,7 @@ if [[ "$group" == api ]]; then
   # --input, or anything read from stdin, counts as a mutation too.
   if [[ "$endpoint" == graphql ]]; then
     query="" known=false
-    for (( i = 1; i < ${#args[@]}; i++ )); do
+    for (( i = 0; i < ${#args[@]}; i++ )); do
       arg=${args[i]}
       case "$arg" in
         --input | --input=*) known=false; break ;;
@@ -154,7 +370,11 @@ fi
 publics=()
 while IFS= read -r public_checkout; do
   [[ -n "$public_checkout" ]] || continue
-  slug=$(slug_of "$(git -C "$public_checkout" remote get-url origin 2>/dev/null)")
+  # Git variables exported by whatever launched gh (GIT_DIR from a hook in a
+  # linked worktree, say) would answer for that repository instead of this
+  # checkout, so every public checkout would resolve to the same origin.
+  slug=$(slug_of "$(env -u GIT_DIR -u GIT_WORK_TREE -u GIT_COMMON_DIR \
+    git -C "$public_checkout" remote get-url origin 2>/dev/null)")
   if [[ -z "$slug" ]]; then
     echo "gh: refused — cannot tell which repository is public: $public_checkout has no origin remote." >&2
     exit 1
@@ -185,7 +405,12 @@ is_public() { # <owner/name> → true, and sets $target, when it is a public rep
 # else the current checkout, whose remotes gh resolves. A URL merely quoted
 # inside a body does not count: linking a public repository from a private
 # one's comment is not posting to it.
-repo_flag=""
+#
+# A public repository named by ANY -R/--repo word counts, wherever it stands,
+# and however many there are: whichever of them gh uses, and whether the word is
+# an option or a value that only reads like one, the text is checked. Only
+# scan_command's real_repos can show that the command is aimed elsewhere.
+candidates=()
 for (( i = 0; i < ${#args[@]}; i++ )); do
   arg=${args[i]}
   for slug in "${publics[@]}"; do
@@ -193,19 +418,27 @@ for (( i = 0; i < ${#args[@]}; i++ )); do
     [[ "$(lower "$arg")" =~ $public_url_re ]] && target=$slug
   done
   case "$arg" in
-    -R | --repo) repo_flag=${args[i + 1]:-} ;;
-    --repo=*) repo_flag=${arg#--repo=} ;;
-    -R?*) repo_flag=${arg#-R}; repo_flag=${repo_flag#=} ;;
+    -R | --repo) candidates+=("${args[i + 1]:-}") ;;
+    --repo=*) candidates+=("${arg#--repo=}") ;;
+    -R?*) value=${arg#-R}; candidates+=("${value#=}") ;;
   esac
 done
-repo_flag=${repo_flag:-${GH_REPO:-}}
+for (( i = 0; i < ${#candidates[@]}; i++ )); do
+  if is_public "$(slug_of "${candidates[i]}")"; then break; fi
+done
 
 aimed_at_cwd() {
-  if [[ -n "$repo_flag" ]]; then
-    is_public "$(slug_of "$repo_flag")"
+  local j remote
+  if (( ${#real_repos[@]} > 0 )); then
+    for (( j = 0; j < ${#real_repos[@]}; j++ )); do
+      if is_public "$(slug_of "${real_repos[j]}")"; then return 0; fi
+    done
+    return 1
+  fi
+  if [[ -n "${GH_REPO:-}" ]]; then
+    is_public "$(slug_of "$GH_REPO")"
     return
   fi
-  local remote
   while IFS= read -r remote; do
     is_public "$(slug_of "$(git remote get-url "$remote")")" && return 0
   done < <(git remote 2>/dev/null)

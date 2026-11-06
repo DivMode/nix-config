@@ -213,36 +213,61 @@ report() {
   printf '  %s\n' "$1" >&2
 }
 
+# Whatever git could not read is something this did not check. Say so and
+# refuse; letting it pass is what an unreadable range or file used to do, from
+# inside a process substitution or behind `|| continue`.
+git_error="$work_dir/git-error"
+cannot_inspect() { # <what git could not do>
+  echo "error: cannot check ${mode#--} — git could not $1:" >&2
+  sed 's/^/  /' "$git_error" >&2
+  exit 1
+}
+
 # Report every line of $2 that names a private term, as "$1:<line>".
 #
 # -a, not -I: -I skips whatever grep calls binary, and a name inside a binary
 # file, or text with one stray byte, is published just the same.
+#
+# grep exits 1 for no match and 2 when it could not search at all; only the
+# first is a clean result. The search runs outside a process substitution so
+# that a 2 fails the check instead of reading as "nothing found".
 scan_lines() {
-  local match line_number line_text term
+  local matches status=0 match line_number line_text term
+  matches=$(printf '%s\n' "$2" | grep -inaF -f "$terms_file" 2>"$git_error") || status=$?
+  if ((status > 1)); then
+    echo "error: cannot check ${mode#--} — grep could not search $1:" >&2
+    sed 's/^/  /' "$git_error" >&2
+    exit 1
+  fi
   while IFS= read -r match; do
     [[ -n "$match" ]] || continue
     line_number=${match%%:*}
     line_text=${match#*:}
     term=$(printf '%s\n' "$line_text" | grep -oiF -f "$terms_file" | head -n1)
     report "$1:$line_number — \"$term\""
-  done < <(printf '%s\n' "$2" | grep -inaF -f "$terms_file" || true)
+  done <<<"$matches"
 }
 
 if [[ "$mode" == "--text" ]]; then
   scan_lines "${commit_args[*]}" "$text"
 elif [[ "$mode" == "--commits" ]]; then
+  commits=$(git rev-list "${commit_args[@]}" 2>"$git_error") || cannot_inspect "list the commits (rev-list ${commit_args[*]})"
   while IFS= read -r commit; do
     [[ -n "$commit" ]] || continue
-    subject=$(git log -1 --format='%h %s' "$commit")
-    scan_lines "$subject — commit message" "$(git log -1 --format=%B "$commit")"
+    subject=$(git log -1 --format='%h %s' "$commit" 2>"$git_error") || cannot_inspect "read commit $commit"
+    message=$(git log -1 --format=%B "$commit" 2>"$git_error") || cannot_inspect "read the message of $commit"
+    scan_lines "$subject — commit message" "$message"
 
     # A merge commit's --cc diff holds only what the merge itself introduced
     # (lines that match no parent), so merging an already-published branch
     # adds nothing here while an edit made during the merge does. Each line
     # carries one +/-/space column per parent; it is added when those columns
     # hold a + and no -.
-    parents=$(( $(git rev-list --parents -n1 "$commit" | wc -w) - 1 ))
+    ancestry=$(git rev-list --parents -n1 "$commit" 2>"$git_error") || cannot_inspect "read the parents of $commit"
+    read -ra ancestry_words <<< "$ancestry"
+    parents=$(( ${#ancestry_words[@]} - 1 ))
     (( parents > 0 )) || parents=1
+    git show --cc --format= --unified=0 "$commit" >"$work_dir/changes" 2>"$git_error" || cannot_inspect "read the changes of $commit"
     file="?"
     while IFS= read -r line; do
       case "$line" in
@@ -259,31 +284,35 @@ elif [[ "$mode" == "--commits" ]]; then
       added=${line:parents}
       term=$(printf '%s\n' "$added" | grep -oiF -f "$terms_file" | head -n1) || true
       [[ -n "$term" ]] && report "$subject — $file adds \"$term\""
-    done < <(git show --cc --format= --unified=0 "$commit")
-  done < <(git rev-list "${commit_args[@]}")
+    done < "$work_dir/changes"
+  done <<< "$commits"
 else
+  # NUL-separated: git quotes a name with non-ASCII bytes ("caf\303\251.txt")
+  # unless asked not to, and a quoted name names no file.
   if [[ "$mode" == "--staged" ]]; then
-    files=$(git diff --cached --name-only --diff-filter=ACMR)
+    git diff --cached --name-only -z --diff-filter=ACMR >"$work_dir/files" 2>"$git_error" || cannot_inspect "list the staged files"
   else
-    files=$(git ls-files)
+    git ls-files -z >"$work_dir/files" 2>"$git_error" || cannot_inspect "list the tracked files"
   fi
 
-  while IFS= read -r file; do
-    [[ -n "$file" ]] || continue
-
+  while IFS= read -r -d '' file; do
     if term=$(printf '%s\n' "$file" | grep -oiF -f "$terms_file" | head -n1) && [[ -n "$term" ]]; then
       report "$file — path contains \"$term\""
     fi
 
     if [[ "$mode" == "--staged" ]]; then
-      content=$(git show ":$file" 2>/dev/null) || continue
+      if ! content=$(git show ":$file" 2>"$git_error"); then
+        # A submodule is a commit id in the index: no content, nothing to read.
+        [[ "$(git ls-files --stage -z -- ":(literal)$file" | cut -c1-6)" == 160000 ]] && continue
+        cannot_inspect "read the staged file $file"
+      fi
     else
       [[ -f "$file" ]] || continue
       content=$(cat "$file")
     fi
 
     scan_lines "$file" "$content"
-  done <<< "$files"
+  done < "$work_dir/files"
 fi
 
 if (( hits > 0 )); then

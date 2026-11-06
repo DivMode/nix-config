@@ -195,15 +195,20 @@ let
   # gh, wrapped so nothing posts a private name to a public repository: PR
   # and issue text never passes the pre-push hook. The public repositories are
   # the checkout local.nix declares as projects.nixconfig, which also holds the
-  # guard scripts, and the projects it lists in publicProjects. Without
-  # projects.nixconfig there is nothing to guard and gh is installed as it is.
-  # The wrapper comes first in the join, so its bin/gh shadows the real one
-  # while completions and man pages still come from gh. See
-  # scripts/gh-private-names-guard.sh.
+  # guard scripts, and the projects it lists in publicProjects. With neither
+  # there is nothing to guard and gh is installed as it is; but a publicProjects
+  # entry that projects does not define, or publicProjects without
+  # projects.nixconfig, would drop protection without a word, so the
+  # assertions below refuse both (scripts/install-hooks.sh makes the same
+  # refusal for the hooks). The wrapper comes first in the join, so its bin/gh
+  # shadows the real one while completions and man pages still come from gh.
+  # See scripts/gh-private-names-guard.sh.
   ghProjects = local.projects or { };
+  ghPublicProjects = local.publicProjects or [ ];
+  ghUndefinedProjects = lib.filter (name: !(ghProjects ? ${name})) ghPublicProjects;
   ghCheckout = ghProjects.nixconfig or null;
   ghPublicCheckouts = lib.concatMap (name: lib.optional (ghProjects ? ${name}) ghProjects.${name}) (
-    lib.unique ([ "nixconfig" ] ++ (local.publicProjects or [ ]))
+    lib.unique ([ "nixconfig" ] ++ ghPublicProjects)
   );
   ghGuard = pkgs.writeShellApplication {
     name = "gh";
@@ -244,6 +249,27 @@ in
   };
 
   config = {
+    assertions = [
+      {
+        assertion = ghUndefinedProjects == [ ];
+        message = ''
+          local.nix publicProjects names projects that `projects` does not
+          define: ${lib.concatStringsSep ", " ghUndefinedProjects}.
+          Each entry must be a key of `projects`; the private-name guard would
+          otherwise leave that public repository unprotected without saying so.
+        '';
+      }
+      {
+        assertion = ghPublicProjects == [ ] || ghProjects ? nixconfig;
+        message = ''
+          local.nix lists publicProjects but `projects` has no `nixconfig`. The
+          private-name guard runs from the nix-config checkout, so without it
+          none of the public repositories would be protected. Add
+          projects.nixconfig, the path of the nix-config checkout.
+        '';
+      }
+    ];
+
     # Portable workstation tools come from the flake-declared nixpkgs input. Git and Zsh
     # are installed by their Home Manager program modules in default.nix.
     home.packages =

@@ -15,7 +15,10 @@
 # guard is committed by the guard it changes. Every other public repository
 # carries no hooks of its own, so its core.hooksPath is the absolute path of
 # the canonical nix-config checkout's scripts/hooks. A public checkout that is
-# not on disk is skipped.
+# not on disk is skipped. A publicProjects entry that projects does not define,
+# or publicProjects without projects.nixconfig, is an error: a public
+# repository left without hooks must not pass for a configured one (the same
+# rule modules/home/development.nix asserts for the gh wrapper).
 #
 # Idempotent: re-running it is a no-op once every value is already set.
 
@@ -56,9 +59,16 @@ if ! checkouts=$(LOCAL_PATH="$local_file" nix eval --impure --raw --expr '
   let
     local = import (builtins.toPath (builtins.getEnv "LOCAL_PATH"));
     projects = local.projects or { };
-    names = builtins.filter (name: projects ? ${name}) ([ "nixconfig" ] ++ (local.publicProjects or [ ]));
+    publicProjects = local.publicProjects or [ ];
+    unknown = builtins.filter (name: !(projects ? ${name})) publicProjects;
+    names = (if projects ? nixconfig then [ "nixconfig" ] else [ ]) ++ publicProjects;
   in
-  builtins.concatStringsSep "\n" (map (name: projects.${name}) names)
+  if unknown != [ ] then
+    throw "publicProjects names ${builtins.concatStringsSep ", " unknown}, which projects does not define"
+  else if publicProjects != [ ] && !(projects ? nixconfig) then
+    throw "publicProjects is set but projects.nixconfig is not: the guard lives in the nix-config checkout"
+  else
+    builtins.concatStringsSep "\n" (map (name: projects.${name}) names)
 '); then
   echo "error: could not read the public projects from $local_file" >&2
   exit 1
@@ -70,6 +80,9 @@ while IFS= read -r checkout; do
     echo "==> Skipping $checkout: no checkout there on this machine" >&2
     continue
   fi
-  [[ "$(cd "$checkout" && pwd -P)" == "$(cd "$canonical_repository" && pwd -P)" ]] && continue
+  # nix-config itself keeps its relative path, whether local.nix names its main
+  # checkout or one of its linked worktrees: they share one git common
+  # directory, one config, and so one core.hooksPath.
+  [[ "$(git -C "$checkout" rev-parse --path-format=absolute --git-common-dir)" == "$git_common_dir" ]] && continue
   install_into "$checkout" "$desired"
 done <<< "$checkouts"

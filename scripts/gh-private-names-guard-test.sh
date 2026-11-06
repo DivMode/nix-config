@@ -36,8 +36,15 @@ guard_checkouts="$public"
 
 # The stand-in gh writes its arguments and stdin where the test can read them.
 calls="$work_dir/calls"
+aliases="$work_dir/aliases"
+: > "$aliases"
 cat > "$work_dir/gh" <<EOF
 #!/usr/bin/env bash
+if [[ "\${1:-}" == alias && "\${2:-}" == list ]]; then
+  [[ ! -e "$aliases.broken" ]] || exit 1
+  cat "$aliases"
+  exit 0
+fi
 printf '%s\n' "\$*" > "$calls"
 printf '%s\n' "\${GH_EDITOR:-}" > "$calls.editor"
 cat > "$calls.stdin"
@@ -209,6 +216,103 @@ passed "a private term in a read of the public repository" \
   "$public" "" pr list --search "fixture-private-name"
 passed "a private term in an API read of the public repository" \
   "$public" "" api repos/fixture-owner/public-repo/issues -X GET -f "q=$leak"
+
+# Fourth review (independent, of the third): flags in front of the command, a
+# value that reads as a flag, exported Git variables, aliases, and commands the
+# guard cannot name.
+#
+# gh takes flags before the command, so the command is the first word that is
+# not a flag or a flag's value, and a flag's value is never an option.
+blocked "-R attached, before the command" \
+  "$private" "" -Rfixture-owner/public-repo pr comment 1 -b "$leak"
+blocked "--repo= before the command" \
+  "$private" "" --repo=fixture-owner/public-repo pr comment 1 -b "$leak"
+blocked "-R and its value before the command" \
+  "$private" "" -R fixture-owner/public-repo issue create -t t -b "$leak"
+passed "a read with -R before the command" \
+  "$public" "" -R fixture-owner/public-repo pr list --search "$leak"
+passed "a command that only prints the version" \
+  "$public" "" --version
+blocked "a body that reads as -R, after the real -R" \
+  "$private" "" pr comment 1 -R fixture-owner/public-repo -b "-Rfixture-owner/fixture-private-name"
+blocked "a title that reads as -R, with the public repository as the checkout" \
+  "$public" "" pr create -t "-Rfixture-owner/private-repo" -b "$leak"
+blocked "a body that reads as --repo=, with the public repository as the checkout" \
+  "$public" "" pr comment 1 -b "--repo=fixture-owner/private-repo $leak"
+blocked "-R after a flag of unknown arity, which may have taken it as its value" \
+  "$public" "" pr comment 1 --some-new-flag -R fixture-owner/private-repo -b "$leak"
+blocked "the public repository named by -R after a flag of unknown arity, from a private checkout" \
+  "$private" "" pr comment 1 --some-new-flag -R fixture-owner/public-repo -b "$leak"
+passed "-R after a flag that never takes a value, naming a private repository" \
+  "$public" "" pr create --draft -R fixture-owner/private-repo -t t -b "$leak"
+blocked "-R given twice, the public repository first" \
+  "$private" "" pr comment 1 -R fixture-owner/public-repo -R fixture-owner/private-repo -b "$leak"
+blocked "-R given twice, the public repository last" \
+  "$private" "" pr comment 1 -R fixture-owner/private-repo -R fixture-owner/public-repo -b "$leak"
+passed "-R given twice, both private" \
+  "$public" "" pr comment 1 -R fixture-owner/private-repo -R fixture-owner/private-repo -b "$leak"
+
+# Git variables exported by whatever launched gh (a hook, another repository's
+# shell) must not change which repository a public checkout is.
+(
+  export GIT_DIR="$private/.git" GIT_WORK_TREE="$private" GIT_COMMON_DIR="$private/.git"
+  blocked "-R naming the public repository, under another repository's exported GIT_DIR" \
+    "$work_dir" "" issue create -R fixture-owner/public-repo -t t -b "$leak"
+)
+
+# An alias expands only inside gh, so its text and its -R are read from
+# `gh alias list` (local; no network) before anything is decided.
+cat > "$aliases" <<ALIASES
+co: pr checkout
+quick: pr list
+zero: pr comment 1 -b "$leak"
+aimed: issue comment 5 -R fixture-owner/public-repo -b "$leak"
+shellpost: '!gh pr comment 1 -b "$leak"'
+shellclean: '!echo hello'
+multiline: |-
+    pr comment 1
+    -b "$leak"
+quoted: 'issue comment 5 -R fixture-owner/public-repo -b "note: $leak"'
+ALIASES
+blocked "a zero-argument alias whose expansion names a private term" \
+  "$public" "" zero
+blocked "an alias reached after flags" \
+  "$public" "" --hostname github.com zero
+blocked "an alias whose expansion aims at the public repository, from a private checkout" \
+  "$private" "" aimed
+blocked "a shell alias whose text names a private term" \
+  "$public" "" shellpost
+blocked "an alias whose expansion spans several lines" \
+  "$public" "" multiline
+blocked "an alias gh prints in quotes (its expansion holds a colon), aimed at the public repository" \
+  "$private" "" quoted
+passed "a shell alias with clean text" \
+  "$public" "" shellclean
+passed "an alias for a read" \
+  "$public" "" co 5
+passed "a zero-argument alias for a read" \
+  "$public" "" quick
+passed "an alias with a private term, from a private checkout" \
+  "$private" "" zero
+blocked "a command that is neither built in nor an alias, naming a private term" \
+  "$public" "" frobnicate list --search "$leak"
+passed "a command that is neither built in nor an alias, from a private checkout" \
+  "$private" "" frobnicate list --search "$leak"
+touch "$aliases.broken"
+if run "$public" "" zero || $reached; then
+  echo "error: an alias gh could not list reached gh" >&2
+  exit 1
+fi
+if ! grep -F 'alias' "$work_dir/output" >/dev/null; then
+  echo "error: an alias gh could not list was refused for the wrong reason:" >&2
+  cat "$work_dir/output" >&2
+  exit 1
+fi
+passed "a built-in command while gh cannot list its aliases" \
+  "$public" "" pr list
+passed "a flag's value before the command is not taken for the command, while gh cannot list aliases" \
+  "$private" "" --hostname github.com pr view 1
+rm -f "$aliases.broken"
 
 # A second public repository, declared in local.nix publicProjects. Everything
 # above ran with only nix-config listed, which is local.nix without

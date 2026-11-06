@@ -113,6 +113,33 @@ sha=$(commit_on named-branch branch.txt "clean")
 expect blocked "a private name in the branch name" refs/heads/fixture-private-name-work "$sha"
 expect passed "a clean branch" refs/heads/named-branch "$sha"
 
+# A force push can name a remote tip this repository does not have. The range
+# cannot then be listed, and a push that could not be inspected must not pass
+# (it used to: rev-list failed inside a process substitution and the scan
+# reported success).
+push_over() { # <local object> <remote tip> → the pre-push hook's exit status
+  (
+    cd "$fixture"
+    printf 'refs/heads/force %s refs/heads/force %s\n' "$1" "$2" |
+      NIX_CONFIG_LOCAL="$fixture/local.nix" ./scripts/hooks/pre-push >"$work_dir/push-output" 2>&1
+  )
+}
+if ! push_over "$sha" "$(git -C "$fixture" rev-parse main)"; then
+  echo "error: a clean push over a remote tip this repository has was rejected:" >&2
+  cat "$work_dir/push-output" >&2
+  exit 1
+fi
+if push_over "$sha" 1234567890123456789012345678901234567890; then
+  echo "error: a push over a remote tip this repository lacks was not rejected:" >&2
+  cat "$work_dir/push-output" >&2
+  exit 1
+fi
+if ! grep -F 'cannot check' "$work_dir/push-output" >/dev/null; then
+  echo "error: a push over a remote tip this repository lacks was rejected for the wrong reason:" >&2
+  cat "$work_dir/push-output" >&2
+  exit 1
+fi
+
 commit_on side side.txt "clean side" >/dev/null
 commit_on merger merger.txt "clean mainline" >/dev/null
 git -C "$fixture" merge -q --no-ff -m "merge side" side
@@ -320,6 +347,83 @@ if ! install_hooks "$work_dir/absent.nix" || ! grep -F 'only nix-config' "$work_
   exit 1
 fi
 
+# What cannot be read has not been checked. A staged file or a commit whose
+# content git cannot read used to be skipped (`|| continue`; a failed
+# process substitution), and the scan reported success.
+broken="$physical/broken"
+git init -q -b main "$broken"
+git -C "$broken" config user.name "Fixture User"
+git -C "$broken" config user.email "fixture@example.invalid"
+drop_blob() { # <repo> <path in the index> → deletes that file's loose blob object
+  local blob
+  blob=$(git -C "$1" rev-parse ":$2")
+  rm -f "$1/.git/objects/${blob:0:2}/${blob:2}"
+}
+printf 'committed, then unreadable\n' > "$broken/committed.txt"
+git -C "$broken" add committed.txt
+git -C "$broken" commit -q -m "a commit whose blob is lost"
+drop_blob "$broken" committed.txt
+NEEDLE="cannot check" expect_check blocked "a commit whose changes git cannot read" \
+  "$broken" "$local_nix" --commits HEAD
+printf 'staged, then unreadable\n' > "$broken/staged.txt"
+git -C "$broken" add staged.txt
+drop_blob "$broken" staged.txt
+NEEDLE="cannot check" expect_check blocked "a staged file git cannot read" \
+  "$broken" "$local_nix" --staged
+git -C "$broken" reset -q
+
+# The names git prints are quoted unless asked otherwise ("caf\303\251.txt"), and
+# a quoted name names no file: a staged file with a non-ASCII name was skipped.
+non_ascii=$'caf\xc3\xa9.txt'
+printf '%s\n' "fixture-private-name" > "$broken/$non_ascii"
+git -C "$broken" add "$non_ascii"
+expect_check blocked "a private term in a staged file with a non-ASCII name" "$broken" "$local_nix" --staged
+git -C "$broken" reset -q
+
+# A submodule is a commit id in the index, with no content to read; staging one
+# is not a failure to inspect.
+git init -q -b main "$physical/submodule-source"
+git -C "$physical/submodule-source" -c user.name=Fixture -c user.email=fixture@example.invalid \
+  commit -q --allow-empty -m "submodule source"
+git -C "$broken" -c protocol.file.allow=always submodule add -q "$physical/submodule-source" vendored >/dev/null 2>&1
+expect_check passed "a staged submodule" "$broken" "$local_nix" --staged
+git -C "$broken" reset -q
+
+# An entry of publicProjects that projects does not define, or a publicProjects
+# without projects.nixconfig, used to be dropped silently, which left a public
+# repository without hooks and nothing to say so. The installer refuses both.
+cat > "$work_dir/local-unknown.nix" <<NIX
+{
+  privateTerms = [ "fixture-private-name" ];
+  projects = {
+    nixconfig = "$nixcfg";
+    second-public = "$other";
+  };
+  publicProjects = [ "second-public" "no-such-project" ];
+}
+NIX
+cat > "$work_dir/local-no-nixconfig.nix" <<NIX
+{
+  privateTerms = [ "fixture-private-name" ];
+  projects = {
+    second-public = "$other";
+  };
+  publicProjects = [ "second-public" ];
+}
+NIX
+for incomplete in "local-unknown.nix=no-such-project" "local-no-nixconfig.nix=nixconfig"; do
+  if install_hooks "$work_dir/${incomplete%%=*}"; then
+    echo "error: install-hooks.sh accepted ${incomplete%%=*}:" >&2
+    cat "$work_dir/install-output" >&2
+    exit 1
+  fi
+  if ! grep -F -- "${incomplete#*=}" "$work_dir/install-output" >/dev/null; then
+    echo "error: install-hooks.sh refused ${incomplete%%=*} without naming ${incomplete#*=}:" >&2
+    cat "$work_dir/install-output" >&2
+    exit 1
+  fi
+done
+
 # The pre-commit hook, run by git itself in both repositories.
 commit_in() { # <repo> <message> → git commit's status; output in commit-output
   PATH="$work_dir/bin:$PATH" NIX_STEPS_MARKER="$marker" REAL_NIX="$real_nix" NIX_CONFIG_LOCAL="$local_nix" \
@@ -366,6 +470,28 @@ expect_commit passed "a clean commit in a linked worktree of nix-config" "$physi
 if [[ "$(grep -c guard-test "$marker")" != 2 || "$(grep -c fmt "$marker")" != 2 ]]; then
   echo "error: nix-config's pre-commit steps did not run for both commits:" >&2
   cat "$marker" >&2
+  exit 1
+fi
+
+# local.nix may name a linked worktree of nix-config as projects.nixconfig. It is
+# nix-config all the same (one repository, one config): the installer must leave
+# the relative hooks path alone, not replace it with the absolute one meant for
+# other repositories.
+cat > "$work_dir/local-worktree.nix" <<NIX
+{
+  privateTerms = [ "fixture-private-name" ];
+  projects = {
+    nixconfig = "$physical/worktree-a";
+    second-public = "$other";
+  };
+  publicProjects = [ "second-public" ];
+}
+NIX
+install_hooks "$work_dir/local-worktree.nix"
+if [[ "$(git -C "$nixcfg" config --local --get core.hooksPath)" != scripts/hooks ]]; then
+  echo "error: install-hooks.sh replaced nix-config's relative hooks path when projects.nixconfig is a linked worktree:" >&2
+  git -C "$nixcfg" config --local --get core.hooksPath >&2
+  cat "$work_dir/install-output" >&2
   exit 1
 fi
 

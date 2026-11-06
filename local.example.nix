@@ -41,6 +41,16 @@
   # person, employer, client, host, or private path belongs in privateTerms.
   publicTerms = [ ];
 
+  # Names of entries in `projects` above whose repositories are public on
+  # GitHub, like this one. The private-name guard (scripts/check-private-names.sh
+  # and the `gh` wrapper) then protects each of them: the pre-commit and
+  # pre-push hooks that scripts/install-hooks.sh installs into every checkout
+  # listed here, and the text `gh` posts to them. A listed project's own name is
+  # no longer private; its checkout path still is. `nixconfig` is always public
+  # whether listed or not. Omit, or leave empty, for no public repository but
+  # this one.
+  publicProjects = [ "example-project" ];
+
   # The vault holding the "nix-config local.nix" Secure Note that
   # scripts/rebuild.sh saves through Connect. Read from here rather than
   # hard-coded, which keeps a private vault name out of the tracked scripts;

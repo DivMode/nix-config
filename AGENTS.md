@@ -14,17 +14,21 @@ today and is intentionally structured to add NixOS servers later.
   enforced, not trusted: `scripts/check-private-names.sh` derives a denylist
   from `local.nix` and a `pre-commit` hook blocks any commit that matches.
   Install it with `scripts/install-hooks.sh` (`rebuild.sh` and `setup-mac.sh`
-  both do), and audit the whole tree with `--tree`. It exists because a
+  both do), and audit the whole tree with `--tree`. The hooks guard every
+  public repository, not only this one: `local.nix` lists the others in
+  `publicProjects`, and `install-hooks.sh` points each existing checkout's
+  `core.hooksPath` at this repository's `scripts/hooks`. It exists because a
   2026-08-14 audit found seventeen occurrences already committed: a private
   monorepo named in nine comments across three modules and a research note, and
   a vault name hard-coded in six lines of two scripts.
 - The same rule covers everything else GitHub shows: commit messages, branch
   and tag names, and pull request, issue, and release text. The `pre-push`
   hook checks the first three; `gh` itself is wrapped
-  (`scripts/gh-private-names-guard.sh`), so a write aimed at this repository
-  is refused before it posts. This repository is the one public repository —
-  `local.nix` names its checkout as `projects.nixconfig` — and every other is
-  private, so nothing asks GitHub about visibility. A 2026-10-09 audit found
+  (`scripts/gh-private-names-guard.sh`), so a write aimed at any public
+  repository is refused before it posts. The public repositories are this one —
+  `local.nix` names its checkout as `projects.nixconfig` — and every project
+  `local.nix` lists in `publicProjects`; every other is private, so nothing
+  asks GitHub about visibility. A 2026-10-09 audit found
   private project names in six commit messages and nine pull requests, all of
   which the diff-only check had let through.
 - Keep machine identity in the ignored `local.nix`; update

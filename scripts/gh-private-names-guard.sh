@@ -1,36 +1,41 @@
 #!/usr/bin/env bash
 #
-# gh, guarded: refuse to post a private name to this public repository.
+# gh, guarded: refuse to post a private name to a public repository.
 #
 # The pre-push hook keeps private names out of what `git push` publishes, but
 # pull request titles and bodies, comments, issues, and release notes never
-# pass through git. On 2026-10-09 nine of this repository's pull requests were
+# pass through git. On 2026-10-09 nine of nix-config's pull requests were
 # found naming private projects, seven of them from the week before.
 #
-# This repository is the one public repository; every other one is private.
-# local.nix already says which checkout this is (projects.nixconfig), so that
-# is the whole of the visibility rule: no list of public repositories and no
-# question put to GitHub. A command that can post to this repository has its
-# text checked by scripts/check-private-names.sh --text before gh runs.
+# The public repositories are nix-config and the other projects local.nix lists
+# in publicProjects; every other one is private. local.nix already says where
+# each is checked out, so that is the whole of the visibility rule: no question
+# put to GitHub, only each public checkout's origin. A command that can post to
+# a public repository has its text checked by scripts/check-private-names.sh
+# --text before gh runs.
 #
 # It fails closed, because the first version of this file did not. Review
 # found fifteen ways past a list of WRITE subcommands — gh's aliases (pr new,
 # release new), text-carrying commands it did not name (pr revert, issue
 # develop), a PR URL given from another checkout, attached short flags
 # (-RDivMode/x, -F<file>) — so the list here is of READS, and anything else
-# aimed at this repository, or at a repository it cannot identify, is checked.
+# aimed at a public repository, or at a repository it cannot identify, is
+# checked.
 #
 # It wraps gh itself rather than hooking one agent client, so Claude Code,
 # Codex, and any script reach GitHub through the same check.
 #
 # Installed as `gh` by modules/home/development.nix, which sets:
-#   GH_GUARD_REAL_GH   the real gh
-#   GH_GUARD_CHECKOUT  this repository's main checkout
+#   GH_GUARD_REAL_GH    the real gh
+#   GH_GUARD_CHECKOUT   nix-config's main checkout, where the check script lives
+#   GH_GUARD_CHECKOUTS  every public repository's checkout (nix-config's too),
+#                       separated by newlines or colons
 
 set -euo pipefail
 
 real_gh=${GH_GUARD_REAL_GH:?}
 checkout=${GH_GUARD_CHECKOUT:?}
+checkouts=${GH_GUARD_CHECKOUTS:?}
 args=("$@")
 group=${args[0]:-}
 
@@ -143,23 +148,50 @@ if [[ "$group" == api ]]; then
   fi
 fi
 
-public=$(slug_of "$(git -C "$checkout" remote get-url origin 2>/dev/null)") || public=""
-if [[ -z "$public" ]]; then
-  echo "gh: refused — cannot tell which repository is public: $checkout has no origin remote." >&2
+# "owner/name" of every public repository, from its checkout's origin. One that
+# cannot be identified refuses the command, as the single one always did: with
+# it unknown, nothing says the command is not aimed at it.
+publics=()
+while IFS= read -r public_checkout; do
+  [[ -n "$public_checkout" ]] || continue
+  slug=$(slug_of "$(git -C "$public_checkout" remote get-url origin 2>/dev/null)")
+  if [[ -z "$slug" ]]; then
+    echo "gh: refused — cannot tell which repository is public: $public_checkout has no origin remote." >&2
+    exit 1
+  fi
+  publics+=("$slug")
+done <<< "${checkouts//:/$'\n'}"
+if (( ${#publics[@]} == 0 )); then
+  echo "gh: refused — cannot tell which repository is public: GH_GUARD_CHECKOUTS names no checkout." >&2
   exit 1
 fi
 
-# Which repository is this aimed at? An argument that IS a URL of it (gh takes
+# The public repositories the command is aimed at, once known. Several only
+# when it names no repository at all (below).
+target=""
+is_public() { # <owner/name> → true, and sets $target, when it is a public repository
+  local slug
+  for slug in "${publics[@]}"; do
+    if [[ "$slug" == "$1" ]]; then
+      target=$slug
+      return 0
+    fi
+  done
+  return 1
+}
+
+# Which repository is this aimed at? An argument that IS a URL of one (gh takes
 # the repository from a PR or issue URL), -R, GH_REPO, the API endpoint, or
 # else the current checkout, whose remotes gh resolves. A URL merely quoted
-# inside a body does not count: linking this repository from a private one's
-# comment is not posting to it.
-target=false
+# inside a body does not count: linking a public repository from a private
+# one's comment is not posting to it.
 repo_flag=""
-public_url_re="^((https?|ssh)://)?(git@)?(www\\.)?github\\.com[/:]${public//./\\.}(\\.git)?([/#?].*)?$"
 for (( i = 0; i < ${#args[@]}; i++ )); do
   arg=${args[i]}
-  [[ "$(lower "$arg")" =~ $public_url_re ]] && target=true
+  for slug in "${publics[@]}"; do
+    public_url_re="^((https?|ssh)://)?(git@)?(www\\.)?github\\.com[/:]${slug//./\\.}(\\.git)?([/#?].*)?$"
+    [[ "$(lower "$arg")" =~ $public_url_re ]] && target=$slug
+  done
   case "$arg" in
     -R | --repo) repo_flag=${args[i + 1]:-} ;;
     --repo=*) repo_flag=${arg#--repo=} ;;
@@ -170,35 +202,36 @@ repo_flag=${repo_flag:-${GH_REPO:-}}
 
 aimed_at_cwd() {
   if [[ -n "$repo_flag" ]]; then
-    [[ "$(slug_of "$repo_flag")" == "$public" ]]
+    is_public "$(slug_of "$repo_flag")"
     return
   fi
   local remote
   while IFS= read -r remote; do
-    [[ "$(slug_of "$(git remote get-url "$remote")")" == "$public" ]] && return 0
+    is_public "$(slug_of "$(git remote get-url "$remote")")" && return 0
   done < <(git remote 2>/dev/null)
   return 1
 }
 
-if ! $target; then
+if [[ -z "$target" ]]; then
   if [[ "$group" == api ]]; then
     if [[ "$endpoint" == repos/* ]]; then
       named=$(printf '%s' "$endpoint" | cut -d/ -f2-3)
       if [[ "$named" == *"{owner}"* || "$named" == *"{repo}"* ]]; then
-        aimed_at_cwd && target=true
-      elif [[ "$named" == "$public" ]]; then
-        target=true
+        aimed_at_cwd || true
+      else
+        is_public "$named" || true
       fi
     else
       # graphql, repositories/<id>, user, gists: no repository named, so
-      # it could be this one.
-      target=true
+      # it could be any of them.
+      printf -v target '%s, ' "${publics[@]}"
+      target=${target%, }
     fi
   else
-    aimed_at_cwd && target=true
+    aimed_at_cwd || true
   fi
 fi
-$target || exec "$real_gh" "$@"
+[[ -n "$target" ]] || exec "$real_gh" "$@"
 
 # Everything that will be posted. An argument naming a file is checked by the
 # file's contents and its name, not its directory: a session's scratch path can
@@ -214,7 +247,7 @@ stdin_copy=""
 for arg in "${args[@]}"; do
   case "$arg" in
     -e | --editor)
-      echo "gh: refused — text written in an editor cannot be checked before it is posted to $public; pass it with --body or --body-file." >&2
+      echo "gh: refused — text written in an editor cannot be checked before it is posted to $target; pass it with --body or --body-file." >&2
       exit 1
       ;;
   esac
@@ -242,7 +275,7 @@ for arg in "${args[@]}"; do
 done
 
 if ! "$checkout/scripts/check-private-names.sh" --text "gh $group $action" < "$text"; then
-  echo "gh: refused — $public is public; nothing was posted." >&2
+  echo "gh: refused — nothing was posted to public repository $target." >&2
   exit 1
 fi
 

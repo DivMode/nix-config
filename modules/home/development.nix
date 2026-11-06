@@ -192,19 +192,26 @@ let
         };
       });
 
-  # gh, wrapped so nothing posts a private name to this public repository: PR
-  # and issue text never passes the pre-push hook. The checkout local.nix
-  # declares as projects.nixconfig is the one public repository, so without it
-  # there is nothing to guard and gh is installed as it is. The wrapper comes
-  # first in the join, so its bin/gh shadows the real one while completions
-  # and man pages still come from gh. See scripts/gh-private-names-guard.sh.
-  ghCheckout = (local.projects or { }).nixconfig or null;
+  # gh, wrapped so nothing posts a private name to a public repository: PR
+  # and issue text never passes the pre-push hook. The public repositories are
+  # the checkout local.nix declares as projects.nixconfig, which also holds the
+  # guard scripts, and the projects it lists in publicProjects. Without
+  # projects.nixconfig there is nothing to guard and gh is installed as it is.
+  # The wrapper comes first in the join, so its bin/gh shadows the real one
+  # while completions and man pages still come from gh. See
+  # scripts/gh-private-names-guard.sh.
+  ghProjects = local.projects or { };
+  ghCheckout = ghProjects.nixconfig or null;
+  ghPublicCheckouts = lib.concatMap (name: lib.optional (ghProjects ? ${name}) ghProjects.${name}) (
+    lib.unique ([ "nixconfig" ] ++ (local.publicProjects or [ ]))
+  );
   ghGuard = pkgs.writeShellApplication {
     name = "gh";
     runtimeInputs = [ pkgs.git ];
     runtimeEnv = {
       GH_GUARD_REAL_GH = lib.getExe pkgs.gh;
       GH_GUARD_CHECKOUT = ghCheckout;
+      GH_GUARD_CHECKOUTS = lib.concatStringsSep "\n" ghPublicCheckouts;
     };
     text = builtins.readFile ../../scripts/gh-private-names-guard.sh;
   };

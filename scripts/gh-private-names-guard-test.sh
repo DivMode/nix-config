@@ -4,7 +4,8 @@
 # that records what it was asked to do. Both directions matter: a write to the
 # public repository naming a private term must never reach gh, and a write to
 # any other repository, or any read, must reach it unchanged — a guard that
-# blocks ordinary work gets worked around.
+# blocks ordinary work gets worked around. Public repositories are the ones
+# GH_GUARD_CHECKOUTS lists (nix-config and local.nix publicProjects).
 
 set -euo pipefail
 
@@ -30,6 +31,9 @@ private="$work_dir/private"
 git init -q -b main "$private"
 git -C "$private" remote add origin https://github.com/fixture-owner/private-repo.git
 
+# Which checkouts the wrapper is told are public; a test sets it for its cases.
+guard_checkouts="$public"
+
 # The stand-in gh writes its arguments and stdin where the test can read them.
 calls="$work_dir/calls"
 cat > "$work_dir/gh" <<EOF
@@ -51,7 +55,7 @@ run() { # <dir> <stdin> gh-args... → guard's exit status; sets $reached
   (
     cd "$dir"
     printf '%s' "$input" |
-      GH_GUARD_REAL_GH="$work_dir/gh" GH_GUARD_CHECKOUT="$public" \
+      GH_GUARD_REAL_GH="$work_dir/gh" GH_GUARD_CHECKOUT="$public" GH_GUARD_CHECKOUTS="$guard_checkouts" \
         bash "$public/scripts/gh-private-names-guard.sh" "$@" >"$work_dir/output" 2>&1
   ) || status=$?
   reached=false
@@ -131,7 +135,7 @@ printf 'caf\xe9 %s\n' "$leak" > "$binary_body"
 blocked "a body with an invalid UTF-8 byte" \
   "$public" "" pr create -t x --body-file "$binary_body"
 if (
-  cd "$public" && GH_GUARD_REAL_GH="$work_dir/gh" GH_GUARD_CHECKOUT="$public" \
+  cd "$public" && GH_GUARD_REAL_GH="$work_dir/gh" GH_GUARD_CHECKOUT="$public" GH_GUARD_CHECKOUTS="$public" \
     bash "$public/scripts/gh-private-names-guard.sh" issue create -t x --editor >/dev/null 2>&1
 ) || [[ -f "$calls" ]]; then
   echo "error: text from an editor reached gh unchecked" >&2
@@ -205,5 +209,64 @@ passed "a private term in a read of the public repository" \
   "$public" "" pr list --search "fixture-private-name"
 passed "a private term in an API read of the public repository" \
   "$public" "" api repos/fixture-owner/public-repo/issues -X GET -f "q=$leak"
+
+# A second public repository, declared in local.nix publicProjects. Everything
+# above ran with only nix-config listed, which is local.nix without
+# publicProjects: a repository that is not listed is private, whatever its name.
+second="$work_dir/second-public"
+git init -q -b main "$second"
+git -C "$second" remote add origin https://github.com/fixture-owner/Second-Public.git
+
+passed "a private term in a write to a repository that is not listed as public" \
+  "$private" "" pr create -R fixture-owner/second-public --title t --body "$leak"
+
+guard_checkouts="$public:$second"
+blocked "-R naming the second public repository, from a private checkout" \
+  "$private" "" pr create -R fixture-owner/second-public --title t --body "$leak"
+passed "the same body to a private repository, with two public ones listed" \
+  "$private" "" pr create -R fixture-owner/private-repo --title t --body "$leak"
+blocked "a write from inside the second public checkout" \
+  "$second" "" pr create --title t --body "$leak"
+blocked "a PR URL naming the second public repository, from a private checkout" \
+  "$private" "" pr comment https://github.com/fixture-owner/second-public/pull/9 -b "$leak"
+blocked "an API write to the second public repository" \
+  "$work_dir" "" api repos/fixture-owner/second-public/issues -f "body=$leak"
+blocked "the first public repository, with two listed" \
+  "$private" "" issue create -R fixture-owner/public-repo --title t --body "$leak"
+passed "a clean body to the second public repository" \
+  "$second" "" pr create --title t --body "clean text"
+passed "a read of the second public repository" \
+  "$second" "" pr list --search "fixture-private-name"
+guard_checkouts="$public"$'\n'"$second"
+blocked "the second public repository, listed on a second line" \
+  "$private" "" pr create -R fixture-owner/second-public --title t --body "$leak"
+guard_checkouts="$public:$second"
+rm -f "$calls"
+if (
+  cd "$second" && GH_GUARD_REAL_GH="$work_dir/gh" GH_GUARD_CHECKOUT="$public" GH_GUARD_CHECKOUTS="$guard_checkouts" \
+    bash "$public/scripts/gh-private-names-guard.sh" issue create -t x --editor >/dev/null 2>&1
+) || [[ -f "$calls" ]]; then
+  echo "error: text from an editor reached gh unchecked in the second public repository" >&2
+  exit 1
+fi
+
+# A public checkout whose repository cannot be identified refuses every write,
+# as the single one always did: nothing then says a command is not aimed at it.
+no_origin="$work_dir/no-origin"
+git init -q -b main "$no_origin"
+for unidentifiable in "$no_origin" "$work_dir/not-on-disk"; do
+  guard_checkouts="$public:$unidentifiable"
+  if run "$private" "" pr create -R fixture-owner/private-repo --title t --body "clean text" || $reached; then
+    echo "error: a write was allowed with an unidentifiable public checkout: $unidentifiable" >&2
+    exit 1
+  fi
+  if ! grep -F 'has no origin remote' "$work_dir/output" >/dev/null; then
+    echo "error: an unidentifiable public checkout was refused for the wrong reason:" >&2
+    cat "$work_dir/output" >&2
+    exit 1
+  fi
+  passed "a read with an unidentifiable public checkout listed" \
+    "$private" "" pr list
+done
 
 echo "gh-private-names-guard tests passed"

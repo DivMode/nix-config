@@ -15,11 +15,14 @@
 #
 # The ref's own name is published too (a branch name shows on every PR page),
 # and so is an annotated tag's message.
+#
+# Installed in nix-config and in every other public checkout (see
+# scripts/install-hooks.sh); the check reads the repository it runs in.
 
 set -euo pipefail
 
-repository="$(git rev-parse --show-toplevel)"
-check="$repository/scripts/check-private-names.sh"
+# nix-config's guard, whichever public repository is being pushed from.
+check="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/check-private-names.sh"
 zero="0000000000000000000000000000000000000000"
 status=0
 

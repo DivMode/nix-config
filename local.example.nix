@@ -25,6 +25,9 @@
   # modules/home/projects.nix asserts both at evaluation time.
   projects = {
     example-project = "/Users/replace-me/Developer/example-project";
+    # This repository's own checkout. Required whenever publicProjects is
+    # non-empty: the private-name guard runs from it.
+    nixconfig = "/Users/replace-me/Developer/nix-config";
   };
 
   # Extra strings scripts/check-private-names.sh must keep out of this public

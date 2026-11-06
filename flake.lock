@@ -285,11 +285,11 @@
         ]
       },
       "locked": {
-        "lastModified": 1793978198,
-        "narHash": "sha256-5hdbJ0szwsmhTRSNfGHGMivyrfhQGZJfqUB9gooDObc=",
+        "lastModified": 1793979695,
+        "narHash": "sha256-pUjobHfQF4dTthHlYvOYIbAed2T4g/XnU+h35DRYEzo=",
         "owner": "DivMode",
         "repo": "membrake",
-        "rev": "e3fbfbce2ccf1a488ca6d10afb8987bb4eee6025",
+        "rev": "50b6574acd930c7df55ddd841e0180ba7a47b53c",
         "type": "github"
       },
       "original": {

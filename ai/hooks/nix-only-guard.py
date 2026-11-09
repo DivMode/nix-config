@@ -874,12 +874,12 @@ def blank_literal_messages(command):
     whole as the value of a flag in MESSAGE_FLAGS, right after a built-in
     data subcommand (`git commit -m '…'`, `--message="…"`). Removing such text
     changes nothing the shell executes. Anything this scan does not model is
-    returned unchanged, so the guard judges it exactly as before: `$'…'`,
+    returned unchanged, so the guard judges it exactly as before: `$'…'`, `$"…"`,
     heredocs, `$(`, backticks and `${` (inside which double quotes nest), a
     backslash-newline (joined before comments are read), process
     substitution, unbalanced quotes, and any function or alias definition,
     sourced file or other REDEFINERS command."""
-    if any(form in command for form in ("$'", "<<", "$(", "`", "${", "\\\n", "<(", ">(")):
+    if any(form in command for form in ("$'", '$"', "<<", "$(", "`", "${", "\\\n", "<(", ">(")):
         return command
     # `started` is whether a word has begun, even as an empty quoted word
     # (`''`): the shell treats `''#` as an argument, not a comment.
@@ -928,7 +928,8 @@ def blank_literal_messages(command):
             word += body
             started = True
             i = close + 1
-        elif c in " \t":
+        elif c in " \t<>":
+            # A redirection ends a word too: `alias>/dev/null` runs `alias`.
             if not end_word():
                 return command
             out.append(c)

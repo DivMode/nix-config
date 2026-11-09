@@ -863,7 +863,7 @@ MESSAGE_FLAGS = {
 # path or a builtin swap. Seen as any word at all, after quote removal and in
 # any position (after `then`, `{`, an assignment…), they leave the command
 # unchanged; where they could execute is not this scan's to work out.
-REDEFINERS = {"function", "alias", "source", ".", "hash", "enable", "builtin", "command"}
+REDEFINERS = {"function", "alias", "source", ".", "hash", "enable", "builtin", "command", "eval"}
 
 
 def blank_literal_messages(command):
@@ -935,8 +935,11 @@ def blank_literal_messages(command):
             out.append(c)
             i += 1
         elif c in ";&|\n()":
-            if c == "(" and re.match(r"[ \t]*\)", command[i + 1:]):
-                return command  # `name ( )`: a function definition
+            if c == "(" and (started or words):
+                # Only a subshell opens a command; a `(` after a word may be a
+                # function definition (`name ( … )`, comments and newlines
+                # allowed inside), which this scan does not follow.
+                return command
             if not end_word():
                 return command
             words = []

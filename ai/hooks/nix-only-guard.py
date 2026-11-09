@@ -840,6 +840,136 @@ def package_command(word):
     return name.split("@", 1)[0] or name
 
 
+# Message arguments that are only ever text: `git commit -m`, `git tag -m`,
+# `gh pr create --body`. split_segments() has no quote context, so a quoted
+# message whose body reports `bun run lint exit 0` on its own line, or says
+# `lint; vitest passed`, was judged as a command (nix-config#264).
+# Only built-in subcommands, named directly after the program: Git and gh
+# both refuse an alias that shadows a built-in, while an arbitrary Git alias
+# (`git -c alias.x='!…' x -m '…'`) can run its "message".
+MESSAGE_FLAGS = {
+    ("git", "commit"): {"-m", "--message"},
+    ("git", "tag"): {"-m", "--message"},
+    ("git", "merge"): {"-m"},
+    ("git", "stash"): {"-m", "--message"},
+    ("gh", "pr"): {"-b", "--body", "-t", "--title"},
+    ("gh", "issue"): {"-b", "--body", "-t", "--title"},
+    ("gh", "release"): {"-n", "--notes", "-t", "--title"},
+}
+
+
+# Built-in subcommands a command line may consist of for its messages to be
+# blanked. Every command in the line must be one of these, named directly
+# after the program: then nothing else in the line can define, alias, trap,
+# source or evaluate anything that would make `git` or `gh` run its message.
+# Git and gh both refuse aliases that shadow built-ins.
+PLAIN_SUBCOMMANDS = {
+    "git": {"add", "commit", "tag", "merge", "stash", "status", "log", "diff", "show",
+            "fetch", "pull", "push", "switch", "checkout", "branch", "restore", "rm", "mv"},
+    "gh": {"pr", "issue", "release"},
+}
+# The only characters the scan accepts outside quotes. Anything else —
+# expansions, globs, braces, redirections, subshells, history — means the
+# shell may do something this scan does not model, so the command is left
+# for the guard's ordinary rules, exactly as before.
+PLAIN_UNQUOTED = set("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_./=:@%+,-")
+
+
+def blank_literal_messages(command):
+    """`command` with the text of literal quoted message arguments removed.
+
+    Only a message that cannot run anything is blanked: a single-quoted word,
+    or a double-quoted one with no `$`, backtick or backslash in it, given
+    whole as the value of a flag in MESSAGE_FLAGS, right after a built-in
+    data subcommand (`git commit -m '…'`, `--message="…"`). Removing such text
+    changes nothing the shell executes.
+
+    The scan is an allow-list. Every command in the line must be `git` or
+    `gh` with a PLAIN_SUBCOMMANDS subcommand; outside quotes only
+    PLAIN_UNQUOTED characters, blanks, `;`, `&`, `|`, newlines, `#` comments
+    and backslash escapes; a double-quoted word must hold no `$`, backtick or
+    backslash; quotes must balance; no `<<` anywhere (the guard's heredoc
+    stripping does not read quotes). Any other command is returned unchanged,
+    so the guard judges it exactly as before."""
+    if "<<" in command:
+        return command
+    # `started` is whether a word has begun, even as an empty quoted word
+    # (`''`): the shell treats `''#` as an argument, not a comment.
+    out, words, word, started = [], [], "", False
+    i, n = 0, len(command)
+
+    def flag_before():
+        flags = MESSAGE_FLAGS.get(tuple(words[:2])) if len(words) >= 2 else None
+        if not flags:
+            return False
+        if started:  # only `--message="…"` may precede the quote in its word
+            name, eq, rest = word.partition("=")
+            return eq == "=" and not rest and name in flags
+        return words[-1] in flags
+
+    def end_word():
+        nonlocal word, started
+        if started:
+            words.append(word)
+        word, started = "", False
+
+    def plain_command():
+        # True when the command just ended is empty or a plain git/gh call.
+        end_word()
+        return not words or (
+            len(words) >= 2 and words[1] in PLAIN_SUBCOMMANDS.get(words[0], ()))
+
+    while i < n:
+        c = command[i]
+        if c == "\\":
+            escaped = command[i + 1:i + 2]
+            if escaped in ("", "\n"):
+                return command  # line continuation: joined before comments are read
+            out.append(command[i:i + 2])
+            word += escaped
+            started = True
+            i += 2
+        elif c in "'\"":
+            close = command.find(c, i + 1)
+            if close == -1:
+                return command  # unbalanced: not this scan's to judge
+            body = command[i + 1:close]
+            if c == '"' and re.search(r"[$`\\]", body):
+                return command  # an expansion inside double quotes
+            if flag_before() and (close + 1 == n or command[close + 1] in " \t\n;&|"):
+                out.append(c + c)
+            else:
+                out.append(command[i:close + 1])
+            word += body
+            started = True
+            i = close + 1
+        elif c in " \t":
+            end_word()
+            out.append(c)
+            i += 1
+        elif c in ";&|\n":
+            if not plain_command():
+                return command
+            words = []
+            out.append(c)
+            i += 1
+        elif c == "#" and not started:
+            close = command.find("\n", i)
+            close = n if close == -1 else close
+            out.append(command[i:close])
+            i = close
+        elif c in PLAIN_UNQUOTED or c == "#":
+            out.append(c)
+            word += c
+            started = True
+            i += 1
+        else:
+            return command  # an unquoted character this scan does not model
+    if not plain_command():
+        return command
+    return "".join(out)
+
+
 def heavy_line(text):
     """True when a shell command line, such as an `npx --call` string, runs a
     heavy command outside the queue."""
@@ -967,7 +1097,11 @@ def is_heavy(prog, args):
     return False
 
 
-def check(segment, typed=True):
+def check(segment, typed=True, heavy=True, others=True):
+    """The denial reason for one segment. `heavy` and `others` select the
+    heavy-command rule and every other rule; command_verdict() judges the
+    heavy rule on literal-message-blanked segments and the rest on the
+    command as typed, with the same tokenising and peeling for both."""
     raw = segment.strip()
     try:
         tokens = shlex.split(raw)
@@ -980,7 +1114,7 @@ def check(segment, typed=True):
     # rule is judged at every layer, so a runner cannot hide an `env -i`.
     queued = False
     while tokens:
-        if reenables_app_integration(tokens):
+        if others and reenables_app_integration(tokens):
             return ("Blocked: setting, unsetting or dropping OP_BIOMETRIC_UNLOCK_ENABLED (including "
                     "`env -i`). Agent commands run with it false so nothing they run can reach the "
                     "1Password desktop app or raise a Touch ID prompt. The steps that need the owner "
@@ -998,14 +1132,14 @@ def check(segment, typed=True):
     flagless = [a for a in args if not a.startswith("-")]
     sub = flagless[0] if flagless else ""
 
+    if heavy and typed and not queued and is_heavy(prog, args):
+        return HEAVY_DENIAL
+    if not others:
+        return None
+
     credential = credential_boundary(raw, prog)
     if credential:
         return credential
-
-    # Before ALLOWED_PROGRAMS: `nix develop -c cargo test` is allowed as nix but
-    # launches a heavy command.
-    if typed and not queued and is_heavy(prog, args):
-        return HEAVY_DENIAL
 
     if prog in ALLOWED_PROGRAMS:
         return None
@@ -1178,7 +1312,13 @@ def command_verdict(command, cwd=None, depth=0, seen=None, typed=True):
     if reason:
         return reason
     for segment in split_segments(command):
-        reason = check(segment, typed)
+        reason = check(segment, typed, heavy=False)
+        if reason:
+            return reason
+    # The heavy rule, with literal message text blanked first
+    # (see blank_literal_messages); everything else as typed.
+    for segment in split_segments(blank_literal_messages(command)):
+        reason = check(segment, typed, others=False)
         if reason:
             return reason
     scripts = []

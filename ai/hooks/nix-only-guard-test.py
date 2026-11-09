@@ -374,6 +374,78 @@ CASES = [
     ("grep for a heavy command", "grep -rn 'vitest run' package.json", "ALLOW"),
     ("echo naming a heavy command", "echo run pnpm test next", "ALLOW"),
     ("a commit message naming a heavy command", "git commit -m 'ci: run vitest and cargo test'", "ALLOW"),
+    # nix-config#264: a quoted message is one argument, whatever lines or
+    # separators it contains; what the shell really runs is still judged.
+    ("a multi-line commit message reporting a heavy result",
+     "git commit -q -m \"fix: x\n\nbun run lint exit 0\"", "ALLOW"),
+    ("separators inside a quoted commit message",
+     "git commit -m 'fix: lint; bun run lint passed && vitest run | tee'", "ALLOW"),
+    ("a --message= value spanning lines", "git commit --message=\"x\nvitest run\"", "ALLOW"),
+    ("a tag message spanning lines", "git tag -a v1 -m \"x\ncargo test\n\"", "ALLOW"),
+    # An empty quoted word starts a word: `''#` is an argument, not a comment.
+    ("an empty quoted word before a hash", "git ''# '\ngit commit -m '\nvitest run\n# '", "DENY"),
+    ("a message glued after an empty quoted word", "git commit -m ''\"x\nvitest run\"", "DENY"),
+    ("a line continuation before a comment", "git commit \\\n# -m '\nvitest run\n# '", "DENY"),
+    ("an arbitrary Git alias given a message",
+     "git -c 'alias.r=!f() { eval \"$2\"; }; f' r -m 'x\nvitest run\n'", "DENY"),
+    ("an unknown Git subcommand given a message", "git reviewprobe -m 'x\nvitest run\n'", "DENY"),
+    ("git redefined with spaced parentheses",
+     "git ( ) { printf \"%s\\n\" \"$3\" | bash; }\ngit commit -m ':\nvitest run\n'", "DENY"),
+    ("git aliased after a tab", "alias\tgit='sh -s'\ngit commit -m ':\nvitest run\n'", "DENY"),
+    ("git aliased with an escaped keyword", "ali\\as git='sh -s'\ngit commit -m ':\nvitest run\n'", "DENY"),
+    ("a function keyword after a tab", "function\tgit { sh -s; }\ngit commit -m ':\nvitest run\n'", "DENY"),
+    ("a function defined after a keyword",
+     "if true; then function git { sh -s; }; fi\ngit commit -m ':\nvitest run\n'", "DENY"),
+    ("an alias defined inside braces", "{ alias git='sh -s'; }\ngit commit -m ':\nvitest run\n'", "DENY"),
+    ("a function definition with a comment between its parentheses",
+     "git ( #c\n) { sh -s; }\ngit commit -m ':\nvitest run\n'", "DENY"),
+    # Outside the allow-list the scan steps aside and main's rules apply,
+    # which deny these as before: the cost of not modelling the shell.
+    ("a subshell around a multi-line commit falls back",
+     "(git commit -m 'x\nbun run lint exit 0')", "DENY"),
+    ("an alias hidden behind a redirection",
+     "alias>/dev/null git='eval : '\ngit commit -m ':\nvitest run\n'", "DENY"),
+    ("an alias spelled with locale quoting",
+     "$\"alias\" git='eval : '\ngit commit -m ':\nvitest run\n'", "DENY"),
+    ("a redirected multi-line commit message falls back",
+     "git commit -m 'x\nbun run lint exit 0' 2>&1", "DENY"),
+    ("an alias produced by a variable", "a=alias\n$a git='eval : '\ngit commit -m ':\nvitest run\n'", "DENY"),
+    ("an alias produced by brace expansion",
+     "a{lias,} git='eval : '\ngit commit -m ':\nvitest run\n'", "DENY"),
+    ("a redirection operand that looks like git", "<git commit -m ':\nvitest run\n'", "DENY"),
+    ("a quoted heredoc introducer before a blanked message",
+     "echo '<<EOF'; git commit -m 'bash'\nvitest run\nEOF", "DENY"),
+    ("a trap that defines an alias", "trap 'alias git=x' DEBUG\n:\ngit commit -m ':\nvitest run\n'", "DENY"),
+    # A substitution in a message runs in the shell before git sees it; the
+    # pre-pass must leave such a message alone (main's rules then apply).
+    ("a command substitution inside a multi-line message", "git commit -m \"$(\nvitest run\n)\"", "DENY"),
+    ("a backtick substitution inside a multi-line message", "git commit -m \"`\nvitest run\n`\"", "DENY"),
+    ("an add and commit chain stays useful", "git add -A && git commit -m 'x\nbun run lint exit 0'", "ALLOW"),
+    ("message words that name definitions stay literal",
+     "git commit -m 'fix foo() alias and function source\nbun run lint exit 0'", "ALLOW"),
+    ("a quoted argument holding a separator after a heavy command", "vitest \"--help;other\"", "DENY"),
+    ("a heavy command chained after a commit", "git commit -m \"ok\" && vitest run", "DENY"),
+    ("a heavy command on the next line", "git commit -m ok\nvitest run", "DENY"),
+    ("a heavy command after a redirection", "echo x > out.txt; env CI=1 vitest run", "DENY"),
+    ("a redirection target named like a heavy command", "echo x > vitest", "ALLOW"),
+    # An expansion's output is unknown: it must not turn a word into an
+    # inspection flag by vanishing from it.
+    ("a substitution glued to an inspection flag",
+     "npm --version$(printf${IFS}=false) run test", "DENY"),
+    ("arithmetic glued to an inspection flag", "npm --version$((0)) run test", "DENY"),
+    # A heredoc introducer named inside quotes is text, not a heredoc, so the
+    # lines after it are still commands.
+    ("a quoted backslash heredoc introducer before a command", "echo '<<\\EOF'\nvitest run", "DENY"),
+    # Shell escape rules, not approximations of them.
+    ("a double-quoted backslash before an ordinary letter", "npm \"--vers\\ion\" run test", "DENY"),
+    ("a substitution inside arithmetic", "echo $(( $(\nvitest run\n) ))", "DENY"),
+    ("an escaped dollar in a double-quoted delimiter", "cat <<\"E\\$OF\"\ntext\nE$OF\nvitest run", "DENY"),
+    ("an escaped shell name reading a heredoc", "b\\as\\h <<\\EOF\nvitest run\nEOF", "DENY"),
+    ("a quote-split shell name reading a heredoc", "ba''sh <<'EOF'\nvitest run\nEOF", "DENY"),
+    ("a shift in quoted arithmetic is not a heredoc", "echo \"$((1 << 2))\"\nvitest run\n2", "DENY"),
+    ("an arithmetic variable named like a heavy command", "echo \"$((vitest + 1))\"", "ALLOW"),
+    ("a terminated double-quoted delimiter still strips its body",
+     "cat > notes.md <<\"E\\$OF\"\nrun vitest run here\nE$OF", "ALLOW"),
     # ---- Third review (independent, of ce45786). Each group is one finding.
     # The behaviour behind each was observed on this Mac (npm 11.19.0, bun
     # 1.4.3, just 1.51.0, cargo 1.98.0): `npm run test --help` prints npm's

@@ -858,11 +858,16 @@ MESSAGE_FLAGS = {
 }
 
 
-# Words that can change what a later `git` or `gh` in the same command runs:
-# a definition (`function`, `alias`), a sourced file, a hashed path, a builtin
-# swap or `eval`. Seen as any word at all, after quote removal and in any
-# position, they leave the command unchanged.
-REDEFINERS = {"function", "alias", "source", ".", "hash", "enable", "builtin", "command", "eval"}
+# Built-in subcommands a command line may consist of for its messages to be
+# blanked. Every command in the line must be one of these, named directly
+# after the program: then nothing else in the line can define, alias, trap,
+# source or evaluate anything that would make `git` or `gh` run its message.
+# Git and gh both refuse aliases that shadow built-ins.
+PLAIN_SUBCOMMANDS = {
+    "git": {"add", "commit", "tag", "merge", "stash", "status", "log", "diff", "show",
+            "fetch", "pull", "push", "switch", "checkout", "branch", "restore", "rm", "mv"},
+    "gh": {"pr", "issue", "release"},
+}
 # The only characters the scan accepts outside quotes. Anything else —
 # expansions, globs, braces, redirections, subshells, history — means the
 # shell may do something this scan does not model, so the command is left
@@ -879,11 +884,15 @@ def blank_literal_messages(command):
     data subcommand (`git commit -m '…'`, `--message="…"`). Removing such text
     changes nothing the shell executes.
 
-    The scan is an allow-list. Outside quotes it accepts only PLAIN_UNQUOTED
-    characters, blanks, `;`, `&`, `|`, newlines, `#` comments and backslash
-    escapes; a double-quoted word must hold no `$`, backtick or backslash; no
-    word may be a REDEFINERS keyword; quotes must balance. Any other command
-    is returned unchanged, so the guard judges it exactly as before."""
+    The scan is an allow-list. Every command in the line must be `git` or
+    `gh` with a PLAIN_SUBCOMMANDS subcommand; outside quotes only
+    PLAIN_UNQUOTED characters, blanks, `;`, `&`, `|`, newlines, `#` comments
+    and backslash escapes; a double-quoted word must hold no `$`, backtick or
+    backslash; quotes must balance; no `<<` anywhere (the guard's heredoc
+    stripping does not read quotes). Any other command is returned unchanged,
+    so the guard judges it exactly as before."""
+    if "<<" in command:
+        return command
     # `started` is whether a word has begun, even as an empty quoted word
     # (`''`): the shell treats `''#` as an argument, not a comment.
     out, words, word, started = [], [], "", False
@@ -899,14 +908,16 @@ def blank_literal_messages(command):
         return words[-1] in flags
 
     def end_word():
-        # False when the word makes this command one this scan won't judge.
         nonlocal word, started
         if started:
-            if word in REDEFINERS:
-                return False
             words.append(word)
         word, started = "", False
-        return True
+
+    def plain_command():
+        # True when the command just ended is empty or a plain git/gh call.
+        end_word()
+        return not words or (
+            len(words) >= 2 and words[1] in PLAIN_SUBCOMMANDS.get(words[0], ()))
 
     while i < n:
         c = command[i]
@@ -933,12 +944,11 @@ def blank_literal_messages(command):
             started = True
             i = close + 1
         elif c in " \t":
-            if not end_word():
-                return command
+            end_word()
             out.append(c)
             i += 1
         elif c in ";&|\n":
-            if not end_word():
+            if not plain_command():
                 return command
             words = []
             out.append(c)
@@ -955,7 +965,7 @@ def blank_literal_messages(command):
             i += 1
         else:
             return command  # an unquoted character this scan does not model
-    if not end_word():
+    if not plain_command():
         return command
     return "".join(out)
 

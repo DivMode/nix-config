@@ -858,22 +858,27 @@ MESSAGE_FLAGS = {
 }
 
 
+# Commands that can change what a later `git` or `gh` in the same command
+# runs: a definition (`function`, `alias`, `name ( )`), a sourced file, a
+# hashed path or a builtin swap. Seen as a command's first word, after quote
+# removal, they leave the command unchanged.
+REDEFINERS = {"function", "alias", "source", ".", "hash", "enable", "builtin", "command"}
+
+
 def blank_literal_messages(command):
     """`command` with the text of literal quoted message arguments removed.
 
     Only a message that cannot run anything is blanked: a single-quoted word,
     or a double-quoted one with no `$`, backtick or backslash in it, given
-    whole as the value of a flag in MESSAGE_FLAGS for the command's program
-    (`git commit -m '…'`, `--message="…"`). Removing such text changes nothing
-    the shell executes. Anything this scan does not model — `$'…'`, heredocs,
-    unbalanced quotes — returns the command unchanged, so the guard judges it
-    exactly as before; so does any `$(`, backtick or `${`, inside which double
-    quotes nest in ways this scan does not follow."""
-    # Also unchanged: a backslash-newline (the shell joins the lines before it
-    # reads comments), process substitution, and a function or alias defined
-    # in the same command, which could make `git` itself run its message.
-    if any(form in command for form in ("$'", "<<", "$(", "`", "${", "\\\n", "<(", ">(",
-                                        "()", "alias ", "function ")):
+    whole as the value of a flag in MESSAGE_FLAGS, right after a built-in
+    data subcommand (`git commit -m '…'`, `--message="…"`). Removing such text
+    changes nothing the shell executes. Anything this scan does not model is
+    returned unchanged, so the guard judges it exactly as before: `$'…'`,
+    heredocs, `$(`, backticks and `${` (inside which double quotes nest), a
+    backslash-newline (joined before comments are read), process
+    substitution, unbalanced quotes, and any function or alias definition,
+    sourced file or other REDEFINERS command."""
+    if any(form in command for form in ("$'", "<<", "$(", "`", "${", "\\\n", "<(", ">(")):
         return command
     # `started` is whether a word has begun, even as an empty quoted word
     # (`''`): the shell treats `''#` as an argument, not a comment.
@@ -890,10 +895,14 @@ def blank_literal_messages(command):
         return words[-1] in flags
 
     def end_word():
+        # False when the word makes this command one this scan won't judge.
         nonlocal word, started
         if started:
+            if not words and word in REDEFINERS:
+                return False
             words.append(word)
         word, started = "", False
+        return True
 
     while i < n:
         c = command[i]
@@ -919,11 +928,15 @@ def blank_literal_messages(command):
             started = True
             i = close + 1
         elif c in " \t":
-            end_word()
+            if not end_word():
+                return command
             out.append(c)
             i += 1
         elif c in ";&|\n()":
-            end_word()
+            if c == "(" and re.match(r"[ \t]*\)", command[i + 1:]):
+                return command  # `name ( )`: a function definition
+            if not end_word():
+                return command
             words = []
             out.append(c)
             i += 1
@@ -937,6 +950,8 @@ def blank_literal_messages(command):
             word += c
             started = True
             i += 1
+    if not end_word():
+        return command
     return "".join(out)
 
 

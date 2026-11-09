@@ -100,8 +100,8 @@ def deny(reason):
     sys.exit(0)
 
 
-# A heredoc introducer: <<EOF, <<-EOF, <<'EOF', << "EOF".
-HEREDOC_RE = re.compile(r"<<-?\s*(['\"]?)([A-Za-z_][A-Za-z0-9_]*)\1")
+# A heredoc introducer: <<EOF, <<-EOF, <<'EOF', << "EOF", <<\EOF.
+HEREDOC_RE = re.compile(r"<<-?\s*\\?(['\"]?)([A-Za-z_][A-Za-z0-9_]*)\1")
 
 # Interpreters that EXECUTE a heredoc body instead of consuming it as data.
 SHELL_INTERPRETERS = {"bash", "sh", "zsh", "dash", "ksh", "fish", "csh", "tcsh"}
@@ -486,7 +486,7 @@ def peel(tokens):
     return None
 
 
-def runs_script_string(command, scripts=None):
+def runs_script_string(command, scripts=None, commands=None):
     """True when `sh|bash|zsh -c` or `eval` is in an executable position.
 
     Walks the command the way the shell tokenises it: quoting, `\\` escapes,
@@ -500,11 +500,18 @@ def runs_script_string(command, scripts=None):
     When `scripts` is a list, every file this command would execute as shell
     is appended to it: the file a shell is given (`bash file`, `zsh -li file`),
     the file `source` or `.` reads, and a program named by path (`./run.sh`),
-    which script_verdict() opens only if it has a shell shebang."""
+    which script_verdict() opens only if it has a shell shebang.
+
+    When `commands` is a list, each command the shell would run is appended
+    to it as its words, unquoted: a quoted argument stays one word of its
+    command however many lines or separators it contains, a `$(…)`, backtick
+    or `( … )` body is a command of its own, and redirection operands are not
+    words of any command. shell_commands() is the reader for this."""
     command = strip_heredoc_bodies(command)
     mode, skip, wrapper, duration = "cmd", 0, None, False
     stack = []  # open '"', or '(' / '`' with the outer word and state saved
     word, started = [], False
+    current, operand = [], 0  # the command's words so far; redirection operands pending
     found = False  # a script string, when collecting scripts past it
 
     def hit():
@@ -512,7 +519,13 @@ def runs_script_string(command, scripts=None):
         # later lines can still run other scripts.
         nonlocal found, mode
         found, mode = True, "arg"
-        return scripts is None
+        return scripts is None and commands is None
+
+    def flush():
+        nonlocal current
+        if commands is not None and current:
+            commands.append(current)
+        current = []
 
     def judge(text):
         nonlocal mode, skip, wrapper, duration
@@ -553,21 +566,27 @@ def runs_script_string(command, scripts=None):
         return False
 
     def finish():
-        nonlocal word, started
+        nonlocal word, started, operand
         text, had = "".join(word), started or bool(word)
         word, started = [], False
+        if had and operand:
+            operand -= 1
+        elif had:
+            current.append(text)
         return had and judge(text)
 
     def open_command(context):
-        nonlocal mode, skip, wrapper, duration, word, started
-        stack.append((context, word, started, mode, skip, wrapper, duration))
+        nonlocal mode, skip, wrapper, duration, word, started, current, operand
+        stack.append((context, word, started, mode, skip, wrapper, duration, current, operand))
         word, started = [], False
         mode, skip, wrapper, duration = "cmd", 0, None, False
+        current, operand = [], 0
 
     def close_command():
-        nonlocal mode, skip, wrapper, duration, word, started
+        nonlocal mode, skip, wrapper, duration, word, started, current, operand
         hit = finish()
-        _, word, started, mode, skip, wrapper, duration = stack.pop()
+        flush()
+        _, word, started, mode, skip, wrapper, duration, current, operand = stack.pop()
         return hit
 
     i, n = 0, len(command)
@@ -644,15 +663,40 @@ def runs_script_string(command, scripts=None):
                 i += 1
             if command[i:i + 1] != "(":  # <(…) is a command, not an operand
                 skip += 1
+                operand += 1
             continue
         elif c in ";&|\n":
             if finish():
                 return True
+            flush()
             mode, skip, wrapper, duration = "cmd", 0, None, False
+            operand = 0
         else:
             word.append(c)
         i += 1
-    return finish() or found
+    hit = finish()
+    flush()
+    return hit or found
+
+
+def shell_commands(command):
+    """Each command `command` runs, as its unquoted words (see runs_script_string)."""
+    commands = []
+    runs_script_string(command, commands=commands)
+    return commands
+
+
+def heavy_words(tokens):
+    """True when these words, once runners and wrappers are peeled, run a heavy
+    command and no memory-queue runner was among the layers."""
+    queued = False
+    while tokens:
+        layer = peel(tokens)
+        if layer is None:
+            break
+        tokens, via_queue = layer
+        queued = queued or via_queue
+    return bool(tokens) and not queued and is_heavy(os.path.basename(tokens[0]), tokens[1:])
 
 
 def check_command(command, typed=True):
@@ -693,8 +737,10 @@ def check_command(command, typed=True):
 # global instructions require it for heavy work; this rule makes the
 # requirement hold for an agent that skipped the prose.
 #
-# Judged on the segment's program after runners are peeled (check() records
-# whether a queue runner was among them), so `membrake exec -- vitest` and
+# Judged on each command the shell would run (shell_commands(): quoted text is
+# an argument, a substitution is a command), on its program after runners are
+# peeled (heavy_words() records whether a queue runner was among them), so
+# `membrake exec -- vitest` and
 # `timeout 60 cpu-lock run -- vitest` pass while `timeout 60 vitest` does not.
 # Inspection (--version, --help, tsc --showConfig, cargo metadata) passes, but
 # only where it asks the program being judged: among that program's own options
@@ -843,21 +889,7 @@ def package_command(word):
 def heavy_line(text):
     """True when a shell command line, such as an `npx --call` string, runs a
     heavy command outside the queue."""
-    for segment in split_segments(text):
-        try:
-            tokens = shlex.split(segment)
-        except ValueError:
-            tokens = [t.strip("'\"") for t in segment.split()]
-        queued = False
-        while tokens:
-            layer = peel(tokens)
-            if layer is None:
-                break
-            tokens, via_queue = layer
-            queued = queued or via_queue
-        if tokens and not queued and is_heavy(os.path.basename(tokens[0]), tokens[1:]):
-            return True
-    return False
+    return any(heavy_words(words) for words in shell_commands(text))
 
 
 def launcher_heavy(launcher, args):
@@ -978,7 +1010,6 @@ def check(segment, typed=True):
 
     # Peel wrappers, runners and leading VAR=value assignments. The biometric
     # rule is judged at every layer, so a runner cannot hide an `env -i`.
-    queued = False
     while tokens:
         if reenables_app_integration(tokens):
             return ("Blocked: setting, unsetting or dropping OP_BIOMETRIC_UNLOCK_ENABLED (including "
@@ -988,8 +1019,7 @@ def check(segment, typed=True):
         layer = peel(tokens)
         if layer is None:
             break
-        tokens, via_queue = layer
-        queued = queued or via_queue
+        tokens = layer[0]
     if not tokens:
         return None
 
@@ -1001,11 +1031,6 @@ def check(segment, typed=True):
     credential = credential_boundary(raw, prog)
     if credential:
         return credential
-
-    # Before ALLOWED_PROGRAMS: `nix develop -c cargo test` is allowed as nix but
-    # launches a heavy command.
-    if typed and not queued and is_heavy(prog, args):
-        return HEAVY_DENIAL
 
     if prog in ALLOWED_PROGRAMS:
         return None
@@ -1181,6 +1206,12 @@ def command_verdict(command, cwd=None, depth=0, seen=None, typed=True):
         reason = check(segment, typed)
         if reason:
             return reason
+    # Heavy work is judged on the commands the shell would actually run, not on
+    # split_segments()' pieces: a quoted commit message spanning lines or
+    # containing `;` is an argument, never a command (nix-config#264), while a
+    # `$(…)` inside double quotes does run.
+    if typed and any(heavy_words(words) for words in shell_commands(command)):
+        return HEAVY_DENIAL
     scripts = []
     runs_script_string(command, scripts)
     for path, kind in scripts:

@@ -374,6 +374,20 @@ CASES = [
     ("grep for a heavy command", "grep -rn 'vitest run' package.json", "ALLOW"),
     ("echo naming a heavy command", "echo run pnpm test next", "ALLOW"),
     ("a commit message naming a heavy command", "git commit -m 'ci: run vitest and cargo test'", "ALLOW"),
+    # nix-config#264: a quoted message is one argument, whatever lines or
+    # separators it contains; what the shell really runs is still judged.
+    ("a multi-line commit message reporting a heavy result",
+     "git commit -q -m \"fix: x\n\nbun run lint exit 0\"", "ALLOW"),
+    ("separators inside a quoted commit message",
+     "git commit -m 'fix: lint; bun run lint passed && vitest run | tee'", "ALLOW"),
+    ("a --message= value spanning lines", "git commit --message=\"x\nvitest run\"", "ALLOW"),
+    ("a tag message spanning lines", "git tag -a v1 -m \"x\ncargo test\"", "ALLOW"),
+    ("a heavy command chained after a commit", "git commit -m \"ok\" && vitest run", "DENY"),
+    ("a heavy substitution inside a quoted message", "git commit -m \"$(vitest run)\"", "DENY"),
+    ("a heavy backtick substitution inside a quoted message", "git commit -m \"`tsc`\"", "DENY"),
+    ("a heavy command on the next line", "git commit -m ok\nvitest run", "DENY"),
+    ("a heavy command after a redirection", "echo x > out.txt; env CI=1 vitest run", "DENY"),
+    ("a redirection target named like a heavy command", "echo x > vitest", "ALLOW"),
     # ---- Third review (independent, of ce45786). Each group is one finding.
     # The behaviour behind each was observed on this Mac (npm 11.19.0, bun
     # 1.4.3, just 1.51.0, cargo 1.98.0): `npm run test --help` prints npm's

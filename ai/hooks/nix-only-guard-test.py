@@ -388,6 +388,17 @@ CASES = [
     ("a heavy command on the next line", "git commit -m ok\nvitest run", "DENY"),
     ("a heavy command after a redirection", "echo x > out.txt; env CI=1 vitest run", "DENY"),
     ("a redirection target named like a heavy command", "echo x > vitest", "ALLOW"),
+    # An expansion's output is unknown: it must not turn a word into an
+    # inspection flag by vanishing from it.
+    ("a substitution glued to an inspection flag",
+     "npm --version$(printf${IFS}=false) run test", "DENY"),
+    ("a backtick substitution glued to an inspection flag", "npm --version`printf =false` run test", "DENY"),
+    ("arithmetic glued to an inspection flag", "npm --version$((0)) run test", "DENY"),
+    # A heredoc introducer named inside quotes is text, not a heredoc, so the
+    # lines after it are still commands.
+    ("a quoted backslash heredoc introducer before a command", "echo '<<\\EOF'\nvitest run", "DENY"),
+    ("a quoted heredoc introducer before a command", "echo '<<EOF'\nvitest run", "DENY"),
+    ("a heredoc introducer inside a commit message", "git commit -m \"see <<EOF\"\ncargo test", "DENY"),
     # ---- Third review (independent, of ce45786). Each group is one finding.
     # The behaviour behind each was observed on this Mac (npm 11.19.0, bun
     # 1.4.3, just 1.51.0, cargo 1.98.0): `npm run test --help` prints npm's

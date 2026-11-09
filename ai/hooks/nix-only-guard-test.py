@@ -420,6 +420,12 @@ CASES = [
     # pre-pass must leave such a message alone (main's rules then apply).
     ("a command substitution inside a multi-line message", "git commit -m \"$(\nvitest run\n)\"", "DENY"),
     ("a backtick substitution inside a multi-line message", "git commit -m \"`\nvitest run\n`\"", "DENY"),
+    # `git -C <dir>` only changes directory, so it may precede the subcommand;
+    # `git -c` sets configuration and still leaves the command unchanged.
+    ("a message after git -C dir", "git -C /work/repo commit -q -m 'x\nbun run lint exit 0'", "ALLOW"),
+    ("a message after two git -C dirs", "git -C /work -C repo commit -m 'x\nvitest run\n'", "ALLOW"),
+    ("a message after git -c config", "git -c core.x=y commit -m 'x\nvitest run\n'", "DENY"),
+    ("a dangling git -C before a message", "git -C -m 'x\nvitest run\n'", "DENY"),
     ("an add and commit chain stays useful", "git add -A && git commit -m 'x\nbun run lint exit 0'", "ALLOW"),
     ("message words that name definitions stay literal",
      "git commit -m 'fix foo() alias and function source\nbun run lint exit 0'", "ALLOW"),

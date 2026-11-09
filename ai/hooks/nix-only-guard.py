@@ -898,14 +898,25 @@ def blank_literal_messages(command):
     out, words, word, started = [], [], "", False
     i, n = 0, len(command)
 
+    def invocation():
+        # The command's words with git's leading `-C <dir>` pairs removed:
+        # `-C` only changes git's working directory (unlike `-c`, which sets
+        # configuration and is not skipped).
+        rest = words[1:]
+        if words[:1] == ["git"]:
+            while rest[:1] == ["-C"] and len(rest) >= 2:
+                rest = rest[2:]
+        return words[:1] + rest
+
     def flag_before():
-        flags = MESSAGE_FLAGS.get(tuple(words[:2])) if len(words) >= 2 else None
+        call = invocation()
+        flags = MESSAGE_FLAGS.get(tuple(call[:2])) if len(call) >= 2 else None
         if not flags:
             return False
         if started:  # only `--message="…"` may precede the quote in its word
             name, eq, rest = word.partition("=")
             return eq == "=" and not rest and name in flags
-        return words[-1] in flags
+        return call[-1] in flags
 
     def end_word():
         nonlocal word, started
@@ -916,8 +927,9 @@ def blank_literal_messages(command):
     def plain_command():
         # True when the command just ended is empty or a plain git/gh call.
         end_word()
+        call = invocation()
         return not words or (
-            len(words) >= 2 and words[1] in PLAIN_SUBCOMMANDS.get(words[0], ()))
+            len(call) >= 2 and call[1] in PLAIN_SUBCOMMANDS.get(call[0], ()))
 
     while i < n:
         c = command[i]

@@ -859,11 +859,15 @@ MESSAGE_FLAGS = {
 
 
 # Words that can change what a later `git` or `gh` in the same command runs:
-# a definition (`function`, `alias`, `name ( )`), a sourced file, a hashed
-# path or a builtin swap. Seen as any word at all, after quote removal and in
-# any position (after `then`, `{`, an assignment…), they leave the command
-# unchanged; where they could execute is not this scan's to work out.
+# a definition (`function`, `alias`), a sourced file, a hashed path, a builtin
+# swap or `eval`. Seen as any word at all, after quote removal and in any
+# position, they leave the command unchanged.
 REDEFINERS = {"function", "alias", "source", ".", "hash", "enable", "builtin", "command", "eval"}
+# The only characters the scan accepts outside quotes. Anything else —
+# expansions, globs, braces, redirections, subshells, history — means the
+# shell may do something this scan does not model, so the command is left
+# for the guard's ordinary rules, exactly as before.
+PLAIN_UNQUOTED = set("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_./=:@%+,-")
 
 
 def blank_literal_messages(command):
@@ -873,14 +877,13 @@ def blank_literal_messages(command):
     or a double-quoted one with no `$`, backtick or backslash in it, given
     whole as the value of a flag in MESSAGE_FLAGS, right after a built-in
     data subcommand (`git commit -m '…'`, `--message="…"`). Removing such text
-    changes nothing the shell executes. Anything this scan does not model is
-    returned unchanged, so the guard judges it exactly as before: `$'…'`, `$"…"`,
-    heredocs, `$(`, backticks and `${` (inside which double quotes nest), a
-    backslash-newline (joined before comments are read), process
-    substitution, unbalanced quotes, and any function or alias definition,
-    sourced file or other REDEFINERS command."""
-    if any(form in command for form in ("$'", '$"', "<<", "$(", "`", "${", "\\\n", "<(", ">(")):
-        return command
+    changes nothing the shell executes.
+
+    The scan is an allow-list. Outside quotes it accepts only PLAIN_UNQUOTED
+    characters, blanks, `;`, `&`, `|`, newlines, `#` comments and backslash
+    escapes; a double-quoted word must hold no `$`, backtick or backslash; no
+    word may be a REDEFINERS keyword; quotes must balance. Any other command
+    is returned unchanged, so the guard judges it exactly as before."""
     # `started` is whether a word has begun, even as an empty quoted word
     # (`''`): the shell treats `''#` as an argument, not a comment.
     out, words, word, started = [], [], "", False
@@ -908,38 +911,33 @@ def blank_literal_messages(command):
     while i < n:
         c = command[i]
         if c == "\\":
+            escaped = command[i + 1:i + 2]
+            if escaped in ("", "\n"):
+                return command  # line continuation: joined before comments are read
             out.append(command[i:i + 2])
-            word += command[i + 1:i + 2]
+            word += escaped
             started = True
             i += 2
         elif c in "'\"":
-            close = i + 1
-            while close < n and command[close] != c:
-                close += 2 if c == '"' and command[close] == "\\" else 1
-            if close >= n:
+            close = command.find(c, i + 1)
+            if close == -1:
                 return command  # unbalanced: not this scan's to judge
             body = command[i + 1:close]
-            literal = c == "'" or not re.search(r"[$`\\]", body)
-            if literal and flag_before() and \
-                    (close + 1 == n or command[close + 1] in " \t\n;&|)"):
+            if c == '"' and re.search(r"[$`\\]", body):
+                return command  # an expansion inside double quotes
+            if flag_before() and (close + 1 == n or command[close + 1] in " \t\n;&|"):
                 out.append(c + c)
             else:
                 out.append(command[i:close + 1])
             word += body
             started = True
             i = close + 1
-        elif c in " \t<>":
-            # A redirection ends a word too: `alias>/dev/null` runs `alias`.
+        elif c in " \t":
             if not end_word():
                 return command
             out.append(c)
             i += 1
-        elif c in ";&|\n()":
-            if c == "(" and (started or words):
-                # Only a subshell opens a command; a `(` after a word may be a
-                # function definition (`name ( … )`, comments and newlines
-                # allowed inside), which this scan does not follow.
-                return command
+        elif c in ";&|\n":
             if not end_word():
                 return command
             words = []
@@ -950,11 +948,13 @@ def blank_literal_messages(command):
             close = n if close == -1 else close
             out.append(command[i:close])
             i = close
-        else:
+        elif c in PLAIN_UNQUOTED or c == "#":
             out.append(c)
             word += c
             started = True
             i += 1
+        else:
+            return command  # an unquoted character this scan does not model
     if not end_word():
         return command
     return "".join(out)

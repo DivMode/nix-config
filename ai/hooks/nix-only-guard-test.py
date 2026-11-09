@@ -383,7 +383,7 @@ CASES = [
     ("a --message= value spanning lines", "git commit --message=\"x\nvitest run\"", "ALLOW"),
     ("a tag message spanning lines", "git tag -a v1 -m \"x\ncargo test\n\"", "ALLOW"),
     # An empty quoted word starts a word: `''#` is an argument, not a comment.
-    ("an empty quoted word before a hash", "git ''# '\ngit -m '\nvitest run\n# '", "DENY"),
+    ("an empty quoted word before a hash", "git ''# '\ngit commit -m '\nvitest run\n# '", "DENY"),
     ("a message glued after an empty quoted word", "git commit -m ''\"x\nvitest run\"", "DENY"),
     ("a line continuation before a comment", "git \\\n# -m '\nvitest run\n# '", "DENY"),
     ("an arbitrary Git alias given a message",

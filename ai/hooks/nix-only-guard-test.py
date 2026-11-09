@@ -381,7 +381,10 @@ CASES = [
     ("separators inside a quoted commit message",
      "git commit -m 'fix: lint; bun run lint passed && vitest run | tee'", "ALLOW"),
     ("a --message= value spanning lines", "git commit --message=\"x\nvitest run\"", "ALLOW"),
-    ("a tag message spanning lines", "git tag -a v1 -m \"x\ncargo test\"", "ALLOW"),
+    ("a tag message spanning lines", "git tag -a v1 -m \"x\ncargo test\n\"", "ALLOW"),
+    # An empty quoted word starts a word: `''#` is an argument, not a comment.
+    ("an empty quoted word before a hash", "git ''# '\ngit -m '\nvitest run\n# '", "DENY"),
+    ("a message glued after an empty quoted word", "git commit -m ''\"x\nvitest run\"", "DENY"),
     ("a heavy command chained after a commit", "git commit -m \"ok\" && vitest run", "DENY"),
     ("a heavy command on the next line", "git commit -m ok\nvitest run", "DENY"),
     ("a heavy command after a redirection", "echo x > out.txt; env CI=1 vitest run", "DENY"),

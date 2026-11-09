@@ -860,23 +860,32 @@ def blank_literal_messages(command):
     quotes nest in ways this scan does not follow."""
     if any(form in command for form in ("$'", "<<", "$(", "`", "${")):
         return command
-    out, words, word = [], [], ""
+    # `started` is whether a word has begun, even as an empty quoted word
+    # (`''`): the shell treats `''#` as an argument, not a comment.
+    out, words, word, started = [], [], "", False
     i, n = 0, len(command)
 
-    def flag_before(word):
+    def flag_before():
         flags = MESSAGE_FLAGS.get(os.path.basename(words[0])) if words else None
         if not flags:
             return False
-        if word:  # --message="…"
-            name, eq, _ = word.partition("=")
-            return eq == "=" and name in flags
+        if started:  # only `--message="…"` may precede the quote in its word
+            name, eq, rest = word.partition("=")
+            return eq == "=" and not rest and name in flags
         return words[-1] in flags
+
+    def end_word():
+        nonlocal word, started
+        if started:
+            words.append(word)
+        word, started = "", False
 
     while i < n:
         c = command[i]
         if c == "\\":
             out.append(command[i:i + 2])
             word += command[i + 1:i + 2]
+            started = True
             i += 2
         elif c in "'\"":
             close = i + 1
@@ -886,26 +895,24 @@ def blank_literal_messages(command):
                 return command  # unbalanced: not this scan's to judge
             body = command[i + 1:close]
             literal = c == "'" or not re.search(r"[$`\\]", body)
-            if literal and flag_before(word) and \
+            if literal and flag_before() and \
                     (close + 1 == n or command[close + 1] in " \t\n;&|)"):
                 out.append(c + c)
             else:
                 out.append(command[i:close + 1])
             word += body
+            started = True
             i = close + 1
         elif c in " \t":
-            if word:
-                words.append(word)
-            word = ""
+            end_word()
             out.append(c)
             i += 1
         elif c in ";&|\n()":
-            if word:
-                words.append(word)
-            words, word = [], ""
+            end_word()
+            words = []
             out.append(c)
             i += 1
-        elif c == "#" and not word:
+        elif c == "#" and not started:
             close = command.find("\n", i)
             close = n if close == -1 else close
             out.append(command[i:close])
@@ -913,6 +920,7 @@ def blank_literal_messages(command):
         else:
             out.append(c)
             word += c
+            started = True
             i += 1
     return "".join(out)
 

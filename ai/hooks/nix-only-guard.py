@@ -858,10 +858,11 @@ MESSAGE_FLAGS = {
 }
 
 
-# Commands that can change what a later `git` or `gh` in the same command
-# runs: a definition (`function`, `alias`, `name ( )`), a sourced file, a
-# hashed path or a builtin swap. Seen as a command's first word, after quote
-# removal, they leave the command unchanged.
+# Words that can change what a later `git` or `gh` in the same command runs:
+# a definition (`function`, `alias`, `name ( )`), a sourced file, a hashed
+# path or a builtin swap. Seen as any word at all, after quote removal and in
+# any position (after `then`, `{`, an assignment…), they leave the command
+# unchanged; where they could execute is not this scan's to work out.
 REDEFINERS = {"function", "alias", "source", ".", "hash", "enable", "builtin", "command"}
 
 
@@ -898,7 +899,7 @@ def blank_literal_messages(command):
         # False when the word makes this command one this scan won't judge.
         nonlocal word, started
         if started:
-            if not words and word in REDEFINERS:
+            if word in REDEFINERS:
                 return False
             words.append(word)
         word, started = "", False

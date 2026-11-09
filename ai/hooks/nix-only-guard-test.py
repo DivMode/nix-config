@@ -416,6 +416,10 @@ CASES = [
     ("a quoted heredoc introducer before a blanked message",
      "echo '<<EOF'; git commit -m 'bash'\nvitest run\nEOF", "DENY"),
     ("a trap that defines an alias", "trap 'alias git=x' DEBUG\n:\ngit commit -m ':\nvitest run\n'", "DENY"),
+    # A substitution in a message runs in the shell before git sees it; the
+    # pre-pass must leave such a message alone (main's rules then apply).
+    ("a command substitution inside a multi-line message", "git commit -m \"$(\nvitest run\n)\"", "DENY"),
+    ("a backtick substitution inside a multi-line message", "git commit -m \"`\nvitest run\n`\"", "DENY"),
     ("an add and commit chain stays useful", "git add -A && git commit -m 'x\nbun run lint exit 0'", "ALLOW"),
     ("message words that name definitions stay literal",
      "git commit -m 'fix foo() alias and function source\nbun run lint exit 0'", "ALLOW"),

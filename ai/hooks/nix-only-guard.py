@@ -100,20 +100,11 @@ def deny(reason):
     sys.exit(0)
 
 
+# A heredoc introducer: <<EOF, <<-EOF, <<'EOF', << "EOF".
+HEREDOC_RE = re.compile(r"<<-?\s*(['\"]?)([A-Za-z_][A-Za-z0-9_]*)\1")
+
 # Interpreters that EXECUTE a heredoc body instead of consuming it as data.
 SHELL_INTERPRETERS = {"bash", "sh", "zsh", "dash", "ksh", "fish", "csh", "tcsh"}
-
-
-def feeds_shell(line):
-    """True when a heredoc's introducing line may hand its body to a shell.
-
-    Judged on the raw words and again with every quote and backslash deleted,
-    which is what quote removal leaves of `b\\as\\h`, `ba''sh` and `"ba"sh`.
-    Deleting them can only add a match, so keeping a body checked is the
-    direction any misreading takes."""
-    words = re.findall(r"[A-Za-z0-9_./-]+", line) + \
-        re.findall(r"[A-Za-z0-9_./-]+", re.sub(r"[\\'\"]", "", line))
-    return any(os.path.basename(word) in SHELL_INTERPRETERS for word in words)
 
 
 def strip_heredoc_bodies(command):
@@ -137,18 +128,30 @@ def strip_heredoc_bodies(command):
     does execute what it contains, so that text is a command and must stay
     checked. The distinction is effect, not spelling.
     """
-    kept, at = [], 0
-    for line_start, start, _, end, _, terminated in heredoc_bodies(command):
-        # If the introducing line hands the body to a shell, the body is
-        # executable and every line of it stays in scope for checking. A body
-        # whose delimiter line never appears is kept too: a delimiter misread
-        # here must not hide the commands after it.
-        if not terminated or feeds_shell(command[line_start:start]):
+    lines = command.split("\n")
+    kept = []
+    index = 0
+    while index < len(lines):
+        line = lines[index]
+        kept.append(line)
+        index += 1
+
+        terminators = [match.group(2) for match in HEREDOC_RE.finditer(line)]
+        if not terminators:
             continue
-        kept.append(command[at:start])
-        at = end
-    kept.append(command[at:])
-    return "".join(kept)
+
+        # If this line hands the body to a shell, the body is executable and
+        # every line of it stays in scope for checking.
+        words = re.findall(r"[A-Za-z0-9_./-]+", line)
+        if any(os.path.basename(word) in SHELL_INTERPRETERS for word in words):
+            continue
+
+        for terminator in terminators:
+            while index < len(lines) and lines[index].strip() != terminator:
+                index += 1
+            if index < len(lines):
+                index += 1  # drop the terminator line itself
+    return "\n".join(kept)
 
 
 def split_segments(command):
@@ -319,43 +322,29 @@ def heredoc_word(command, i):
         if command[i] == "\\":
             word.append(command[i + 1:i + 2])
             quoted, i = True, i + 2
-        elif command[i] == "'":
-            close = command.find("'", i + 1)
+        elif command[i] in "'\"":
+            close = command.find(command[i], i + 1)
             close = len(command) if close == -1 else close
             word.append(command[i + 1:close])
             quoted, i = True, close + 1
-        elif command[i] == '"':
-            # Inside double quotes a backslash escapes only $ ` " \ and newline.
-            i += 1
-            while i < len(command) and command[i] != '"':
-                if command[i] == "\\" and command[i + 1:i + 2] in ("$", "`", '"', "\\", "\n"):
-                    if command[i + 1] != "\n":
-                        word.append(command[i + 1])
-                    i += 2
-                else:
-                    word.append(command[i])
-                    i += 1
-            quoted, i = True, i + 1
         else:
             word.append(command[i])
             i += 1
     return "".join(word), quoted, i
 
 
-def heredoc_bodies(command):
-    """Each heredoc in `command`: (introducer line start, body start, body end,
-    end past the delimiter line, quoted).
+def unquoted_heredoc_substitution(command):
+    """True when an unquoted heredoc's body contains a backtick or `$(`.
 
-    A regex over lines has no quote context and takes a `<<EOF` that is only
-    named inside a quoted --body or -m string for a real heredoc, so this
-    walks the command the way the shell tokenises it: quoted strings,
+    HEREDOC_RE reads lines without quote context, which would take a `<<EOF`
+    that is only named inside a quoted --body or -m string for a real heredoc.
+    So this walks the command the way the shell tokenises it: quoted strings,
     $( ... ) nesting (where quoting starts afresh, as in "$(cat <<'EOF' ...)"),
     arithmetic (( )) where << is a shift, and comments. Each pending heredoc's
     body is the lines after the next unquoted newline, up to the line equal to
     its delimiter (leading tabs stripped for <<-)."""
     stack = []  # open contexts: '"' string, '(' $( or subshell, '((' arithmetic
-    pending, found = [], []
-    line_start = 0
+    pending = []
     i, n = 0, len(command)
     while i < n:
         c = command[i]
@@ -365,9 +354,6 @@ def heredoc_bodies(command):
         if stack and stack[-1] == '"':
             if c == '"':
                 stack.pop()
-            elif command.startswith("$((", i):
-                stack.append("((")  # << in here is a shift, not a heredoc
-                i += 2
             elif command.startswith("$(", i):
                 stack.append("(")
                 i += 1
@@ -407,33 +393,22 @@ def heredoc_bodies(command):
         elif c == "\n" and pending:
             i += 1
             for delimiter, strip_tabs, quoted in pending:
-                start = body_end = i
-                terminated = False
+                body = []
                 while i < n:
                     end = command.find("\n", i)
                     end = n if end == -1 else end
                     line = command[i:end]
+                    i = end + 1
                     if (line.lstrip("\t") if strip_tabs else line) == delimiter:
-                        i, terminated = min(end + 1, n), True
                         break
-                    i = body_end = min(end + 1, n)
-                found.append((line_start, start, body_end, i, quoted, terminated))
+                    body.append(line)
+                # \\, \` and \$ are literal in an unquoted body.
+                text = re.sub(r"\\[\\`$]", "", "\n".join(body))
+                if not quoted and SUBSTITUTION_RE.search(text):
+                    return True
             pending = []
-            line_start = i
             continue
-        elif c == "\n":
-            line_start = i + 1
         i += 1
-    return found
-
-
-def unquoted_heredoc_substitution(command):
-    """True when an unquoted heredoc's body contains a backtick or `$(`."""
-    for _, start, end, _, quoted, _ in heredoc_bodies(command):
-        # \\, \` and \$ are literal in an unquoted body.
-        text = re.sub(r"\\[\\`$]", "", command[start:end])
-        if not quoted and SUBSTITUTION_RE.search(text):
-            return True
     return False
 
 
@@ -511,7 +486,7 @@ def peel(tokens):
     return None
 
 
-def runs_script_string(command, scripts=None, commands=None, substitutions_only=False):
+def runs_script_string(command, scripts=None):
     """True when `sh|bash|zsh -c` or `eval` is in an executable position.
 
     Walks the command the way the shell tokenises it: quoting, `\\` escapes,
@@ -525,21 +500,11 @@ def runs_script_string(command, scripts=None, commands=None, substitutions_only=
     When `scripts` is a list, every file this command would execute as shell
     is appended to it: the file a shell is given (`bash file`, `zsh -li file`),
     the file `source` or `.` reads, and a program named by path (`./run.sh`),
-    which script_verdict() opens only if it has a shell shebang.
-
-    When `commands` is a list, each command the shell would run is appended
-    to it as its words, unquoted: a quoted argument stays one word of its
-    command however many lines or separators it contains, a `$(…)`, backtick
-    or `( … )` body is a command of its own, and redirection operands are not
-    words of any command. shell_commands() is the reader for this."""
+    which script_verdict() opens only if it has a shell shebang."""
     command = strip_heredoc_bodies(command)
     mode, skip, wrapper, duration = "cmd", 0, None, False
     stack = []  # open '"', or '(' / '`' with the outer word and state saved
     word, started = [], False
-    current, operand = [], 0  # the command's words so far; redirection operands pending
-    # Where in the word an expansion stood. Its output is unknown, so the
-    # collected word keeps a marker there: `--version$(…)` is not `--version`.
-    holes = []
     found = False  # a script string, when collecting scripts past it
 
     def hit():
@@ -547,14 +512,7 @@ def runs_script_string(command, scripts=None, commands=None, substitutions_only=
         # later lines can still run other scripts.
         nonlocal found, mode
         found, mode = True, "arg"
-        return scripts is None and commands is None
-
-    def flush():
-        nonlocal current
-        # Inside $(( … )) the expression is not a command; its substitutions are.
-        if commands is not None and current and (stack or not substitutions_only):
-            commands.append(current)
-        current = []
+        return scripts is None
 
     def judge(text):
         nonlocal mode, skip, wrapper, duration
@@ -595,45 +553,21 @@ def runs_script_string(command, scripts=None, commands=None, substitutions_only=
         return False
 
     def finish():
-        nonlocal word, started, operand, holes
+        nonlocal word, started
         text, had = "".join(word), started or bool(word)
-        collected = list(word)
-        for at in reversed(holes):
-            collected.insert(at, "$(\u2026)")
-        word, started, holes = [], False, []
-        if had and operand:
-            operand -= 1
-        elif had:
-            current.append("".join(collected))
-        return had and (bool(stack) or not substitutions_only) and judge(text)
-
-    def expansion():
-        nonlocal started
-        holes.append(len(word))
-        started = True
-
-    def arithmetic(inner):
-        # $(( … )) is not a command, but a $( … ) or backtick inside it runs.
-        nonlocal found
-        if runs_script_string(inner, scripts, commands, substitutions_only=True):
-            found = True
-            return scripts is None and commands is None
-        return False
+        word, started = [], False
+        return had and judge(text)
 
     def open_command(context):
-        nonlocal mode, skip, wrapper, duration, word, started, current, operand, holes
-        stack.append((context, word, started, mode, skip, wrapper, duration, current, operand, holes))
-        word, started, holes = [], False, []
+        nonlocal mode, skip, wrapper, duration, word, started
+        stack.append((context, word, started, mode, skip, wrapper, duration))
+        word, started = [], False
         mode, skip, wrapper, duration = "cmd", 0, None, False
-        current, operand = [], 0
 
     def close_command():
-        nonlocal mode, skip, wrapper, duration, word, started, current, operand, holes
+        nonlocal mode, skip, wrapper, duration, word, started
         hit = finish()
-        flush()
-        context, word, started, mode, skip, wrapper, duration, current, operand, holes = stack.pop()
-        if context in ("$(", "`"):
-            expansion()
+        _, word, started, mode, skip, wrapper, duration = stack.pop()
         return hit
 
     i, n = 0, len(command)
@@ -641,27 +575,17 @@ def runs_script_string(command, scripts=None, commands=None, substitutions_only=
         c = command[i]
         if stack and stack[-1][0] == '"':
             if c == "\\":
-                # Only $ ` " \ and newline are escapable here; any other
-                # backslash stays in the word (`"--vers\\ion"` is not --version).
-                escaped = command[i + 1:i + 2]
-                if escaped in ("$", "`", '"', "\\"):
-                    word.append(escaped)
-                elif escaped != "\n":
-                    word.append(c + escaped)
+                word.append(command[i + 1:i + 2])
                 i += 2
                 continue
             if c == '"':
                 stack.pop()
             elif command.startswith("$((", i):
                 close = command.find("))", i)
-                close = n if close == -1 else close
-                if arithmetic(command[i + 3:close]):
-                    return True
-                i = close + 2
-                expansion()
+                i = n if close == -1 else close + 2
                 continue
             elif command.startswith("$(", i):
-                open_command("$(")
+                open_command("(")
                 i += 1
             elif c == "`":
                 open_command("`")
@@ -692,14 +616,10 @@ def runs_script_string(command, scripts=None, commands=None, substitutions_only=
             continue
         elif command.startswith("$((", i):
             close = command.find("))", i)
-            close = n if close == -1 else close
-            if arithmetic(command[i + 3:close]):
-                return True
-            i = close + 2
-            expansion()
+            i = n if close == -1 else close + 2
             continue
         elif command.startswith("$(", i):
-            open_command("$(")
+            open_command("(")
             i += 1
         elif c == "`":
             if stack and stack[-1][0] == "`":
@@ -712,7 +632,7 @@ def runs_script_string(command, scripts=None, commands=None, substitutions_only=
                 return True
             open_command("(")
         elif c == ")":
-            if stack and stack[-1][0] in ("(", "$("):
+            if stack and stack[-1][0] == "(":
                 if close_command():
                     return True
             elif finish():
@@ -724,40 +644,15 @@ def runs_script_string(command, scripts=None, commands=None, substitutions_only=
                 i += 1
             if command[i:i + 1] != "(":  # <(…) is a command, not an operand
                 skip += 1
-                operand += 1
             continue
         elif c in ";&|\n":
             if finish():
                 return True
-            flush()
             mode, skip, wrapper, duration = "cmd", 0, None, False
-            operand = 0
         else:
             word.append(c)
         i += 1
-    hit = finish()
-    flush()
-    return hit or found
-
-
-def shell_commands(command):
-    """Each command `command` runs, as its unquoted words (see runs_script_string)."""
-    commands = []
-    runs_script_string(command, commands=commands)
-    return commands
-
-
-def heavy_words(tokens):
-    """True when these words, once runners and wrappers are peeled, run a heavy
-    command and no memory-queue runner was among the layers."""
-    queued = False
-    while tokens:
-        layer = peel(tokens)
-        if layer is None:
-            break
-        tokens, via_queue = layer
-        queued = queued or via_queue
-    return bool(tokens) and not queued and is_heavy(os.path.basename(tokens[0]), tokens[1:])
+    return finish() or found
 
 
 def check_command(command, typed=True):
@@ -798,10 +693,8 @@ def check_command(command, typed=True):
 # global instructions require it for heavy work; this rule makes the
 # requirement hold for an agent that skipped the prose.
 #
-# Judged on each command the shell would run (shell_commands(): quoted text is
-# an argument, a substitution is a command), on its program after runners are
-# peeled (heavy_words() records whether a queue runner was among them), so
-# `membrake exec -- vitest` and
+# Judged on the segment's program after runners are peeled (check() records
+# whether a queue runner was among them), so `membrake exec -- vitest` and
 # `timeout 60 cpu-lock run -- vitest` pass while `timeout 60 vitest` does not.
 # Inspection (--version, --help, tsc --showConfig, cargo metadata) passes, but
 # only where it asks the program being judged: among that program's own options
@@ -947,10 +840,101 @@ def package_command(word):
     return name.split("@", 1)[0] or name
 
 
+# Message arguments that are only ever text: `git commit -m`, `git tag -m`,
+# `gh pr create --body`. split_segments() has no quote context, so a quoted
+# message whose body reports `bun run lint exit 0` on its own line, or says
+# `lint; vitest passed`, was judged as a command (nix-config#264).
+MESSAGE_FLAGS = {"git": {"-m", "--message"}, "gh": {"-b", "--body", "-t", "--title"}}
+
+
+def blank_literal_messages(command):
+    """`command` with the text of literal quoted message arguments removed.
+
+    Only a message that cannot run anything is blanked: a single-quoted word,
+    or a double-quoted one with no `$`, backtick or backslash in it, given
+    whole as the value of a flag in MESSAGE_FLAGS for the command's program
+    (`-m '…'`, `-m "…"`, `--message="…"`). Removing such text changes nothing
+    the shell executes. Anything this scan does not model — `$'…'`, heredocs,
+    unbalanced quotes — returns the command unchanged, so the guard judges it
+    exactly as before; so does any `$(`, backtick or `${`, inside which double
+    quotes nest in ways this scan does not follow."""
+    if any(form in command for form in ("$'", "<<", "$(", "`", "${")):
+        return command
+    out, words, word = [], [], ""
+    i, n = 0, len(command)
+
+    def flag_before(word):
+        flags = MESSAGE_FLAGS.get(os.path.basename(words[0])) if words else None
+        if not flags:
+            return False
+        if word:  # --message="…"
+            name, eq, _ = word.partition("=")
+            return eq == "=" and name in flags
+        return words[-1] in flags
+
+    while i < n:
+        c = command[i]
+        if c == "\\":
+            out.append(command[i:i + 2])
+            word += command[i + 1:i + 2]
+            i += 2
+        elif c in "'\"":
+            close = i + 1
+            while close < n and command[close] != c:
+                close += 2 if c == '"' and command[close] == "\\" else 1
+            if close >= n:
+                return command  # unbalanced: not this scan's to judge
+            body = command[i + 1:close]
+            literal = c == "'" or not re.search(r"[$`\\]", body)
+            if literal and flag_before(word) and \
+                    (close + 1 == n or command[close + 1] in " \t\n;&|)"):
+                out.append(c + c)
+            else:
+                out.append(command[i:close + 1])
+            word += body
+            i = close + 1
+        elif c in " \t":
+            if word:
+                words.append(word)
+            word = ""
+            out.append(c)
+            i += 1
+        elif c in ";&|\n()":
+            if word:
+                words.append(word)
+            words, word = [], ""
+            out.append(c)
+            i += 1
+        elif c == "#" and not word:
+            close = command.find("\n", i)
+            close = n if close == -1 else close
+            out.append(command[i:close])
+            i = close
+        else:
+            out.append(c)
+            word += c
+            i += 1
+    return "".join(out)
+
+
 def heavy_line(text):
     """True when a shell command line, such as an `npx --call` string, runs a
     heavy command outside the queue."""
-    return any(heavy_words(words) for words in shell_commands(text))
+    for segment in split_segments(text):
+        try:
+            tokens = shlex.split(segment)
+        except ValueError:
+            tokens = [t.strip("'\"") for t in segment.split()]
+        queued = False
+        while tokens:
+            layer = peel(tokens)
+            if layer is None:
+                break
+            tokens, via_queue = layer
+            queued = queued or via_queue
+        if tokens and not queued and is_heavy(os.path.basename(tokens[0]), tokens[1:]):
+            return True
+    return False
 
 
 def launcher_heavy(launcher, args):
@@ -1267,11 +1251,9 @@ def command_verdict(command, cwd=None, depth=0, seen=None, typed=True):
         reason = check(segment, typed)
         if reason:
             return reason
-    # Heavy work is judged on the commands the shell would actually run, not on
-    # split_segments()' pieces: a quoted commit message spanning lines or
-    # containing `;` is an argument, never a command (nix-config#264), while a
-    # `$(…)` inside double quotes does run.
-    if typed and any(heavy_words(words) for words in shell_commands(command)):
+    # Heavy work is judged per segment, as the other rules are, but with
+    # literal message text blanked first (see blank_literal_messages).
+    if typed and heavy_line(blank_literal_messages(command)):
         return HEAVY_DENIAL
     scripts = []
     runs_script_string(command, scripts)

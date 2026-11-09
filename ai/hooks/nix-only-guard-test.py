@@ -385,6 +385,11 @@ CASES = [
     # An empty quoted word starts a word: `''#` is an argument, not a comment.
     ("an empty quoted word before a hash", "git ''# '\ngit -m '\nvitest run\n# '", "DENY"),
     ("a message glued after an empty quoted word", "git commit -m ''\"x\nvitest run\"", "DENY"),
+    ("a line continuation before a comment", "git \\\n# -m '\nvitest run\n# '", "DENY"),
+    ("an arbitrary Git alias given a message",
+     "git -c 'alias.r=!f() { eval \"$2\"; }; f' r -m 'x\nvitest run\n'", "DENY"),
+    ("an unknown Git subcommand given a message", "git reviewprobe -m 'x\nvitest run\n'", "DENY"),
+    ("a quoted argument holding a separator after a heavy command", "vitest \"--help;other\"", "DENY"),
     ("a heavy command chained after a commit", "git commit -m \"ok\" && vitest run", "DENY"),
     ("a heavy command on the next line", "git commit -m ok\nvitest run", "DENY"),
     ("a heavy command after a redirection", "echo x > out.txt; env CI=1 vitest run", "DENY"),

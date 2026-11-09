@@ -844,7 +844,18 @@ def package_command(word):
 # `gh pr create --body`. split_segments() has no quote context, so a quoted
 # message whose body reports `bun run lint exit 0` on its own line, or says
 # `lint; vitest passed`, was judged as a command (nix-config#264).
-MESSAGE_FLAGS = {"git": {"-m", "--message"}, "gh": {"-b", "--body", "-t", "--title"}}
+# Only built-in subcommands, named directly after the program: Git and gh
+# both refuse an alias that shadows a built-in, while an arbitrary Git alias
+# (`git -c alias.x='!…' x -m '…'`) can run its "message".
+MESSAGE_FLAGS = {
+    ("git", "commit"): {"-m", "--message"},
+    ("git", "tag"): {"-m", "--message"},
+    ("git", "merge"): {"-m"},
+    ("git", "stash"): {"-m", "--message"},
+    ("gh", "pr"): {"-b", "--body", "-t", "--title"},
+    ("gh", "issue"): {"-b", "--body", "-t", "--title"},
+    ("gh", "release"): {"-n", "--notes", "-t", "--title"},
+}
 
 
 def blank_literal_messages(command):
@@ -853,12 +864,16 @@ def blank_literal_messages(command):
     Only a message that cannot run anything is blanked: a single-quoted word,
     or a double-quoted one with no `$`, backtick or backslash in it, given
     whole as the value of a flag in MESSAGE_FLAGS for the command's program
-    (`-m '…'`, `-m "…"`, `--message="…"`). Removing such text changes nothing
+    (`git commit -m '…'`, `--message="…"`). Removing such text changes nothing
     the shell executes. Anything this scan does not model — `$'…'`, heredocs,
     unbalanced quotes — returns the command unchanged, so the guard judges it
     exactly as before; so does any `$(`, backtick or `${`, inside which double
     quotes nest in ways this scan does not follow."""
-    if any(form in command for form in ("$'", "<<", "$(", "`", "${")):
+    # Also unchanged: a backslash-newline (the shell joins the lines before it
+    # reads comments), process substitution, and a function or alias defined
+    # in the same command, which could make `git` itself run its message.
+    if any(form in command for form in ("$'", "<<", "$(", "`", "${", "\\\n", "<(", ">(",
+                                        "()", "alias ", "function ")):
         return command
     # `started` is whether a word has begun, even as an empty quoted word
     # (`''`): the shell treats `''#` as an argument, not a comment.
@@ -866,7 +881,7 @@ def blank_literal_messages(command):
     i, n = 0, len(command)
 
     def flag_before():
-        flags = MESSAGE_FLAGS.get(os.path.basename(words[0])) if words else None
+        flags = MESSAGE_FLAGS.get(tuple(words[:2])) if len(words) >= 2 else None
         if not flags:
             return False
         if started:  # only `--message="…"` may precede the quote in its word
@@ -1052,7 +1067,11 @@ def is_heavy(prog, args):
     return False
 
 
-def check(segment, typed=True):
+def check(segment, typed=True, heavy=True, others=True):
+    """The denial reason for one segment. `heavy` and `others` select the
+    heavy-command rule and every other rule; command_verdict() judges the
+    heavy rule on literal-message-blanked segments and the rest on the
+    command as typed, with the same tokenising and peeling for both."""
     raw = segment.strip()
     try:
         tokens = shlex.split(raw)
@@ -1063,8 +1082,9 @@ def check(segment, typed=True):
 
     # Peel wrappers, runners and leading VAR=value assignments. The biometric
     # rule is judged at every layer, so a runner cannot hide an `env -i`.
+    queued = False
     while tokens:
-        if reenables_app_integration(tokens):
+        if others and reenables_app_integration(tokens):
             return ("Blocked: setting, unsetting or dropping OP_BIOMETRIC_UNLOCK_ENABLED (including "
                     "`env -i`). Agent commands run with it false so nothing they run can reach the "
                     "1Password desktop app or raise a Touch ID prompt. The steps that need the owner "
@@ -1072,7 +1092,8 @@ def check(segment, typed=True):
         layer = peel(tokens)
         if layer is None:
             break
-        tokens = layer[0]
+        tokens, via_queue = layer
+        queued = queued or via_queue
     if not tokens:
         return None
 
@@ -1080,6 +1101,11 @@ def check(segment, typed=True):
     args = tokens[1:]
     flagless = [a for a in args if not a.startswith("-")]
     sub = flagless[0] if flagless else ""
+
+    if heavy and typed and not queued and is_heavy(prog, args):
+        return HEAVY_DENIAL
+    if not others:
+        return None
 
     credential = credential_boundary(raw, prog)
     if credential:
@@ -1256,13 +1282,15 @@ def command_verdict(command, cwd=None, depth=0, seen=None, typed=True):
     if reason:
         return reason
     for segment in split_segments(command):
-        reason = check(segment, typed)
+        reason = check(segment, typed, heavy=False)
         if reason:
             return reason
-    # Heavy work is judged per segment, as the other rules are, but with
-    # literal message text blanked first (see blank_literal_messages).
-    if typed and heavy_line(blank_literal_messages(command)):
-        return HEAVY_DENIAL
+    # The heavy rule, with literal message text blanked first
+    # (see blank_literal_messages); everything else as typed.
+    for segment in split_segments(blank_literal_messages(command)):
+        reason = check(segment, typed, others=False)
+        if reason:
+            return reason
     scripts = []
     runs_script_string(command, scripts)
     for path, kind in scripts:

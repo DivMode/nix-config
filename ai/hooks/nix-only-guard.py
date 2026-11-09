@@ -126,11 +126,13 @@ def strip_heredoc_bodies(command):
     checked. The distinction is effect, not spelling.
     """
     kept, at = [], 0
-    for line_start, start, _, end, _ in heredoc_bodies(command):
+    for line_start, start, _, end, _, terminated in heredoc_bodies(command):
         # If the introducing line hands the body to a shell, the body is
-        # executable and every line of it stays in scope for checking.
+        # executable and every line of it stays in scope for checking. A body
+        # whose delimiter line never appears is kept too: a delimiter misread
+        # here must not hide the commands after it.
         words = re.findall(r"[A-Za-z0-9_./-]+", command[line_start:start])
-        if any(os.path.basename(word) in SHELL_INTERPRETERS for word in words):
+        if not terminated or any(os.path.basename(word) in SHELL_INTERPRETERS for word in words):
             continue
         kept.append(command[at:start])
         at = end
@@ -306,11 +308,23 @@ def heredoc_word(command, i):
         if command[i] == "\\":
             word.append(command[i + 1:i + 2])
             quoted, i = True, i + 2
-        elif command[i] in "'\"":
-            close = command.find(command[i], i + 1)
+        elif command[i] == "'":
+            close = command.find("'", i + 1)
             close = len(command) if close == -1 else close
             word.append(command[i + 1:close])
             quoted, i = True, close + 1
+        elif command[i] == '"':
+            # Inside double quotes a backslash escapes only $ ` " \ and newline.
+            i += 1
+            while i < len(command) and command[i] != '"':
+                if command[i] == "\\" and command[i + 1:i + 2] in ("$", "`", '"', "\\", "\n"):
+                    if command[i + 1] != "\n":
+                        word.append(command[i + 1])
+                    i += 2
+                else:
+                    word.append(command[i])
+                    i += 1
+            quoted, i = True, i + 1
         else:
             word.append(command[i])
             i += 1
@@ -380,15 +394,16 @@ def heredoc_bodies(command):
             i += 1
             for delimiter, strip_tabs, quoted in pending:
                 start = body_end = i
+                terminated = False
                 while i < n:
                     end = command.find("\n", i)
                     end = n if end == -1 else end
                     line = command[i:end]
                     if (line.lstrip("\t") if strip_tabs else line) == delimiter:
-                        i = min(end + 1, n)
+                        i, terminated = min(end + 1, n), True
                         break
                     i = body_end = min(end + 1, n)
-                found.append((line_start, start, body_end, i, quoted))
+                found.append((line_start, start, body_end, i, quoted, terminated))
             pending = []
             line_start = i
             continue
@@ -400,7 +415,7 @@ def heredoc_bodies(command):
 
 def unquoted_heredoc_substitution(command):
     """True when an unquoted heredoc's body contains a backtick or `$(`."""
-    for _, start, end, _, quoted in heredoc_bodies(command):
+    for _, start, end, _, quoted, _ in heredoc_bodies(command):
         # \\, \` and \$ are literal in an unquoted body.
         text = re.sub(r"\\[\\`$]", "", command[start:end])
         if not quoted and SUBSTITUTION_RE.search(text):
@@ -582,6 +597,14 @@ def runs_script_string(command, scripts=None, commands=None):
         holes.append(len(word))
         started = True
 
+    def arithmetic(inner):
+        # $(( … )) is not a command, but a $( … ) or backtick inside it runs.
+        nonlocal found
+        if runs_script_string(inner, scripts, commands):
+            found = True
+            return scripts is None and commands is None
+        return False
+
     def open_command(context):
         nonlocal mode, skip, wrapper, duration, word, started, current, operand, holes
         stack.append((context, word, started, mode, skip, wrapper, duration, current, operand, holes))
@@ -603,14 +626,23 @@ def runs_script_string(command, scripts=None, commands=None):
         c = command[i]
         if stack and stack[-1][0] == '"':
             if c == "\\":
-                word.append(command[i + 1:i + 2])
+                # Only $ ` " \ and newline are escapable here; any other
+                # backslash stays in the word (`"--vers\\ion"` is not --version).
+                escaped = command[i + 1:i + 2]
+                if escaped in ("$", "`", '"', "\\"):
+                    word.append(escaped)
+                elif escaped != "\n":
+                    word.append(c + escaped)
                 i += 2
                 continue
             if c == '"':
                 stack.pop()
             elif command.startswith("$((", i):
                 close = command.find("))", i)
-                i = n if close == -1 else close + 2
+                close = n if close == -1 else close
+                if arithmetic(command[i + 3:close]):
+                    return True
+                i = close + 2
                 expansion()
                 continue
             elif command.startswith("$(", i):
@@ -645,7 +677,10 @@ def runs_script_string(command, scripts=None, commands=None):
             continue
         elif command.startswith("$((", i):
             close = command.find("))", i)
-            i = n if close == -1 else close + 2
+            close = n if close == -1 else close
+            if arithmetic(command[i + 3:close]):
+                return True
+            i = close + 2
             expansion()
             continue
         elif command.startswith("$(", i):

@@ -399,6 +399,14 @@ CASES = [
     ("a quoted backslash heredoc introducer before a command", "echo '<<\\EOF'\nvitest run", "DENY"),
     ("a quoted heredoc introducer before a command", "echo '<<EOF'\nvitest run", "DENY"),
     ("a heredoc introducer inside a commit message", "git commit -m \"see <<EOF\"\ncargo test", "DENY"),
+    # Shell escape rules, not approximations of them.
+    ("a double-quoted backslash before an ordinary letter", "npm \"--vers\\ion\" run test", "DENY"),
+    ("a substitution inside arithmetic", "echo $(( $(\nvitest run\n) ))", "DENY"),
+    ("a substitution inside quoted arithmetic", "echo \"$(( $(vitest run) ))\"", "DENY"),
+    ("an escaped dollar in a double-quoted delimiter", "cat <<\"E\\$OF\"\ntext\nE$OF\nvitest run", "DENY"),
+    ("an unterminated heredoc keeps what follows checked", "cat <<EOF\ntext\nvitest run", "DENY"),
+    ("a terminated double-quoted delimiter still strips its body",
+     "cat > notes.md <<\"E\\$OF\"\nrun vitest run here\nE$OF", "ALLOW"),
     # ---- Third review (independent, of ce45786). Each group is one finding.
     # The behaviour behind each was observed on this Mac (npm 11.19.0, bun
     # 1.4.3, just 1.51.0, cargo 1.98.0): `npm run test --help` prints npm's

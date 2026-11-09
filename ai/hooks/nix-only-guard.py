@@ -104,6 +104,18 @@ def deny(reason):
 SHELL_INTERPRETERS = {"bash", "sh", "zsh", "dash", "ksh", "fish", "csh", "tcsh"}
 
 
+def feeds_shell(line):
+    """True when a heredoc's introducing line may hand its body to a shell.
+
+    Judged on the raw words and again with every quote and backslash deleted,
+    which is what quote removal leaves of `b\\as\\h`, `ba''sh` and `"ba"sh`.
+    Deleting them can only add a match, so keeping a body checked is the
+    direction any misreading takes."""
+    words = re.findall(r"[A-Za-z0-9_./-]+", line) + \
+        re.findall(r"[A-Za-z0-9_./-]+", re.sub(r"[\\'\"]", "", line))
+    return any(os.path.basename(word) in SHELL_INTERPRETERS for word in words)
+
+
 def strip_heredoc_bodies(command):
     """Remove heredoc bodies that are DATA, so they are not read as commands.
 
@@ -131,8 +143,7 @@ def strip_heredoc_bodies(command):
         # executable and every line of it stays in scope for checking. A body
         # whose delimiter line never appears is kept too: a delimiter misread
         # here must not hide the commands after it.
-        words = re.findall(r"[A-Za-z0-9_./-]+", command[line_start:start])
-        if not terminated or any(os.path.basename(word) in SHELL_INTERPRETERS for word in words):
+        if not terminated or feeds_shell(command[line_start:start]):
             continue
         kept.append(command[at:start])
         at = end
@@ -354,6 +365,9 @@ def heredoc_bodies(command):
         if stack and stack[-1] == '"':
             if c == '"':
                 stack.pop()
+            elif command.startswith("$((", i):
+                stack.append("((")  # << in here is a shift, not a heredoc
+                i += 2
             elif command.startswith("$(", i):
                 stack.append("(")
                 i += 1
@@ -497,7 +511,7 @@ def peel(tokens):
     return None
 
 
-def runs_script_string(command, scripts=None, commands=None):
+def runs_script_string(command, scripts=None, commands=None, substitutions_only=False):
     """True when `sh|bash|zsh -c` or `eval` is in an executable position.
 
     Walks the command the way the shell tokenises it: quoting, `\\` escapes,
@@ -537,7 +551,8 @@ def runs_script_string(command, scripts=None, commands=None):
 
     def flush():
         nonlocal current
-        if commands is not None and current:
+        # Inside $(( … )) the expression is not a command; its substitutions are.
+        if commands is not None and current and (stack or not substitutions_only):
             commands.append(current)
         current = []
 
@@ -590,7 +605,7 @@ def runs_script_string(command, scripts=None, commands=None):
             operand -= 1
         elif had:
             current.append("".join(collected))
-        return had and judge(text)
+        return had and (bool(stack) or not substitutions_only) and judge(text)
 
     def expansion():
         nonlocal started
@@ -600,7 +615,7 @@ def runs_script_string(command, scripts=None, commands=None):
     def arithmetic(inner):
         # $(( … )) is not a command, but a $( … ) or backtick inside it runs.
         nonlocal found
-        if runs_script_string(inner, scripts, commands):
+        if runs_script_string(inner, scripts, commands, substitutions_only=True):
             found = True
             return scripts is None and commands is None
         return False

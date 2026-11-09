@@ -405,6 +405,10 @@ CASES = [
     ("a substitution inside quoted arithmetic", "echo \"$(( $(vitest run) ))\"", "DENY"),
     ("an escaped dollar in a double-quoted delimiter", "cat <<\"E\\$OF\"\ntext\nE$OF\nvitest run", "DENY"),
     ("an unterminated heredoc keeps what follows checked", "cat <<EOF\ntext\nvitest run", "DENY"),
+    ("an escaped shell name reading a heredoc", "b\\as\\h <<\\EOF\nvitest run\nEOF", "DENY"),
+    ("a quote-split shell name reading a heredoc", "ba''sh <<'EOF'\nvitest run\nEOF", "DENY"),
+    ("a shift in quoted arithmetic is not a heredoc", "echo \"$((1 << 2))\"\nvitest run\n2", "DENY"),
+    ("an arithmetic variable named like a heavy command", "echo \"$((vitest + 1))\"", "ALLOW"),
     ("a terminated double-quoted delimiter still strips its body",
      "cat > notes.md <<\"E\\$OF\"\nrun vitest run here\nE$OF", "ALLOW"),
     # ---- Third review (independent, of ce45786). Each group is one finding.

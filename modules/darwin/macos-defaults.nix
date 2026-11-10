@@ -44,5 +44,13 @@
       StandardHideWidgets = true;
       StageManagerHideWidgets = true;
     };
+
+    # No "quit unexpectedly" dialogs. Agent test runs crash iOS Simulator
+    # processes, and each crash raised a modal dialog over the owner's work:
+    # on 2026-11-09 four `SpringBoard-*.ips` reports (SIGABRT in
+    # `-[RBSAssertion dealloc]`, process under the simulator runtime volume)
+    # each raised one while a simulator test job ran. Reports are still written
+    # to ~/Library/Logs/DiagnosticReports; only the dialog is suppressed.
+    CustomUserPreferences."com.apple.CrashReporter".DialogType = "none";
   };
 }

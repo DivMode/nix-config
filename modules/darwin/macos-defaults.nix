@@ -44,5 +44,11 @@
       StandardHideWidgets = true;
       StageManagerHideWidgets = true;
     };
+
+    # Crash dialogs stay on: the owner wants to see every crash. Declared
+    # explicitly as macOS's default ("basic") because a 2026-11-09 activation
+    # had stored DialogType = none, and removing a CustomUserPreferences entry
+    # does not delete the stored key.
+    CustomUserPreferences."com.apple.CrashReporter".DialogType = "basic";
   };
 }

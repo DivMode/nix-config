@@ -45,12 +45,10 @@
       StageManagerHideWidgets = true;
     };
 
-    # No "quit unexpectedly" dialogs. Agent test runs crash iOS Simulator
-    # processes, and each crash raised a modal dialog over the owner's work:
-    # on 2026-11-09 four `SpringBoard-*.ips` reports (SIGABRT in
-    # `-[RBSAssertion dealloc]`, process under the simulator runtime volume)
-    # each raised one while a simulator test job ran. Reports are still written
-    # to ~/Library/Logs/DiagnosticReports; only the dialog is suppressed.
-    CustomUserPreferences."com.apple.CrashReporter".DialogType = "none";
+    # Crash dialogs stay on: the owner wants to see every crash. Declared
+    # explicitly as macOS's default ("basic") because a 2026-11-09 activation
+    # had stored DialogType = none, and removing a CustomUserPreferences entry
+    # does not delete the stored key.
+    CustomUserPreferences."com.apple.CrashReporter".DialogType = "basic";
   };
 }

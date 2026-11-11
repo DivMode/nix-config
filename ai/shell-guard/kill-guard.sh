@@ -1,6 +1,7 @@
 # Sourced by every non-interactive bash (through BASH_ENV) and every zsh
 # (through ZDOTDIR's .zshenv) that an agent client starts. It has no shebang
-# and must stay valid in bash 3.2, bash 5 and zsh.
+# and must stay valid in bash 3.2, bash 5 and zsh, print nothing, and work
+# under `set -eu`: it runs ahead of every script an agent starts.
 #
 # Why it exists. On 2026-11-11 a delegated worker rewrote a repository script
 # to "terminate its whole command tree". The script walked the process table
@@ -8,48 +9,63 @@
 # `kill -TERM -- -<group>` for each. Every process the owner had open was
 # terminated, in every session. The command guards read the text of a tool
 # call; the call was `bash interrupt.sh`, and the kill sat three scripts
-# deeper, so nothing saw it.
+# deeper, so nothing saw it (issue #270).
 #
 # What it does. In these shells `kill` is a function. A signal aimed at a
 # process GROUP (a negative target) reaches the builtin only when the group is
-# this shell's own, or its leader was started by this shell; group 1 ("every
-# process I may signal") and group 0 forms other than the caller's own group
-# are refused. A signal aimed at one process id, a job (%1), or the probe
-# signal 0 passes through unchanged. `pkill` and `killall` choose their
-# targets by pattern, so they are refused outright, except `killall` on the
-# interface agents launchd restarts (the list the command guard allows).
+# this shell's own, or its leader was started by this shell. `-1` ("every
+# process I may signal"), `-0`, and anything that is not a plain group number
+# are refused. A signal aimed at one process id or a job (%1) passes through
+# unchanged, and so does the probe signal 0, which delivers nothing. `pkill`
+# and `killall` choose their targets by pattern, so they are refused, except
+# `killall` on the interface agents launchd restarts (the list the command
+# guard allows).
 #
 # What it does not do. It covers the shell builtin, which is what scripts use.
 # A program that calls the system call itself (Python's os.kill, a compiled
-# binary), `/bin/kill`, `builtin kill` and `sh` (bash in POSIX mode reads no
-# BASH_ENV) are not intercepted. This stops a mistake at the moment it is
-# made; it is not a boundary against intent. The boundary would be a separate
-# user for agents, which this machine deliberately does not have.
+# binary), `/bin/kill`, `builtin kill`, `command kill` and `sh` (bash in POSIX
+# mode reads no BASH_ENV) are not intercepted. Agents and the owner's
+# applications run as one user, so the system delivers any signal an agent
+# process does send. This stops a mistake at the moment it is made; it is not
+# a boundary against intent.
 
 if [ -z "${AGENT_KILL_GUARD-}" ]; then
   return 0 2>/dev/null || true
 fi
 
+# The interface agents `killall` may restart. Must equal
+# SELF_RESTARTING_UI_AGENTS in ../hooks/nix-only-guard.py; the flake check
+# `agent-kill-guard` compares the two.
+__agent_kill_guard_ui_agents='ControlCenter Dock Finder SystemUIServer TextInputMenuAgent'
+
+# The process table, from the system's own ps. The Nix build that runs this
+# file's test cannot execute /bin/ps ("Operation not permitted", observed
+# 2026-11-11; /bin/ps is set-user-id root and the build is not, the cause is
+# not established), so the ps on PATH is the fallback. With neither, nothing
+# is read and every group is treated as foreign.
+__agent_kill_guard_ps() {
+  /bin/ps "$@" 2>/dev/null || command ps "$@" 2>/dev/null
+}
+
 # 0 when process group $1 belongs to this shell: its own group, or a group
 # whose leader descends from this shell. A leader that has already exited
-# cannot be verified and is treated as foreign.
+# cannot be verified and is treated as foreign. `$$` is the main shell's id
+# even inside a subshell, so a subshell may signal what its script started.
 __agent_kill_guard_owned() {
-  local __akg_group="$1" __akg_pid="$1" __akg_parent __akg_own __akg_hops=0
-  __akg_own="$(/bin/ps -o pgid= -p "$$" 2>/dev/null)"
-  __akg_own="${__akg_own//[^0-9]/}"
-  if [ -n "$__akg_own" ] && [ "$__akg_group" = "$__akg_own" ]; then
+  local __akg_pid="$1" __akg_found __akg_hops=0
+  __akg_found="$(__agent_kill_guard_ps -o pgid= -p "$$")" || __akg_found=''
+  if [ "$1" = "${__akg_found//[^0-9]/}" ]; then
     return 0
   fi
   while [ "$__akg_hops" -lt 64 ]; do
     if [ "$__akg_pid" = "$$" ]; then
       return 0
     fi
-    __akg_parent="$(/bin/ps -o ppid= -p "$__akg_pid" 2>/dev/null)"
-    __akg_parent="${__akg_parent//[^0-9]/}"
-    case "$__akg_parent" in
+    __akg_found="$(__agent_kill_guard_ps -o ppid= -p "$__akg_pid")" || __akg_found=''
+    __akg_pid="${__akg_found//[^0-9]/}"
+    case "$__akg_pid" in
       '' | 0 | 1) return 1 ;;
     esac
-    __akg_pid="$__akg_parent"
     __akg_hops=$((__akg_hops + 1))
   done
   return 1
@@ -59,24 +75,20 @@ __agent_kill_guard_owned() {
 # reason on stderr and returns 1. It sends no signal, so tests can call it
 # with targets that must never be signalled.
 __agent_kill_guard_verdict() {
-  local __akg_arg __akg_phase=signal __akg_take=0 __akg_probe=0 __akg_number
+  local __akg_arg __akg_target __akg_number __akg_phase=signal __akg_take=0
   for __akg_arg in "$@"; do
     if [ "$__akg_take" = 1 ]; then
       __akg_take=0
-      if [ "$__akg_arg" = 0 ]; then __akg_probe=1; fi
+      # Signal 0 delivers nothing; it only asks whether the target exists.
+      if [ "$__akg_arg" = 0 ]; then return 0; fi
       continue
     fi
     if [ "$__akg_phase" = signal ]; then
       __akg_phase=targets
       case "$__akg_arg" in
-        -l | -L | --list | --table) return 0 ;;
+        -l | -L | -0) return 0 ;;
         -s | -n)
           __akg_take=1
-          continue
-          ;;
-        --) continue ;;
-        -0)
-          __akg_probe=1
           continue
           ;;
         -*) continue ;;
@@ -84,21 +96,24 @@ __agent_kill_guard_verdict() {
     elif [ "$__akg_arg" = "--" ]; then
       continue
     fi
-    case "$__akg_arg" in
+    # bash accepts a number with blanks around it, so " -1" is still -1.
+    __akg_target="${__akg_arg//[[:space:]]/}"
+    case "$__akg_target" in
       -*)
-        # Signal 0 delivers nothing; it only asks whether the target exists.
-        if [ "$__akg_probe" = 1 ]; then continue; fi
-        __akg_number="${__akg_arg#-}"
+        __akg_number="${__akg_target#-}"
         case "$__akg_number" in
-          '' | *[!0-9]*)
+          # Ten digits or more is no process group; refused rather than
+          # trusted, because a shell that narrows it to 32 bits could turn it
+          # into -1 (a precaution, deliberately not tried on a live machine).
+          '' | *[!0-9]* | ??????????*)
             printf 'kill guard: refused `kill %s`: the target %s is not a process group number.\n' \
               "$*" "$__akg_arg" >&2
             return 1
             ;;
         esac
-        if [ "$__akg_number" -le 1 ] 2>/dev/null; then
-          printf 'kill guard: refused `kill %s`: %s signals every process this user owns.\n' \
-            "$*" "$__akg_arg" >&2
+        if [ "$__akg_number" -le 1 ]; then
+          printf 'kill guard: refused `kill %s`: -1 signals every process this user owns, and -0 or -1 is never a group this shell started.\n' \
+            "$*" >&2
           return 1
         fi
         if ! __agent_kill_guard_owned "$__akg_number"; then
@@ -107,8 +122,49 @@ __agent_kill_guard_verdict() {
           return 1
         fi
         ;;
+      '' | *[!0-9]*) ;;
+      ??????????*)
+        printf 'kill guard: refused `kill %s`: %s is too large to be a process id.\n' \
+          "$*" "$__akg_arg" >&2
+        return 1
+        ;;
     esac
   done
+  return 0
+}
+
+# The same for `killall "$@"`: 0 only for `killall [-q] [-u USER] NAME...`
+# where every NAME is an interface agent. It sends no signal.
+__agent_kill_guard_killall_verdict() {
+  local __akg_arg __akg_take=0 __akg_names=0
+  for __akg_arg in "$@"; do
+    if [ "$__akg_take" = 1 ]; then
+      __akg_take=0
+      continue
+    fi
+    case "$__akg_arg" in
+      -q) continue ;;
+      -u)
+        __akg_take=1
+        continue
+        ;;
+      '' | -* | *[!A-Za-z]*) ;;
+      *)
+        case " $__agent_kill_guard_ui_agents " in
+          *" $__akg_arg "*)
+            __akg_names=1
+            continue
+            ;;
+        esac
+        ;;
+    esac
+    printf 'kill guard: refused `killall %s`: it chooses its targets by name. Signal the process ids you started.\n' "$*" >&2
+    return 1
+  done
+  if [ "$__akg_names" != 1 ]; then
+    printf 'kill guard: refused `killall %s`: no process name given.\n' "$*" >&2
+    return 1
+  fi
   return 0
 }
 
@@ -123,25 +179,6 @@ pkill() {
 }
 
 killall() {
-  local __akg_arg __akg_take=0 __akg_names=0
-  for __akg_arg in "$@"; do
-    if [ "$__akg_take" = 1 ]; then
-      __akg_take=0
-      continue
-    fi
-    case "$__akg_arg" in
-      -q) ;;
-      -u) __akg_take=1 ;;
-      Dock | Finder | SystemUIServer | ControlCenter | TextInputMenuAgent) __akg_names=1 ;;
-      *)
-        printf 'kill guard: refused `killall %s`: it chooses its targets by name. Signal the process ids you started.\n' "$*" >&2
-        return 1
-        ;;
-    esac
-  done
-  if [ "$__akg_names" != 1 ]; then
-    printf 'kill guard: refused `killall %s`: no process name given.\n' "$*" >&2
-    return 1
-  fi
+  __agent_kill_guard_killall_verdict "$@" || return 1
   command killall "$@"
 }

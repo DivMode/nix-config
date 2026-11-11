@@ -21,6 +21,7 @@ previous machine's assistant configuration; everything here is restored by
 | `hooks/default.nix` | Claude managed settings and `/etc/codex/requirements.toml`, through the build-time hook contract |
 | `codex/default.nix` | narrowly merged into mutable `~/.codex/config.toml` |
 | `mcp/servers.nix` | `~/.config/nix-config/ai/` review artifacts |
+| `shell-guard/kill-guard.sh` | sourced by every bash and zsh either client starts (`BASH_ENV`, ZDOTDIR's `.zshenv`) |
 
 Instructions here are global, so they apply to every project. Repository facts
 belong in that repository's own instructions file; duplicating them here makes
@@ -97,6 +98,42 @@ derivation, so passing one takes the `.text` branch and is rejected there by
 measured against the pinned home-manager rather than assumed.
 `~/.config/nix-config/ai/agent-instructions.md` links the same document for
 review.
+
+## Agent shells refuse to signal what they did not start
+
+On 2026-11-11 a script written by a delegated worker sent a terminate signal
+to every process group on this Mac, and every application the owner had open
+was terminated (issue #270). The command hooks read the text of a tool call;
+that call ran a script, and the signal sat three scripts deeper.
+
+`shell-guard/kill-guard.sh` is loaded into every shell Claude Code and Codex
+start. Each client sets `AGENT_KILL_GUARD=1` and `BASH_ENV` for the commands
+it runs (`shellGuard.environment` in `default.nix`), so every non-interactive
+bash sources the file, however deep; zsh sources it from ZDOTDIR's `.zshenv`
+when the marker is set. The owner's own shells never load it. In a guarded
+shell:
+
+- `kill` aimed at a process group passes only when the group is the shell's
+  own or its leader was started by that shell. `-1` (every process the user
+  owns) and any group the shell merely looked up are refused, and nothing is
+  sent.
+- `kill` aimed at single process ids, at jobs, or with the probe signal 0
+  passes unchanged.
+- `pkill` is refused. `killall` is refused except for the interface agents the
+  command hook also allows (Dock, Finder and the menu bar agents).
+
+**The limit.** Agents and the owner's applications run as one user, so the
+system delivers any signal an agent process does send. The guard covers the
+shell builtin, which is what scripts use. It does not cover a program that
+makes the system call itself (Python's `os.kill`, a compiled binary),
+`/bin/kill`, `builtin kill`, `command kill`, or `sh`. It stops a mistake at the
+moment it is made; it is not a boundary against intent.
+
+`checks.<system>.agent-kill-guard` (macOS) runs `kill-guard-test.sh` in Nix's
+bash and zsh and the system's `/bin/bash` and `/bin/zsh`. The test sends a real
+signal only to processes it started; a target that must never be signalled is
+given only to the function that returns a verdict and sends nothing. Keep it
+that way.
 
 ## Claude Code
 

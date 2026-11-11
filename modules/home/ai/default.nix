@@ -401,7 +401,16 @@ let
     # prompted the owner five times in one session (2026-10-31). With app
     # integration off, such a call fails instead of asking the desktop app;
     # agents reach 1Password only through Connect.
-    env.OP_BIOMETRIC_UNLOCK_ENABLED = "false";
+    #
+    # And no agent shell may signal a process group it did not start: the
+    # marker and BASH_ENV load the signal guard (../../../ai/shell-guard) into
+    # every bash Claude Code starts; the zsh half is `programs.zsh.envExtra`
+    # below. On 2026-11-11 a script three levels below a tool call signalled
+    # every process group on this Mac (issue #270).
+    env = {
+      OP_BIOMETRIC_UNLOCK_ENABLED = "false";
+    }
+    // ai.shellGuard.environment;
 
     # Claude Code keeps itself current: `claude` is Anthropic's native install
     # behind the launcher in ../development.nix, and its background updater
@@ -520,6 +529,18 @@ in
       # The most recent conversation in this directory, with no picker.
       ccc = "claude --continue --dangerously-skip-permissions";
     };
+
+    # The zsh half of the signal guard. Both clients run their commands in zsh
+    # (Claude Code's Bash tool; Codex as `/bin/zsh -lc`), and zsh reads no
+    # BASH_ENV, so the guard is sourced here, only when a client set the
+    # marker: the owner's own shells never load it. ZDOTDIR's .zshenv, not
+    # ~/.zshenv, because a zsh started from another one skips the latter (see
+    # ../omlx.nix).
+    programs.zsh.envExtra = ''
+      if [[ -n "''${AGENT_KILL_GUARD-}" ]]; then
+        source ${ai.shellGuard.killGuard}
+      fi
+    '';
 
     assertions = [
       # The two global instruction files must carry the same bytes.

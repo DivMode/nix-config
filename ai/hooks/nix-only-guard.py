@@ -571,28 +571,44 @@ def runs_script_string(command, scripts=None, commands=None):
     found = False  # a script string, when collecting scripts past it
     current, fed = None, False  # the command being collected; a lookup feeds this pipeline
     wrapped = False  # a wrapper or runner stands in front of the program
+    code, code_words = None, []  # shell text follows: "one" word (`sh -c`) or "all" (`eval`)
+    cases = 0  # `case` statements open in this context, whose patterns end in `)`
+
+    def flush():
+        # `eval`'s arguments are one command once joined.
+        nonlocal code_words
+        if code_words:
+            words, code_words = code_words, []
+            runs_script_string(" ".join(words), scripts, commands)
+
+    def restart():
+        # A new command begins.
+        nonlocal mode, skip, wrapper, duration, current, wrapped, code
+        flush()
+        mode, skip, wrapper, duration = "cmd", 0, None, False
+        current, wrapped, code = None, False, None
 
     def begin(name, direct):
         nonlocal current, fed
-        if commands is None:
-            return
         current = {"argv": [name], "lookup": fed, "direct": direct}
-        commands.append(current)
+        if commands is not None:
+            commands.append(current)
         if name in PROCESS_LOOKUPS:
             fed = True
             for entry in stack:
                 if len(entry) > 1 and entry[7] is not None:
                     entry[7]["lookup"] = True
 
-    def hit():
+    def hit(follows):
         # Typed, the first hit decides. Collecting, keep walking: a file's
-        # later lines can still run other scripts.
-        nonlocal found, mode
-        found, mode = True, "arg"
+        # later lines can still run other scripts, and the script string
+        # itself is walked for the commands it holds.
+        nonlocal found, mode, code
+        found, mode, code = True, "arg", follows
         return scripts is None
 
-    def judge(text):
-        nonlocal mode, skip, wrapper, duration, current, wrapped
+    def judge(text, quoted=False):
+        nonlocal mode, skip, wrapper, duration, current, wrapped, code, cases
         if skip:
             skip -= 1
         elif mode == "dashdash":
@@ -602,7 +618,7 @@ def runs_script_string(command, scripts=None, commands=None):
             if text in ("-o", "+o", "-O", "+O"):
                 skip = 1
             elif SHELL_C_FLAG_RE.fullmatch(text):
-                return hit()
+                return hit("one")
             elif not text.startswith(("-", "+")):
                 mode = "arg"  # the script file: `bash script.sh`
                 if scripts is not None:
@@ -618,8 +634,10 @@ def runs_script_string(command, scripts=None, commands=None):
             name = os.path.basename(text)
             if ASSIGNMENT_RE.match(text) or (mode == "cmd" and text in SHELL_KEYWORDS):
                 pass
+            elif mode == "cmd" and text == "esac":
+                cases = max(0, cases - 1)
             elif name == "eval":
-                return hit()
+                return hit("all")
             elif name in COMMAND_WRAPPERS:
                 mode, wrapper, duration = "wrapper", name, name in ("timeout", "gtimeout")
                 wrapped = True
@@ -632,9 +650,18 @@ def runs_script_string(command, scripts=None, commands=None):
                 if scripts is not None and "/" in text:
                     scripts.append((text, "program"))
                 begin(name, not wrapped and text == name)
-        elif mode == "arg" and text == "{":
+                if text == "case":
+                    cases += 1
+        elif mode == "arg" and code == "one":
+            code = None
+            if scripts is not None:
+                runs_script_string(text, scripts, commands)
+        elif mode == "arg" and code == "all":
+            code_words.append(text)
+        elif mode == "arg" and text == "{" and not quoted:
             # `name() { command` and `function name { command`: the brace
-            # opens a body, so the next word is a program again.
+            # opens a body, so the next word is a program again. A quoted
+            # brace is an argument.
             mode, current, wrapped = "cmd", None, False
         elif mode == "arg" and current is not None:
             current["argv"].append(text)
@@ -642,22 +669,38 @@ def runs_script_string(command, scripts=None, commands=None):
 
     def finish():
         nonlocal word, started
-        text, had = "".join(word), started or bool(word)
+        text, had, quoted = "".join(word), started or bool(word), started
         word, started = [], False
-        return had and judge(text)
+        return had and judge(text, quoted)
 
-    def open_command(context):
-        nonlocal mode, skip, wrapper, duration, word, started, current, fed, wrapped
-        stack.append((context, word, started, mode, skip, wrapper, duration, current, fed, wrapped))
+    def in_case_pattern():
+        # The word before this `)` is a `case` pattern: at a command's start
+        # inside a `case`, or among the words of `case WORD in`.
+        return cases and (mode == "cmd" or (current is not None and current["argv"][0] == "case"
+                                            and "in" in current["argv"]))
+
+    def open_command(context, piped=False):
+        nonlocal mode, skip, wrapper, duration, word, started, current, fed, wrapped, code, cases
+        stack.append((context, word, started, mode, skip, wrapper, duration, current, fed, wrapped,
+                      code, cases, code_words[:]))
+        del code_words[:]
         word, started = [], False
         mode, skip, wrapper, duration = "cmd", 0, None, False
-        current, wrapped = None, False  # `fed` carries in: `pgrep … | (xargs kill)`
+        current, wrapped, code, cases = None, False, None, 0
+        # A pipeline's lookup feeds a subshell (`pgrep … | (xargs kill)`),
+        # not a substitution, which reads nothing from the pipe.
+        fed = fed and piped
 
     def close_command():
-        nonlocal mode, skip, wrapper, duration, word, started, current, fed, wrapped
+        nonlocal mode, skip, wrapper, duration, word, started, current, fed, wrapped, code, cases
         hit = finish()
-        _, word, started, mode, skip, wrapper, duration, current, fed, wrapped = stack.pop()
-        if skip or mode == "arg":
+        flush()
+        (_, word, started, mode, skip, wrapper, duration, current, fed, wrapped,
+         code, cases, saved_words) = stack.pop()
+        code_words.extend(saved_words)
+        if in_case_pattern():
+            restart()  # `case WORD in (PATTERN) command`: the group was the pattern
+        elif skip or mode == "arg":
             # A substitution that adds no text is still the word it stands
             # for: a redirection's operand (`>$(mktemp) NAME` must not take
             # NAME for the operand) or an argument.
@@ -724,18 +767,20 @@ def runs_script_string(command, scripts=None, commands=None):
         elif c == "(":
             if finish():
                 return True
-            open_command("(")
+            open_command("(", piped=True)
         elif c == ")":
-            if stack and stack[-1][0] == "(":
+            if in_case_pattern():
+                # `PATTERN)`: what follows is the arm's command, also inside
+                # a substitution, whose own `)` this is not.
+                word, started = [], False
+                restart()
+            elif stack and stack[-1][0] == "(":
                 if close_command():
                     return True
             elif finish():
                 return True
             else:
-                # A `)` that closes nothing ends a `case` pattern: what
-                # follows is a command.
-                mode, skip, wrapper, duration = "cmd", 0, None, False
-                current, wrapped = None, False
+                restart()  # a `)` that closes nothing: read on as a command
         elif c in "<>" or (c == "&" and command.startswith(">", i + 1)):
             if finish():
                 return True
@@ -747,8 +792,7 @@ def runs_script_string(command, scripts=None, commands=None):
         elif c in ";&|\n":
             if finish():
                 return True
-            mode, skip, wrapper, duration = "cmd", 0, None, False
-            current, wrapped = None, False
+            restart()
             # `a | b` and `a |& b` keep the pipeline; `||` and the rest end it.
             before, after = command[i - 1:i], command[i + 1:i + 2]
             if not ((c == "|" and "|" not in (before, after)) or (c == "&" and before == "|")):
@@ -756,7 +800,9 @@ def runs_script_string(command, scripts=None, commands=None):
         else:
             word.append(c)
         i += 1
-    return finish() or found
+    done = finish()
+    flush()
+    return done or found
 
 
 # No agent command may signal what it did not start (issue #270). On
@@ -799,17 +845,27 @@ SIGNAL_RULE = (" Signal only process ids this command started and recorded (`cmd
                "open (nix-config issue 270).")
 
 
-OPTION_RE = re.compile(r"-[A-Za-z]")
+def walk_script(text, scripts, commands):
+    """Collect, from a script's text, the files it runs and its simple
+    commands, including those inside the substitutions of its unquoted
+    heredocs: a script's heredocs expand on purpose (see check_command), so
+    what they run is read rather than refused."""
+    runs_script_string(text, scripts, commands)
+    for body in unquoted_heredoc_bodies(text):
+        for inner in substitutions(body):
+            runs_script_string(inner, scripts, commands)
 
 
 def kill_targets(args):
     """The targets of `kill ARGS`, or None when it delivers nothing (a
     listing, or the probe signal 0).
 
-    bash keeps reading options after the first signal, so `-0 -s TERM` and
-    `-s 0 -s TERM` send TERM (builtins/kill.def). A probe therefore counts
-    only when no later argument looks like an option; otherwise that argument
-    is read as a target, and a target that starts with `-` is refused."""
+    bash keeps reading options after the first signal: `-s 0 -s TERM` sends
+    TERM, and in bash 3.2 so does `-s 0 -15` (builtins/kill.def: `-s` and
+    `-n` do not mark the signal as seen). A probe therefore counts only when
+    nothing between the option and `--` starts with `-`; a group is probed
+    as `kill -0 -- -GROUP`. Otherwise every argument is read as a target, and
+    a target that starts with `-` is refused."""
     first, quiet = 0, False
     if args and args[0].startswith("-") and args[0] != "--":
         if args[0] in ("-l", "-L"):
@@ -819,10 +875,11 @@ def kill_targets(args):
         if args[0] in ("-s", "-n"):
             quiet = args[1:2] == ["0"]
             first = 2
-    targets = [target for target in args[first:] if target != "--"]
-    if quiet and not any(OPTION_RE.match(target) for target in targets):
+    rest = args[first:]
+    before = rest[:rest.index("--")] if "--" in rest else rest
+    if quiet and not any(target.startswith("-") for target in before):
         return None
-    return targets
+    return [target for target in rest if target != "--"]
 
 
 def signalling(commands):
@@ -833,6 +890,15 @@ def signalling(commands):
         if argv[0] == "builtin":
             argv = argv[2:] if argv[1:2] == ["--"] else argv[1:]
         if not argv:
+            continue
+        if argv[0] == "trap":
+            # `trap 'COMMANDS' SIGNAL...`: the handler is shell text, and the
+            # usual place for cleanup.
+            handler = next((arg for arg in argv[1:] if not arg.startswith("-")), None)
+            if handler:
+                inner = []
+                runs_script_string(handler, [], inner)
+                yield from signalling(inner)
             continue
         prog, args, shown = argv[0], argv[1:], " ".join(argv)
         if prog == "pkill" or (prog == "killall" and not restarts_only_ui_agents(args)):
@@ -885,49 +951,84 @@ SOURCE_FILE_RE = re.compile(r"\.(?:py|js|mjs|cjs|ts|mts|cts|tsx|jsx|rb|pl|php|lu
                             r"|(?:^|/)package\.json$")
 TERMINATOR_LITERAL_RE = re.compile(
     r"""["'`](?:/usr/bin/)?(?:pkill|(?P<by_name>killall))(?=["'`\s])""")
-COMMENT_LINE_RE = re.compile(r"\s*(?:#|//|\*|--)")
+# A whole-line comment: `#`, `//`, a block comment's ` * ` or ` */`, `-- `.
+# Not `--count;` or `*pointer = …`, which are code.
+COMMENT_LINE_RE = re.compile(r"\s*(?:#|//|\*(?:\s|/|$)|--\s)")
 PATCH_FILE_RE = re.compile(r"\*\*\* (Add|Update) File: (.+)")
 PATCH_MOVE_RE = re.compile(r"\*\*\* Move to: (.+)")
+# The largest file, before or after an edit, that the check builds and reads
+# whole. Beyond it a shell file's edit is refused rather than judged in part.
+EDIT_MAX_BYTES = 4 << 20
+
+
+class Uncheckable(Exception):
+    """An edit whose file is too large to build and read whole."""
 
 
 def read_text(full):
     """The file's text, or None when it cannot be read."""
     try:
         with open(full, "rb") as handle:
-            return handle.read(SCRIPT_MAX_BYTES).decode("utf-8", "replace")
+            data = handle.read(EDIT_MAX_BYTES + 1)
     except OSError:
         return None
+    if len(data) > EDIT_MAX_BYTES:
+        raise Uncheckable
+    return data.decode("utf-8", "replace")
 
 
-def apply_edit(before, after, old, new, everywhere=False):
-    """(before, after) once `old` is replaced by `new` in `after`, as an edit
-    tool applies it. An `old` the text does not hold is added to `before` and
-    `new` to `after`, so the comparison still sees what the edit adds."""
+def apply_edit(before, after, old, new, everywhere=False, start=0):
+    """(before, after, end) once `old` is replaced by `new` in `after`, as an
+    edit tool applies it: the first occurrence at or after `start`, or every
+    one. `end` is where the replacement ends. An `old` the text does not hold
+    is added to `before` and `new` to `after`, so the comparison still sees
+    what the edit adds."""
     if not old:
-        return before, f"{after}\n{new}" if after else new
-    if old in after:
-        return before, after.replace(old, new) if everywhere else after.replace(old, new, 1)
-    return f"{before}\n{old}", f"{after}\n{new}"
+        joined = f"{after}\n{new}" if after else new
+        return before, joined, len(joined)
+    at = after.find(old, start)
+    if at == -1:
+        at = after.find(old)
+    if at == -1:
+        return f"{before}\n{old}", f"{after}\n{new}", len(after) + 1 + len(new)
+    count = after.count(old) if everywhere else 1
+    if len(after) + count * (len(new) - len(old)) > EDIT_MAX_BYTES:
+        raise Uncheckable
+    if everywhere:
+        result = after.replace(old, new)
+        return before, result, len(result)
+    return before, after[:at] + new + after[at + len(old):], at + len(new)
 
 
-def patch_results(patch, full_path):
-    """(destination path, text before, text after) for each file of a Codex
-    patch: each hunk's context and removed lines are replaced in the file by
-    its context and added lines, and a move names the destination."""
-    results = []
-    for section in re.split(r"(?m)^(?=\*\*\* (?:Add|Update|Delete) File: )", patch):
+def edit_files(tool_input):
+    """(path read, path written, steps) for each file an edit call writes.
+    A step is (anchor, old text, new text, replace every occurrence); a
+    whole-file write is one step with old text None."""
+    path = tool_input.get("file_path")
+    if isinstance(path, str):
+        if isinstance(tool_input.get("content"), str):
+            return [(path, path, [("", None, tool_input["content"], False)])]
+        edits = tool_input.get("edits")
+        edits = [e for e in edits if isinstance(e, dict)] if isinstance(edits, list) else [tool_input]
+        return [(path, path, [("", e["old_string"], e["new_string"], bool(e.get("replace_all")))
+                              for e in edits
+                              if isinstance(e.get("old_string"), str) and isinstance(e.get("new_string"), str)])]
+    patch = tool_input.get("command")
+    files = []
+    for section in re.split(r"(?m)^(?=\*\*\* (?:Add|Update|Delete) File: )", patch) if isinstance(patch, str) else []:
         header = PATCH_FILE_RE.match(section)
         if not header:
             continue
         kind, path = header.group(1), header.group(2).strip()
-        before = "" if kind == "Add" else (read_text(full_path(path)) or "")
-        after = before
-        for hunk in re.split(r"(?m)^@@.*$", section[header.end():]):
+        destination, steps = path, []
+        # `@@ LINE` positions a hunk after that line of the file.
+        parts = re.split(r"(?m)^@@(.*)$", section[header.end():])
+        for anchor, hunk in [("", parts[0])] + list(zip(parts[1::2], parts[2::2])):
             old, new = [], []
             for line in hunk.split("\n"):
                 move = PATCH_MOVE_RE.match(line)
                 if move:
-                    path = move.group(1).strip()
+                    destination = move.group(1).strip()
                 elif line.startswith("*** "):
                     continue
                 elif line.startswith("+"):
@@ -938,36 +1039,37 @@ def patch_results(patch, full_path):
                     old.append(line[1:])
                     new.append(line[1:])
             if old or new:
-                before, after = apply_edit(before, after, "\n".join(old), "\n".join(new))
-        results.append((path, before, after))
-    return results
+                steps.append((anchor.strip(), "\n".join(old), "\n".join(new), False))
+        if kind == "Add":
+            steps = [("", None, "\n".join(new for _a, _o, new, _e in steps) + "\n", False)]
+        files.append((path, destination, steps))
+    return files
 
 
-def edit_results(tool_input, full_path):
-    """(destination path, text before, text after) for each file an edit call
-    writes: whole files, so a command is read in its real context."""
-    path = tool_input.get("file_path")
-    if isinstance(path, str):
-        before = read_text(full_path(path)) or ""
-        if isinstance(tool_input.get("content"), str):
-            return [(path, before, tool_input["content"])]
-        edits = tool_input.get("edits")
-        edits = [e for e in edits if isinstance(e, dict)] if isinstance(edits, list) else [tool_input]
-        after = before
-        for edit in edits:
-            old, new = edit.get("old_string"), edit.get("new_string")
-            if isinstance(old, str) and isinstance(new, str):
-                before, after = apply_edit(before, after, old, new, bool(edit.get("replace_all")))
-        return [(path, before, after)]
-    patch = tool_input.get("command")
-    return patch_results(patch, full_path) if isinstance(patch, str) else []
+def edit_texts(before, steps):
+    """(text before, text after) for one file: the whole file, so a command
+    is read in its real context."""
+    after, position = before, 0
+    for anchor, old, new, everywhere in steps:
+        if old is None:
+            if len(new) > EDIT_MAX_BYTES:
+                raise Uncheckable
+            after, position = new, len(new)
+            continue
+        if anchor:
+            found = after.find(anchor, position)
+            position = position if found == -1 else found + len(anchor)
+        before, after, position = apply_edit(before, after, old, new, everywhere, position)
+    return before, after
 
 
 def terminator_literals(text):
     """Each string literal in another language's source that shells out to a
     pattern-based terminator. A heuristic, not a parser: it reads one line at
-    a time, skips comment lines, and lets the name-based one through only
-    when the rest of its call, on that line, names interface agents alone."""
+    a time, skips whole-line comments, and lets the name-based one through
+    only when the rest of its call, on that line, names interface agents
+    alone. It errs towards refusing: a string that merely holds such a
+    command as data is refused too, and can be assembled from two parts."""
     found = []
     for line in text.split("\n"):
         if COMMENT_LINE_RE.match(line):
@@ -986,18 +1088,20 @@ def signalling_text(text, shell):
     if not shell:
         return terminator_literals(text)
     commands = []
-    runs_script_string(text, [], commands)
+    walk_script(text, [], commands)
     return [shown for shown, _why in signalling(commands)]
 
 
 def guard_source(full, checkout):
     """True when `full` is one of SIGNAL_GUARD_SOURCES in the machine's
     nix-config repository: the checkout `--nix-config` names, or a linked
-    worktree whose git directory is that checkout's."""
+    worktree whose git directory is that checkout's. The file is resolved
+    first, so a link from there to a file elsewhere is not one."""
+    full = os.path.realpath(full)
     relative = next((source for source in SIGNAL_GUARD_SOURCES if full.endswith("/" + source)), None)
     if not checkout or relative is None:
         return False
-    root = os.path.realpath(full[:-len(relative) - 1])
+    root = full[:-len(relative) - 1]
     if root == os.path.realpath(checkout):
         return True
     env = {key: value for key, value in os.environ.items() if not key.startswith("GIT_")}
@@ -1019,12 +1123,31 @@ def edit_verdict(tool_input, cwd=None, checkout=None):
         full = os.path.expanduser(path)
         return full if os.path.isabs(full) else os.path.join(cwd or "", full)
 
-    for path, before, after in edit_results(tool_input, full_path):
-        if guard_source(full_path(path), checkout):
+    def shell_file(path, head):
+        return bool(SHELL_FILE_RE.search(path) or os.path.basename(path) in SHELL_STARTUP_FILES
+                    or SHELL_SHEBANG_RE.match(head[:128].encode("utf-8")))
+
+    for path, destination, steps in edit_files(tool_input):
+        if guard_source(full_path(destination), checkout):
             continue
-        shell = bool(SHELL_FILE_RE.search(path) or os.path.basename(path) in SHELL_STARTUP_FILES
-                     or SHELL_SHEBANG_RE.match(after[:128].encode("utf-8")))
-        if not shell and not SOURCE_FILE_RE.search(path):
+        try:
+            before, after = edit_texts(read_text(full_path(path)) or "", steps)
+        except Uncheckable:
+            try:
+                with open(full_path(path), "rb") as handle:
+                    head = handle.read(128).decode("utf-8", "replace")
+            except OSError:
+                head = ""
+            if shell_file(destination, head):
+                return (f"Blocked: {os.path.basename(destination)} is, or would become, too large "
+                        "for the signalling check to read whole, so this edit to a shell file "
+                        "cannot be judged. Make the change in a smaller file.")
+            # Another language's source is read a line at a time, so the
+            # text the edit carries is enough.
+            before = "\n".join(old or "" for _a, old, _n, _e in steps)
+            after = "\n".join(new for _a, _o, new, _e in steps)
+        shell = shell_file(destination, after)
+        if not shell and not SOURCE_FILE_RE.search(destination):
             continue
         counts = collections.Counter(signalling_text(after, shell))
         counts.subtract(collections.Counter(signalling_text(before, shell)))
@@ -1032,7 +1155,7 @@ def edit_verdict(tool_input, cwd=None, checkout=None):
         if introduced:
             # The file's name, not its path: a long path would push the reason
             # out of the one pipe write a denial has (see denial()).
-            return (f"Blocked: this edit to {os.path.basename(path)} introduces "
+            return (f"Blocked: this edit to {os.path.basename(destination)} introduces "
                     f"`{introduced[0]}`.\n\nIt signals a "
                     f"process group or chooses its targets by name or pattern.{SIGNAL_RULE}")
     return None
@@ -1697,7 +1820,7 @@ def script_verdict(path, kind, cwd, depth, seen):
         # typed script and the one below it were unchanged, and the edited
         # file was the one they sourced.
         inner, reason = [], None
-        runs_script_string(text, inner)
+        walk_script(text, inner, None)
         for inner_path, inner_kind in inner:
             reason = script_verdict(inner_path, inner_kind, cwd, depth + 1, seen)
             if reason:
@@ -1730,13 +1853,10 @@ def command_verdict(command, cwd=None, depth=0, seen=None, typed=True, prompts=T
         if reason:
             return reason
     scripts, commands = [], []
-    runs_script_string(command, scripts, commands)
-    if not typed:
-        # A script's own heredocs expand on purpose (see check_command), so
-        # the commands inside their substitutions are read here instead.
-        for body in unquoted_heredoc_bodies(command):
-            for inner in substitutions(body):
-                runs_script_string(inner, [], commands)
+    if typed:
+        runs_script_string(command, scripts, commands)
+    else:
+        walk_script(command, scripts, commands)
     reason = signal_verdict(commands)
     if reason:
         return reason

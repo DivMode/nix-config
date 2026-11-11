@@ -10,9 +10,10 @@
 #     table) is only ever given to a VERDICT function, which sends nothing;
 #   - the real `kill` is called only with processes and groups started below,
 #     and only after checking that `kill` is the guard's function;
-#   - the guard's `pkill` and `killall` are called only while two stubs of
-#     those names stand first on PATH, so a guard that wrongly forwarded
-#     would reach a stub that only writes a file, never the real programs.
+#   - the guard's `pkill` and `killall` are called with no argument at all,
+#     so even the real programs would only print their usage, and only while
+#     stubs of both stand first on PATH (checked, or the calls are skipped),
+#     so a guard that wrongly forwarded is seen in the stub's record.
 
 guard="$1"
 expected_ui_agents="${2-}"
@@ -121,6 +122,12 @@ refused --list -1
 refused -s 0 -s TERM -- -1
 refused -0 -s TERM -- -1
 refused -0 -n 15 -1
+# In bash 3.2 `-s` and `-n` do not mark the signal as given, so the number
+# after them is a second signal and the last argument the target.
+refused -s 0 -15 -- -1
+refused -n 0 -15 -- -1
+refused -0 -15 -- -1
+refused -0 -1
 refused -TERM -l -1
 # zsh takes any mix of digits and `-` for a number and narrows it to 32 bits
 # (Src/jobs.c, isanum and bin_kill), so this spelling of -1 has no leading `-`.
@@ -150,7 +157,7 @@ fi
 # 5. Probes and listings deliver nothing, so they pass even for foreign targets.
 allowed -0 -- -1
 allowed -s 0 -- -1
-allowed -n 0 -1
+allowed -n 0 -- -1
 allowed -l
 allowed -L
 if [ -n "$foreign" ]; then allowed -0 -- "-$foreign"; fi
@@ -261,8 +268,9 @@ wait "$child" 2>/dev/null
 
 # 10. Pattern-based terminators. Every decision is checked through the
 # killall verdict, which sends nothing. The guard's own functions are then
-# called for the refused case only, with stubs of both programs first on PATH:
-# a function that wrongly forwarded would run a stub, which writes a file.
+# called with no argument: a function that wrongly forwarded would run a stub
+# standing first on PATH, and the real programs, given nothing to match,
+# would only print their usage.
 killall_allowed Dock
 killall_allowed -q Dock
 killall_allowed -u someone Finder
@@ -278,28 +286,44 @@ killall_refused -m 'D.*'
 killall_refused Dock SomeApplication
 killall_refused 'Dock Finder'
 killall_refused ''
-stubs="$(mktemp -d "${TMPDIR:-/tmp}/kill-guard-test.XXXXXX")"
-for name in pkill killall; do
-  printf '#!/bin/sh\necho "$0 $*" >> "%s/called"\n' "$stubs" >"$stubs/$name"
-  chmod +x "$stubs/$name"
-done
 saved_path="$PATH"
-PATH="$stubs:$PATH"
-hash -r
-message="$(killall agent-kill-guard-no-such-process 2>&1)" && fail "killall of an unknown name was not refused"
-case "$message" in
-  "kill guard: refused"*) ;;
-  *) fail "killall was not refused by the guard: $message" ;;
-esac
-message="$(pkill -x agent-kill-guard-no-such-process 2>&1)" && fail "pkill was not refused"
-case "$message" in
-  "kill guard: refused"*) ;;
-  *) fail "pkill was not refused by the guard: $message" ;;
-esac
-if [ -e "$stubs/called" ]; then fail "a refused terminator was still run: $(cat "$stubs/called")"; fi
+stubs="$(mktemp -d "${TMPDIR:-/tmp}/kill-guard-test.XXXXXX")" || stubs=''
+stubbed=0
+if [ -n "$stubs" ] && [ -d "$stubs" ]; then
+  stubbed=1
+  for name in pkill killall; do
+    printf '#!/bin/sh\necho "$0 $*" >> "%s/called"\n' "$stubs" >"$stubs/$name" && chmod +x "$stubs/$name"
+    if [ ! -x "$stubs/$name" ]; then stubbed=0; fi
+  done
+  PATH="$stubs:$PATH"
+  hash -r
+  # What the shell would run for each name once the guard's function is out
+  # of the way must be the stub.
+  for name in pkill killall; do
+    if [ "$(
+      unset -f "$name"
+      command -v "$name"
+    )" != "$stubs/$name" ]; then stubbed=0; fi
+  done
+fi
+if [ "$stubbed" != 1 ]; then
+  fail "could not put the terminator stubs first on PATH; the guard's functions were not called"
+else
+  message="$(killall 2>&1)" && fail "killall was not refused"
+  case "$message" in
+    "kill guard: refused"*) ;;
+    *) fail "killall was not refused by the guard: $message" ;;
+  esac
+  message="$(pkill 2>&1)" && fail "pkill was not refused"
+  case "$message" in
+    "kill guard: refused"*) ;;
+    *) fail "pkill was not refused by the guard: $message" ;;
+  esac
+  if [ -e "$stubs/called" ]; then fail "a refused terminator was still run: $(cat "$stubs/called")"; fi
+fi
 PATH="$saved_path"
 hash -r
-rm -r "$stubs"
+if [ -n "$stubs" ] && [ -d "$stubs" ]; then rm -r "$stubs"; fi
 
 # 11. The guard's interface agents are the command guard's.
 if [ -n "$expected_ui_agents" ] && [ "$__agent_kill_guard_ui_agents" != "$expected_ui_agents" ]; then

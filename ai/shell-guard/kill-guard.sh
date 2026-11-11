@@ -29,7 +29,10 @@
 # option is read, and every target must be a job, a process id of at most
 # nine digits, or `-` and such a number. Anything else is refused, which also
 # refuses a few legitimate oddities (`-n0`, zsh's `-q`, a listing that is not
-# the first argument).
+# the first argument). A probe may name a group only after `--`
+# (`kill -0 -- -GROUP`): in bash 3.2 `-s 0 -15` sends signal 15, because `-s`
+# and `-n` do not mark the signal as given, so a negative number before `--`
+# may be a second signal rather than a target.
 #
 # The ownership check is a sequence of `ps` lookups, not a held identity: a
 # process id reused between two of them, or the main shell exiting under a
@@ -90,7 +93,7 @@ __agent_kill_guard_owned() {
 # reason on stderr and returns 1. It sends no signal, so tests can call it
 # with targets that must never be signalled.
 __agent_kill_guard_verdict() {
-  local __akg_arg __akg_target __akg_number __akg_phase=signal __akg_take=0 __akg_probe=0
+  local __akg_arg __akg_target __akg_number __akg_phase=signal __akg_take=0 __akg_probe=0 __akg_ended=0
   for __akg_arg in "$@"; do
     if [ "$__akg_take" = 1 ]; then
       __akg_take=0
@@ -114,6 +117,7 @@ __agent_kill_guard_verdict() {
         -*) continue ;;
       esac
     elif [ "$__akg_arg" = "--" ]; then
+      __akg_ended=1
       continue
     fi
     # bash accepts a number with blanks around it, so " -1" is still -1.
@@ -138,7 +142,13 @@ __agent_kill_guard_verdict() {
     case "$__akg_target" in
       -*)
         # Signal 0 delivers nothing; it only asks whether the target exists.
-        if [ "$__akg_probe" = 1 ]; then continue; fi
+        # Before `--` a negative number may be a second signal (see above).
+        if [ "$__akg_probe" = 1 ] && [ "$__akg_ended" = 1 ]; then continue; fi
+        if [ "$__akg_probe" = 1 ]; then
+          printf 'kill guard: refused `kill %s`: probe a process group as `kill -0 -- -GROUP`; before `--`, %s may be read as a signal.\n' \
+            "$*" "$__akg_arg" >&2
+          return 1
+        fi
         if [ "$__akg_number" -le 1 ]; then
           printf 'kill guard: refused `kill %s`: -1 signals every process this user owns, and -0 or -1 is never a group this shell started.\n' \
             "$*" >&2

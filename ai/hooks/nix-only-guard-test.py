@@ -652,6 +652,17 @@ CASES = [
     ("a process search nested twice", "kill $(echo $(pgrep -f vite))", "DENY"),
     ("a process search feeding a subshell", "pgrep -f vite | (xargs kill)", "DENY"),
     ("an unquoted heredoc that runs a group signal", "cat <<EOF\n$(/bin/kill -- -1)\nEOF", "DENY"),
+    # Found by the re-review. In bash 3.2 `-s` and `-n` do not mark the signal
+    # as given, so the number after them is a second signal.
+    ("a probe, then a numeric signal", "kill -s 0 -15 -- -1", "DENY"),
+    ("a numbered probe, then a numeric signal", "kill -n 0 -15 -- -1", "DENY"),
+    ("a group probed without --", "kill -0 -$pgid", "DENY"),
+    ("a case label in parentheses", "case x in (x) /bin/kill -- -1;; esac", "DENY"),
+    ("a case inside a substitution", 'echo "$(case x in x) /bin/kill -- -1;; esac)"', "DENY"),
+    ("the second arm of a case inside a substitution",
+     "r=$(case $x in a) echo a;; b) kill -- -$g;; esac)", "DENY"),
+    ("a trap handler", "trap '/bin/kill -- -1' EXIT", "DENY"),
+    ("a trap handler that signals a group", "trap 'kill -- -$$' INT TERM", "DENY"),
     # ---- ...and what delivers nothing, or reaches only what the command
     # started, passes. ----
     ("a search-fed probe", "kill -0 $(pgrep -f vite)", "ALLOW"),
@@ -670,7 +681,13 @@ CASES = [
     ("a job", "kill %1", "ALLOW"),
     ("the caller's own group", "kill 0", "ALLOW"),
     ("the probe signal on a group", "kill -0 -- -$pgid", "ALLOW"),
-    ("the probe signal by name", "kill -s 0 -$pgid", "ALLOW"),
+    ("the probe signal by name", "kill -s 0 -- -$pgid", "ALLOW"),
+    ("a recorded id in a substitution beside a search", 'pgrep -f x | echo "$(kill $pid)"', "ALLOW"),
+    ("a quoted brace is data", "printf '%s\\n' '{' " + "p" + "kill -f worker", "ALLOW"),
+    ("a quoted brace before words that only name a script string",
+     "printf '%s\\n' '{' bash -c 'echo hi'", "ALLOW"),
+    ("a trap handler that stops a recorded id", "trap 'kill \"$pid\"' EXIT", "ALLOW"),
+    ("resetting a trap", "trap - EXIT", "ALLOW"),
     ("listing signals", "kill -l", "ALLOW"),
     ("a process search on its own", "pgrep -fl vite", "ALLOW"),
     ("a process search, then an unrelated recorded id", "pgrep -f vite; kill $pid", "ALLOW"),
@@ -711,6 +728,11 @@ SCRIPT_FILES = {
     # A script's unquoted heredoc runs its substitutions.
     "heredoc.sh": "#!/bin/bash\ncat <<EOF\n$(/bin/kill -- -1)\nEOF\n",
     "heredoc-data.sh": "#!/bin/bash\ncat <<'EOF'\n$(/bin/kill -- -1)\nEOF\ncat <<EOF\ntoday is $(date)\nEOF\n",
+    # Shell text handed to a shell or to eval inside a script (and, under
+    # Codex, when typed) is read too.
+    "string.sh": "#!/bin/bash\nsh -c '/bin/kill -- -1'\n",
+    "eval.sh": "#!/bin/bash\neval kill -- -1\n",
+    "string-plain.sh": "#!/bin/bash\nsh -c 'echo hi'\neval echo hi\n",
 }
 SCRIPT_CASES = [
     ("the incident: a probe script whose writes go through $DST", "bash {d}/probe.sh", "DENY"),
@@ -735,6 +757,9 @@ SCRIPT_CASES = [
     ("a script whose unquoted heredoc runs a group signal", "bash {d}/heredoc.sh", "DENY"),
     ("a script whose heredocs hold it as data, or substitute something else",
      "bash {d}/heredoc-data.sh", "ALLOW"),
+    ("a script that hands a group signal to sh -c", "bash {d}/string.sh", "DENY"),
+    ("a script that evals a group signal", "bash {d}/eval.sh", "DENY"),
+    ("a script whose script strings are harmless", "bash {d}/string-plain.sh", "ALLOW"),
 ]
 
 # ---- File edits that introduce signalling code (issue #270). Claude Code's
@@ -805,6 +830,26 @@ EDIT_CASES = [
      {"file_path": "{d}/stop.py", "content": f'run(["{KILL}", "SomeApplication"])  # not Dock\n'}, "DENY"),
     ("a comment line that quotes the terminator",
      {"file_path": "{d}/stop.py", "content": '# Never run "' + "p" + 'kill -f worker" here\n'}, "ALLOW"),
+    # Found by the re-review.
+    ("a shell script whose unquoted heredoc runs a group signal",
+     {"file_path": "{d}/new.sh", "content": "cat <<EOF\n$(/bin/kill -- -1)\nEOF\n"}, "DENY"),
+    ("a patch hunk placed by its anchor, past the same text held as data",
+     {"command": ("*** Begin Patch\n*** Update File: {d}/anchored.sh\n@@ echo anchor\n"
+                  "-kill -- 12345\n+kill -- -1\n*** End Patch\n")}, "DENY"),
+    ("the same patch aimed at the data copy",
+     {"command": ("*** Begin Patch\n*** Update File: {d}/anchored.sh\n@@ cat <<'EOF'\n"
+                  "-kill -- 12345\n+kill -- -1\n*** End Patch\n")}, "ALLOW"),
+    ("a statement that starts with a decrement is not a comment",
+     {"file_path": "{d}/stop.js", "content": '--remaining; execSync("' + "p" + 'kill -f worker");\n'}, "DENY"),
+    ("a statement that starts with a dereference is not a comment",
+     {"file_path": "{d}/stop.go",
+      "content": '*result = exec.Command("' + "p" + 'kill", "worker").Run()\n'}, "DENY"),
+    ("a shell file too large to read whole",
+     {"file_path": "{d}/large.sh", "old_string": "12345", "new_string": "-1"}, "DENY"),
+    ("a replacement that would grow a shell file past what can be read",
+     {"file_path": "{d}/pid.sh", "old_string": "1", "new_string": "x" * (5 << 20), "replace_all": True}, "DENY"),
+    ("prose too large to read whole",
+     {"file_path": "{d}/large.md", "old_string": "12345", "new_string": "-1"}, "ALLOW"),
 ]
 
 
@@ -858,6 +903,9 @@ HOOK_CASES = [
      {"tool_name": "Bash", "tool_input": {"command": "brew install " + "\u00e9" * 400}}, [], "DENY"),
     ("a denial for a group signal with non-ASCII text still fits one pipe write",
      {"tool_name": "Bash", "tool_input": {"command": "kill -- -1 " + "界" * 150}}, [], "DENY"),
+    ("a script string that runs the pattern terminator, under Codex",
+     {"tool_name": "Bash", "tool_input": {"command": "sh -c '" + "p" + "kill -f vite'"}},
+     ["--client", "codex"], "DENY"),
     ("an unquoted heredoc that runs a group signal, under Codex",
      {"tool_name": "Bash", "tool_input": {"command": "cat <<EOF\n$(/bin/kill -- -1)\nEOF"}},
      ["--client", "codex"], "DENY"),
@@ -937,6 +985,20 @@ def main():
                 failures += 1
                 print(f"FAIL  expected {expected:<5} got {got:<5}  {name}", file=sys.stderr)
 
+        # An unchanged script that runs its edited child from inside an
+        # unquoted heredoc's substitution.
+        for file, text in {"report.sh": "#!/bin/bash\ncat <<EOF\n$(bash child.sh)\nEOF\n",
+                           "child.sh": f"#!/bin/bash\n{GROUP_SIGNAL}\n"}.items():
+            with open(os.path.join(d, file), "w") as handle:
+                handle.write(text)
+        subprocess.run(["git", "-C", d, "add", "report.sh"], check=True, env=git_env)
+        repository_cases += 1
+        got = verdict("bash report.sh", cwd=d)
+        if got != "DENY":
+            failures += 1
+            print(f"FAIL  expected DENY  got {got:<5}  an edited script run from an unchanged script's heredoc",
+                  file=sys.stderr)
+
         # The signal guard's own sources are exempt from the edit rule only in
         # the checkout the hook is told about, or a linked worktree of it.
         source = {"file_path": "ai/shell-guard/kill-guard-test.sh", "content": f"{GROUP_SIGNAL}\n"}
@@ -950,7 +1012,15 @@ def main():
                 ("the guard's own test in a linked worktree of it", "ALLOW", linked, d),
                 ("the same path in an unrelated directory", "DENY", elsewhere, d),
                 ("the same path when another checkout is named", "DENY", d, elsewhere),
+                ("the guard's own path, linked to a file outside the checkout", "DENY", "link", d),
             ]:
+                if cwd == "link":
+                    # ai/shell-guard/kill-guard-test.sh in the checkout is a
+                    # link to a script elsewhere, which is what would be written.
+                    os.makedirs(os.path.join(d, "ai", "shell-guard"))
+                    os.symlink(os.path.join(elsewhere, "outside.sh"),
+                               os.path.join(d, "ai", "shell-guard", "kill-guard-test.sh"))
+                    cwd = d
                 repository_cases += 1
                 got = "DENY" if guard.edit_verdict(source, cwd, checkout) else "ALLOW"
                 if got != expected:
@@ -964,6 +1034,9 @@ def main():
             "message.sh": '#!/bin/bash\necho "old"\n',
             "tool": "#!/usr/bin/env python3\nprint(1)\n",
             "stop.txt": "notes\n",
+            "anchored.sh": "#!/bin/bash\ncat <<'EOF'\nkill -- 12345\nEOF\necho anchor\nkill -- 12345\n",
+            "large.sh": "#!/bin/bash\n" + "# filler\n" * 600000 + "kill -- 12345\n",
+            "large.md": "filler\n" * 800000 + "kill -- 12345\n",
         }.items():
             with open(os.path.join(d, file), "w") as handle:
                 handle.write(text)

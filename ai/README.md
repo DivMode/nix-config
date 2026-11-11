@@ -121,7 +121,9 @@ shell:
 - The arguments are read more strictly than the builtins read them, because
   bash and zsh disagree: one signal option, then targets that are a job, a
   process id of at most nine digits, or `-` and such a number. Anything else
-  is refused, including a few legitimate oddities.
+  is refused, including a few legitimate oddities. A group is probed as
+  `kill -0 -- -GROUP`: before `--`, old bash may read a negative number as a
+  second signal.
 - `kill` aimed at single process ids, at jobs, or with the probe signal 0
   passes unchanged.
 - `pkill` is refused. `killall` is refused except for the interface agents the
@@ -138,20 +140,25 @@ machine-change, credential and heavy-command rules):
   bare word (`/bin/kill`, or behind `xargs`, `command`, `builtin`, `env`):
   those forms skip the shell guard. The program is read in the positions a
   shell walker can see: after `do`, `then` or a `case` label, in a function
-  body, inside `$(...)` and backticks, and inside the substitutions of an
-  unquoted heredoc. A repository's own unchanged script is not judged, but
-  the scripts it runs are.
+  body, inside `$(...)` and backticks, inside the substitutions of an
+  unquoted heredoc, in a `trap` handler, and in the text handed to `sh -c` or
+  `eval`. A repository's own unchanged script is not judged, but the scripts
+  it runs are.
 - A file edit (Claude Code's Edit and Write, Codex's `apply_patch`) is refused
   when the file it produces holds such a command that the file did not hold
   before. This applies to a shell file (by extension, startup-file name or
-  shebang). For a source file in another language a line-by-line heuristic
-  looks for a string that shells out to a pattern-based terminator. Prose and
-  Nix modules are not judged.
-- Not read by the hooks: a command held in a string (`trap '…'`) or built
-  from a variable, a script whose path is computed at run time, a shell file
+  shebang); one too large to read whole (4 MB) is refused rather than judged
+  in part. For a source file in another language a line-by-line heuristic
+  looks for a string that shells out to a pattern-based terminator. It errs
+  towards refusing: a string that only holds such a command as data is
+  refused too. Prose and Nix modules are not judged.
+- Not read by the hooks: a command built from a variable (`$cmd …`,
+  `eval "$cmd"`), a script whose path is computed at run time, a shell file
   with neither a known name nor a shebang, and any signal another language
-  sends by system call. For the shell cases the shell guard still refuses a
-  foreign group at the moment of the call.
+  sends by system call. Where the bare `kill` is what finally runs, the shell
+  guard still refuses a foreign group at the moment of the call. An external
+  `/bin/kill` or a pattern-based terminator reached in one of those ways is
+  covered by nothing but the written rule.
 
 **The limit.** Agents and the owner's applications run as one user, so the
 system delivers any signal an agent process does send. The shell guard covers
@@ -168,8 +175,8 @@ not a boundary against intent.
 bash and zsh and the system's `/bin/bash` and `/bin/zsh`. The test sends a real
 signal only to processes it started; a target that must never be signalled is
 given only to the function that returns a verdict and sends nothing; and the
-guard's `pkill` and `killall` are called only with stubs of those programs
-first on PATH. Keep it that way. Run the test through the check: there it
+guard's `pkill` and `killall` are called with no argument, and only once
+stubs of those programs are confirmed first on PATH. Keep it that way. Run the test through the check: there it
 runs as a build user, and the hook refuses a hand-run of an edited copy.
 
 ## Claude Code

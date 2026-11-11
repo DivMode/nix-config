@@ -540,7 +540,19 @@ def peel(tokens):
     return None
 
 
-def runs_script_string(command, scripts=None, commands=None):
+# Script strings inside script strings (`eval eval …`, `sh -c "sh -c …"`) are
+# walked to this depth. Deeper text is not judged in part: the command is
+# refused (see command_verdict), because a hook that crashes lets it run.
+STRING_MAX_NESTING = 8
+TOO_DEEP = ("Blocked: this command nests script strings (`eval`, `sh -c`) too deeply for the "
+            "command guard to read. Write the commands out, or put them in a script file.")
+
+
+class TooDeep(Exception):
+    """Script strings nested deeper than STRING_MAX_NESTING."""
+
+
+def runs_script_string(command, scripts=None, commands=None, nesting=0):
     """True when `sh|bash|zsh -c` or `eval` is in an executable position.
 
     Walks the command the way the shell tokenises it: quoting, `\\` escapes,
@@ -564,6 +576,8 @@ def runs_script_string(command, scripts=None, commands=None):
     substitution among its arguments. `direct` is true when the program is
     the bare word the shell resolves itself, with no path and no wrapper or
     runner in front. An argument that is only a substitution leaves no word."""
+    if nesting > STRING_MAX_NESTING:
+        raise TooDeep
     command = strip_heredoc_bodies(command)
     mode, skip, wrapper, duration = "cmd", 0, None, False
     stack = []  # open '"', or '(' / '`' with the outer word and state saved
@@ -579,7 +593,7 @@ def runs_script_string(command, scripts=None, commands=None):
         nonlocal code_words
         if code_words:
             words, code_words = code_words, []
-            runs_script_string(" ".join(words), scripts, commands)
+            runs_script_string(" ".join(words), scripts, commands, nesting + 1)
 
     def restart():
         # A new command begins.
@@ -653,11 +667,15 @@ def runs_script_string(command, scripts=None, commands=None):
                 if text == "case":
                     cases += 1
         elif mode == "arg" and code == "one":
-            code = None
-            if scripts is not None:
-                runs_script_string(text, scripts, commands)
+            # `sh -c -- TEXT`: the option terminator is not the text.
+            if text != "--":
+                code = None
+                if scripts is not None:
+                    runs_script_string(text, scripts, commands, nesting + 1)
         elif mode == "arg" and code == "all":
-            code_words.append(text)
+            # `eval -- TEXT`: likewise.
+            if code_words or text != "--":
+                code_words.append(text)
         elif mode == "arg" and text == "{" and not quoted:
             # `name() { command` and `function name { command`: the brace
             # opens a body, so the next word is a program again. A quoted
@@ -769,6 +787,11 @@ def runs_script_string(command, scripts=None, commands=None):
                 return True
             open_command("(", piped=True)
         elif c == ")":
+            if mode == "cmd" and "".join(word) == "esac" and not started:
+                # `$(case … esac)`: the word ends the case, and this `)` is
+                # the substitution's.
+                if finish():
+                    return True
             if in_case_pattern():
                 # `PATTERN)`: what follows is the arm's command, also inside
                 # a substitution, whose own `)` this is not.
@@ -897,7 +920,7 @@ def signalling(commands):
             handler = next((arg for arg in argv[1:] if not arg.startswith("-")), None)
             if handler:
                 inner = []
-                runs_script_string(handler, [], inner)
+                runs_script_string(handler, [], inner, 1)
                 yield from signalling(inner)
             continue
         prog, args, shown = argv[0], argv[1:], " ".join(argv)
@@ -951,9 +974,23 @@ SOURCE_FILE_RE = re.compile(r"\.(?:py|js|mjs|cjs|ts|mts|cts|tsx|jsx|rb|pl|php|lu
                             r"|(?:^|/)package\.json$")
 TERMINATOR_LITERAL_RE = re.compile(
     r"""["'`](?:/usr/bin/)?(?:pkill|(?P<by_name>killall))(?=["'`\s])""")
-# A whole-line comment: `#`, `//`, a block comment's ` * ` or ` */`, `-- `.
-# Not `--count;` or `*pointer = …`, which are code.
-COMMENT_LINE_RE = re.compile(r"\s*(?:#|//|\*(?:\s|/|$)|--\s)")
+# A whole-line comment, by the file's language: `#` in Python, Ruby and Perl,
+# `//` in the C family, either in PHP. Nothing else is skipped (a block
+# comment's ` * ` line, Lua's `--`), because the same start is code elsewhere
+# (`* p = …` in Go, `-- n` in JavaScript); such a line is refused if it names
+# a terminator, which errs the safe way.
+HASH_COMMENT_FILE_RE = re.compile(r"\.(?:py|rb|pl)$")
+SLASH_COMMENT_FILE_RE = re.compile(r"\.(?:js|mjs|cjs|ts|mts|cts|tsx|jsx|go|rs|swift|java|kt)$|(?:^|/)package\.json$")
+
+
+def comment_line_re(path):
+    if HASH_COMMENT_FILE_RE.search(path):
+        return re.compile(r"\s*#")
+    if SLASH_COMMENT_FILE_RE.search(path):
+        return re.compile(r"\s*//")
+    if path.endswith(".php"):
+        return re.compile(r"\s*(?:#|//)")
+    return re.compile(r"(?!)")
 PATCH_FILE_RE = re.compile(r"\*\*\* (Add|Update) File: (.+)")
 PATCH_MOVE_RE = re.compile(r"\*\*\* Move to: (.+)")
 # The largest file, before or after an edit, that the check builds and reads
@@ -983,6 +1020,8 @@ def apply_edit(before, after, old, new, everywhere=False, start=0):
     one. `end` is where the replacement ends. An `old` the text does not hold
     is added to `before` and `new` to `after`, so the comparison still sees
     what the edit adds."""
+    if len(after) + 1 + len(new) > EDIT_MAX_BYTES or len(before) + 1 + len(old) > EDIT_MAX_BYTES:
+        raise Uncheckable
     if not old:
         joined = f"{after}\n{new}" if after else new
         return before, joined, len(joined)
@@ -1057,22 +1096,24 @@ def edit_texts(before, steps):
             after, position = new, len(new)
             continue
         if anchor:
-            found = after.find(anchor, position)
-            position = position if found == -1 else found + len(anchor)
+            # apply_patch places a hunk after the LINE equal to its anchor
+            # (blanks around it aside), not after any text containing it.
+            line = re.compile(r"(?m)^[ \t]*" + re.escape(anchor) + r"[ \t]*$").search(after, position)
+            position = position if line is None else line.end()
         before, after, position = apply_edit(before, after, old, new, everywhere, position)
     return before, after
 
 
-def terminator_literals(text):
+def terminator_literals(text, path):
     """Each string literal in another language's source that shells out to a
     pattern-based terminator. A heuristic, not a parser: it reads one line at
     a time, skips whole-line comments, and lets the name-based one through
     only when the rest of its call, on that line, names interface agents
     alone. It errs towards refusing: a string that merely holds such a
     command as data is refused too, and can be assembled from two parts."""
-    found = []
+    found, comment = [], comment_line_re(path)
     for line in text.split("\n"):
-        if COMMENT_LINE_RE.match(line):
+        if comment.match(line):
             continue
         for match in TERMINATOR_LITERAL_RE.finditer(line):
             rest = re.split(r"[)\]]", line[match.end():], maxsplit=1)[0]
@@ -1082,11 +1123,11 @@ def terminator_literals(text):
     return found
 
 
-def signalling_text(text, shell):
+def signalling_text(text, shell, path=""):
     """What `text` holds that the signalling rule refuses, one entry per
     occurrence."""
     if not shell:
-        return terminator_literals(text)
+        return terminator_literals(text, path)
     commands = []
     walk_script(text, [], commands)
     return [shown for shown, _why in signalling(commands)]
@@ -1119,6 +1160,14 @@ def guard_source(full, checkout):
 
 def edit_verdict(tool_input, cwd=None, checkout=None):
     """The denial reason for a file edit that introduces signalling code."""
+    try:
+        return read_edit(tool_input, cwd, checkout)
+    except (TooDeep, RecursionError):
+        return TOO_DEEP
+
+
+def read_edit(tool_input, cwd, checkout):
+    """edit_verdict()'s work."""
     def full_path(path):
         full = os.path.expanduser(path)
         return full if os.path.isabs(full) else os.path.join(cwd or "", full)
@@ -1149,8 +1198,8 @@ def edit_verdict(tool_input, cwd=None, checkout=None):
         shell = shell_file(destination, after)
         if not shell and not SOURCE_FILE_RE.search(destination):
             continue
-        counts = collections.Counter(signalling_text(after, shell))
-        counts.subtract(collections.Counter(signalling_text(before, shell)))
+        counts = collections.Counter(signalling_text(after, shell, destination))
+        counts.subtract(collections.Counter(signalling_text(before, shell, destination)))
         introduced = sorted(shown for shown, count in counts.items() if count > 0)
         if introduced:
             # The file's name, not its path: a long path would push the reason
@@ -1833,6 +1882,15 @@ def script_verdict(path, kind, cwd, depth, seen):
 
 def command_verdict(command, cwd=None, depth=0, seen=None, typed=True, prompts=True):
     """The denial reason for a typed command or a script's text, or None.
+    Text nested too deeply to read is refused, not passed."""
+    try:
+        return read_command(command, cwd, depth, seen, typed, prompts)
+    except (TooDeep, RecursionError):
+        return TOO_DEEP
+
+
+def read_command(command, cwd, depth, seen, typed, prompts):
+    """command_verdict()'s work.
 
     `prompts` selects the rule that exists only because Claude Code stops to
     ask the owner about a script string; Codex asks nothing, so its hook

@@ -663,11 +663,19 @@ CASES = [
      "r=$(case $x in a) echo a;; b) kill -- -$g;; esac)", "DENY"),
     ("a trap handler", "trap '/bin/kill -- -1' EXIT", "DENY"),
     ("a trap handler that signals a group", "trap 'kill -- -$$' INT TERM", "DENY"),
+    # Found by the third review pass.
+    ("script strings nested past what is read", "eval " * 600 + "; /bin/kill -- -1", "DENY"),
+    ("a case closed inside a substitution, then a command",
+     'echo "$(case x in x) echo safe;; esac)"; /bin/kill -- -1', "DENY"),
+    ("a case closed inside a substitution, then a pattern terminator",
+     'echo "$(case x in x) echo safe;; esac)"; ' + "p" + "kill worker", "DENY"),
     # ---- ...and what delivers nothing, or reaches only what the command
     # started, passes. ----
     ("a search-fed probe", "kill -0 $(pgrep -f vite)", "ALLOW"),
     ("a search-fed probe behind xargs", "pgrep -f vite | xargs kill -0", "ALLOW"),
     ("asking what a name is", "command -v " + "p" + "kill", "ALLOW"),
+    ("a case closed inside a substitution, then an ordinary command",
+     'echo "$(case x in x) echo safe;; esac)"; echo done', "ALLOW"),
     ("a recorded id inside a function", 'stop() { kill "$pid"; }', "ALLOW"),
     ("a recorded id after a case label", 'case "$1" in stop) kill "$pid" ;; esac', "ALLOW"),
     ("a recorded id with an assignment in front", 'LC_ALL=C kill "$pid"', "ALLOW"),
@@ -733,6 +741,8 @@ SCRIPT_FILES = {
     "string.sh": "#!/bin/bash\nsh -c '/bin/kill -- -1'\n",
     "eval.sh": "#!/bin/bash\neval kill -- -1\n",
     "string-plain.sh": "#!/bin/bash\nsh -c 'echo hi'\neval echo hi\n",
+    "string-dashdash.sh": "#!/bin/bash\nbash -c -- '/bin/kill -- -1'\n",
+    "eval-dashdash.sh": "#!/bin/bash\neval -- '/bin/kill -- -1'\n",
 }
 SCRIPT_CASES = [
     ("the incident: a probe script whose writes go through $DST", "bash {d}/probe.sh", "DENY"),
@@ -760,6 +770,8 @@ SCRIPT_CASES = [
     ("a script that hands a group signal to sh -c", "bash {d}/string.sh", "DENY"),
     ("a script that evals a group signal", "bash {d}/eval.sh", "DENY"),
     ("a script whose script strings are harmless", "bash {d}/string-plain.sh", "ALLOW"),
+    ("a script string after --", "bash {d}/string-dashdash.sh", "DENY"),
+    ("an eval string after --", "bash {d}/eval-dashdash.sh", "DENY"),
 ]
 
 # ---- File edits that introduce signalling code (issue #270). Claude Code's
@@ -848,6 +860,18 @@ EDIT_CASES = [
      {"file_path": "{d}/large.sh", "old_string": "12345", "new_string": "-1"}, "DENY"),
     ("a replacement that would grow a shell file past what can be read",
      {"file_path": "{d}/pid.sh", "old_string": "1", "new_string": "x" * (5 << 20), "replace_all": True}, "DENY"),
+    ("a patch anchor is a whole line, not text containing it",
+     {"command": ("*** Begin Patch\n*** Update File: {d}/anchored-line.sh\n@@ echo anchor\n"
+                  "-kill -- 12345\n+kill -- -1\n*** End Patch\n")}, "DENY"),
+    ("a statement that starts with a spaced decrement",
+     {"file_path": "{d}/stop.js", "content": '-- remaining; execSync("' + "p" + 'kill -f worker");\n'}, "DENY"),
+    ("a statement that starts with a spaced dereference",
+     {"file_path": "{d}/stop.go",
+      "content": '* result = exec.Command("' + "p" + 'kill", "worker").Run()\n'}, "DENY"),
+    ("a slash comment in a C-family file",
+     {"file_path": "{d}/stop.ts", "content": '// never execSync("' + "p" + 'kill -f worker")\n'}, "ALLOW"),
+    ("an insertion past what can be read",
+     {"file_path": "{d}/pid.sh", "old_string": "", "new_string": "x" * (5 << 20)}, "DENY"),
     ("prose too large to read whole",
      {"file_path": "{d}/large.md", "old_string": "12345", "new_string": "-1"}, "ALLOW"),
 ]
@@ -903,6 +927,15 @@ HOOK_CASES = [
      {"tool_name": "Bash", "tool_input": {"command": "brew install " + "\u00e9" * 400}}, [], "DENY"),
     ("a denial for a group signal with non-ASCII text still fits one pipe write",
      {"tool_name": "Bash", "tool_input": {"command": "kill -- -1 " + "界" * 150}}, [], "DENY"),
+    ("script strings nested past what is read, under Codex",
+     {"tool_name": "Bash", "tool_input": {"command": "eval " * 600 + "; /bin/kill -- -1"}},
+     ["--client", "codex"], "DENY"),
+    ("script strings nested a little, under Codex",
+     {"tool_name": "Bash", "tool_input": {"command": "eval eval eval echo hi"}},
+     ["--client", "codex"], "ALLOW"),
+    ("a script string after --, under Codex",
+     {"tool_name": "Bash", "tool_input": {"command": "eval -- '/bin/kill -- -1'"}},
+     ["--client", "codex"], "DENY"),
     ("a script string that runs the pattern terminator, under Codex",
      {"tool_name": "Bash", "tool_input": {"command": "sh -c '" + "p" + "kill -f vite'"}},
      ["--client", "codex"], "DENY"),
@@ -1037,6 +1070,8 @@ def main():
             "anchored.sh": "#!/bin/bash\ncat <<'EOF'\nkill -- 12345\nEOF\necho anchor\nkill -- 12345\n",
             "large.sh": "#!/bin/bash\n" + "# filler\n" * 600000 + "kill -- 12345\n",
             "large.md": "filler\n" * 800000 + "kill -- 12345\n",
+            "anchored-line.sh": ("#!/bin/bash\ncat <<'EOF'\nprefix echo anchor\nkill -- 12345\nEOF\n"
+                                 "echo anchor\nkill -- 12345\n"),
         }.items():
             with open(os.path.join(d, file), "w") as handle:
                 handle.write(text)

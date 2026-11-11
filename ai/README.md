@@ -142,8 +142,9 @@ machine-change, credential and heavy-command rules):
   shell walker can see: after `do`, `then` or a `case` label, in a function
   body, inside `$(...)` and backticks, inside the substitutions of an
   unquoted heredoc, in a `trap` handler, and in the text handed to `sh -c` or
-  `eval`. A repository's own unchanged script is not judged, but the scripts
-  it runs are.
+  `eval` (nested more than eight deep, the command is refused rather than
+  read in part). A repository's own unchanged script is not judged, but the
+  scripts it runs are.
 - A file edit (Claude Code's Edit and Write, Codex's `apply_patch`) is refused
   when the file it produces holds such a command that the file did not hold
   before. This applies to a shell file (by extension, startup-file name or

@@ -21,6 +21,21 @@
 # `killall` on the interface agents launchd restarts (the list the command
 # guard allows).
 #
+# It reads the arguments more strictly than the builtins do, because bash and
+# zsh disagree and a spelling one of them rejects the other may act on: bash
+# keeps reading options after the first signal (`-s 0 -s TERM` sends TERM),
+# and zsh takes any mix of digits and `-` for a number and narrows it to 32
+# bits (builtins/kill.def; Src/jobs.c, isanum and bin_kill). So one signal
+# option is read, and every target must be a job, a process id of at most
+# nine digits, or `-` and such a number. Anything else is refused, which also
+# refuses a few legitimate oddities (`-n0`, zsh's `-q`, a listing that is not
+# the first argument).
+#
+# The ownership check is a sequence of `ps` lookups, not a held identity: a
+# process id reused between two of them, or the main shell exiting under a
+# surviving subshell, could mislead it. It narrows a mistake; it does not
+# prove ownership.
+#
 # What it does not do. It covers the shell builtin, which is what scripts use.
 # A program that calls the system call itself (Python's os.kill, a compiled
 # binary), `/bin/kill`, `builtin kill`, `command kill` and `sh` (bash in POSIX
@@ -75,18 +90,23 @@ __agent_kill_guard_owned() {
 # reason on stderr and returns 1. It sends no signal, so tests can call it
 # with targets that must never be signalled.
 __agent_kill_guard_verdict() {
-  local __akg_arg __akg_target __akg_number __akg_phase=signal __akg_take=0
+  local __akg_arg __akg_target __akg_number __akg_phase=signal __akg_take=0 __akg_probe=0
   for __akg_arg in "$@"; do
     if [ "$__akg_take" = 1 ]; then
       __akg_take=0
-      # Signal 0 delivers nothing; it only asks whether the target exists.
-      if [ "$__akg_arg" = 0 ]; then return 0; fi
+      if [ "$__akg_arg" = 0 ]; then __akg_probe=1; fi
       continue
     fi
     if [ "$__akg_phase" = signal ]; then
+      # One signal option, and only as the first argument. A later `-s` or
+      # `-l` is a target here, and refused as one.
       __akg_phase=targets
       case "$__akg_arg" in
-        -l | -L | -0) return 0 ;;
+        -l | -L) return 0 ;;
+        -0)
+          __akg_probe=1
+          continue
+          ;;
         -s | -n)
           __akg_take=1
           continue
@@ -99,18 +119,26 @@ __agent_kill_guard_verdict() {
     # bash accepts a number with blanks around it, so " -1" is still -1.
     __akg_target="${__akg_arg//[[:space:]]/}"
     case "$__akg_target" in
+      %*) continue ;;
+      -*) __akg_number="${__akg_target#-}" ;;
+      *) __akg_number="$__akg_target" ;;
+    esac
+    while [ "${__akg_number#0}" != "$__akg_number" ] && [ -n "${__akg_number#0}" ]; do
+      __akg_number="${__akg_number#0}"
+    done
+    case "$__akg_number" in
+      # Ten digits or more is no process id: a shell that narrows it to 32
+      # bits could turn it into -1 (zsh's atoi; deliberately not tried live).
+      '' | *[!0-9]* | ??????????*)
+        printf 'kill guard: refused `kill %s`: the target %s is not a job, a process id or a process group number.\n' \
+          "$*" "$__akg_arg" >&2
+        return 1
+        ;;
+    esac
+    case "$__akg_target" in
       -*)
-        __akg_number="${__akg_target#-}"
-        case "$__akg_number" in
-          # Ten digits or more is no process group; refused rather than
-          # trusted, because a shell that narrows it to 32 bits could turn it
-          # into -1 (a precaution, deliberately not tried on a live machine).
-          '' | *[!0-9]* | ??????????*)
-            printf 'kill guard: refused `kill %s`: the target %s is not a process group number.\n' \
-              "$*" "$__akg_arg" >&2
-            return 1
-            ;;
-        esac
+        # Signal 0 delivers nothing; it only asks whether the target exists.
+        if [ "$__akg_probe" = 1 ]; then continue; fi
         if [ "$__akg_number" -le 1 ]; then
           printf 'kill guard: refused `kill %s`: -1 signals every process this user owns, and -0 or -1 is never a group this shell started.\n' \
             "$*" >&2
@@ -121,12 +149,6 @@ __agent_kill_guard_verdict() {
             "$*" "$__akg_number" >&2
           return 1
         fi
-        ;;
-      '' | *[!0-9]*) ;;
-      ??????????*)
-        printf 'kill guard: refused `kill %s`: %s is too large to be a process id.\n' \
-          "$*" "$__akg_arg" >&2
-        return 1
         ;;
     esac
   done

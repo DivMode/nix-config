@@ -10,8 +10,9 @@
 #     table) is only ever given to a VERDICT function, which sends nothing;
 #   - the real `kill` is called only with processes and groups started below,
 #     and only after checking that `kill` is the guard's function;
-#   - the real `pkill` and `killall` are called only with a name no process
-#     has.
+#   - the guard's `pkill` and `killall` are called only while two stubs of
+#     those names stand first on PATH, so a guard that wrongly forwarded
+#     would reach a stub that only writes a file, never the real programs.
 
 guard="$1"
 expected_ui_agents="${2-}"
@@ -115,6 +116,18 @@ refused -TERM -- '-$group'
 refused -TERM -- --1
 refused -TERM -- -
 refused --list -1
+# bash keeps reading options after the first signal, so a probe followed by a
+# real signal is a real signal (builtins/kill.def).
+refused -s 0 -s TERM -- -1
+refused -0 -s TERM -- -1
+refused -0 -n 15 -1
+refused -TERM -l -1
+# zsh takes any mix of digits and `-` for a number and narrows it to 32 bits
+# (Src/jobs.c, isanum and bin_kill), so this spelling of -1 has no leading `-`.
+refused -TERM -- 4294967295-
+refused -0 -- 4294967295-
+refused -TERM 12-34
+refused -TERM -- some-name
 # Too large to be a process id or group: a shell that narrows the number to 32
 # bits could turn it into -1.
 refused -TERM -- -4294967297
@@ -148,6 +161,8 @@ allowed -TERM 12345
 allowed -s TERM 12345 67890
 allowed -9 12345
 allowed -TERM ' 12345'
+allowed -TERM 000000000012345
+allowed -0 12345
 allowed -TERM %1
 allowed 0
 own="$(field pgid "$$")"
@@ -173,17 +188,32 @@ for mode in plain subshell strict; do
     builtin kill "$child" 2>/dev/null
   else
     allowed -TERM -- "-$child"
+    # Each form is a plain statement, so `set -eu` is in force inside the
+    # strict subshell rather than suspended by a surrounding condition.
     case "$mode" in
-      plain) kill -TERM -- "-$child" ;;
-      subshell) (kill -TERM -- "-$child") ;;
-      strict) (
-        set -eu
+      plain)
         kill -TERM -- "-$child"
-      ) ;;
-    esac || fail "kill of our own child group returned failure ($mode)"
+        sent=$?
+        ;;
+      subshell)
+        (kill -TERM -- "-$child")
+        sent=$?
+        ;;
+      strict)
+        (
+          set -eu
+          kill -TERM -- "-$child"
+        )
+        sent=$?
+        ;;
+    esac
+    if [ "$sent" != 0 ]; then fail "kill of our own child group returned $sent ($mode)"; fi
   fi
+  # 143 is death by SIGTERM: a function that returned success without
+  # signalling would leave the sleep to end by itself, with status 0.
   wait "$child" 2>/dev/null
-  if alive "$child"; then fail "our own child group survived ($mode)"; fi
+  ended=$?
+  if [ "$ended" != 143 ]; then fail "our own child group ended with status $ended, not by our signal ($mode)"; fi
 done
 
 # 8. The real function on one child process id.
@@ -191,7 +221,8 @@ done
 child=$!
 kill "$child" || fail "kill of our own child returned failure"
 wait "$child" 2>/dev/null
-if alive "$child"; then fail "our own child survived"; fi
+ended=$?
+if [ "$ended" != 143 ]; then fail "our own child ended with status $ended, not by our signal"; fi
 
 # 9. A refusal returns non-zero from the real function and signals nothing.
 # The refused target is a group this test started and then orphaned: its
@@ -229,8 +260,9 @@ builtin kill "$child" 2>/dev/null
 wait "$child" 2>/dev/null
 
 # 10. Pattern-based terminators. Every decision is checked through the
-# killall verdict, which sends nothing; the real functions are called only
-# with a name no process has.
+# killall verdict, which sends nothing. The guard's own functions are then
+# called for the refused case only, with stubs of both programs first on PATH:
+# a function that wrongly forwarded would run a stub, which writes a file.
 killall_allowed Dock
 killall_allowed -q Dock
 killall_allowed -u someone Finder
@@ -246,6 +278,14 @@ killall_refused -m 'D.*'
 killall_refused Dock SomeApplication
 killall_refused 'Dock Finder'
 killall_refused ''
+stubs="$(mktemp -d "${TMPDIR:-/tmp}/kill-guard-test.XXXXXX")"
+for name in pkill killall; do
+  printf '#!/bin/sh\necho "$0 $*" >> "%s/called"\n' "$stubs" >"$stubs/$name"
+  chmod +x "$stubs/$name"
+done
+saved_path="$PATH"
+PATH="$stubs:$PATH"
+hash -r
 message="$(killall agent-kill-guard-no-such-process 2>&1)" && fail "killall of an unknown name was not refused"
 case "$message" in
   "kill guard: refused"*) ;;
@@ -256,6 +296,10 @@ case "$message" in
   "kill guard: refused"*) ;;
   *) fail "pkill was not refused by the guard: $message" ;;
 esac
+if [ -e "$stubs/called" ]; then fail "a refused terminator was still run: $(cat "$stubs/called")"; fi
+PATH="$saved_path"
+hash -r
+rm -r "$stubs"
 
 # 11. The guard's interface agents are the command guard's.
 if [ -n "$expected_ui_agents" ] && [ "$__agent_kill_guard_ui_agents" != "$expected_ui_agents" ]; then

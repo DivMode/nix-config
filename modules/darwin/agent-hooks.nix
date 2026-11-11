@@ -2,6 +2,7 @@
   ai,
   inputs,
   lib,
+  local,
   pkgs,
   ...
 }:
@@ -10,6 +11,8 @@ let
   hooks = import ai.hooks {
     inherit pkgs;
     inherit (ccstatusline) statusLine;
+    # Where the signal guard's own sources may be edited (ai/hooks/default.nix).
+    nixConfigCheckout = local.projects.nixconfig or null;
   };
   policyDirectory = "/Library/Application Support/ClaudeCode";
   policyPath = "${policyDirectory}/managed-settings.json";

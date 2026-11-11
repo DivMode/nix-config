@@ -1,6 +1,15 @@
 # The only agent-hook declarations. Both managed client files are outputs of
 # the contract derivation, so activation cannot install an unchecked policy.
-{ pkgs, statusLine }:
+#
+# `nixConfigCheckout` is the absolute path of this machine's nix-config
+# checkout (local.nix, `projects.nixconfig`). The signalling rule exempts the
+# signal guard's own sources from its edit check there and nowhere else; the
+# flake checks pass none, so the contract runs with no exemption at all.
+{
+  pkgs,
+  statusLine,
+  nixConfigCheckout ? null,
+}:
 let
   inherit (pkgs) lib;
 
@@ -25,11 +34,15 @@ let
 
   # One program judges typed commands and file edits (it picks the rule from
   # the tool's name) for both clients. Codex's copy passes `--client codex`,
-  # which drops the two rules that exist only because Claude Code stops to ask
-  # the owner about a script string or a substituting heredoc.
+  # which drops the one rule that exists only because Claude Code stops to ask
+  # the owner about a script string.
   nixOnlyGuard = [
     (lib.getExe pkgs.python3)
     "${./nix-only-guard.py}"
+  ]
+  ++ lib.optionals (nixConfigCheckout != null) [
+    "--nix-config"
+    nixConfigCheckout
   ];
   nixOnlyGuardCodex = nixOnlyGuard ++ [
     "--client"
@@ -58,6 +71,11 @@ let
     {
       command = "kill \"$pid\"";
       deny = false;
+    }
+    {
+      # An unquoted heredoc runs its substitutions, for either client.
+      command = "cat <<EOF\n$(/bin/kill -- -1)\nEOF";
+      deny = true;
     }
   ];
   scratch = "/nonexistent/agent-hook-contract";

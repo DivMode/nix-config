@@ -63,7 +63,9 @@ before you changed anything, in your handoff.
   or a target chosen by name, pattern or a search of the process table (`pkill`, `killall`,
   `pgrep … | xargs kill`). Stop only process ids your own command started and recorded
   (`cmd & pid=$!`, later `kill "$pid"`). Never test process-termination code on this machine: on
-  2026-11-11 a worker's cleanup script terminated every application the owner had open.
+  2026-11-11 a worker's cleanup script terminated every application the owner had open. The
+  machine's guards read shell code only; you run as the owner, so a signal sent any other way is
+  delivered, and this rule is all that stops it.
 - When a required decision is missing, stop and report it rather than expanding the work.
 - Stop when the acceptance criteria are met.
 

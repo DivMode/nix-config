@@ -116,7 +116,12 @@ shell:
 - `kill` aimed at a process group passes only when the group is the shell's
   own or its leader was started by that shell. `-1` (every process the user
   owns) and any group the shell merely looked up are refused, and nothing is
-  sent.
+  sent. Ownership is read from `ps` at that moment; it is not a held
+  identity, so a process id reused between two lookups could mislead it.
+- The arguments are read more strictly than the builtins read them, because
+  bash and zsh disagree: one signal option, then targets that are a job, a
+  process id of at most nine digits, or `-` and such a number. Anything else
+  is refused, including a few legitimate oddities.
 - `kill` aimed at single process ids, at jobs, or with the probe signal 0
   passes unchanged.
 - `pkill` is refused. `killall` is refused except for the interface agents the
@@ -128,14 +133,25 @@ with `--client codex`, for Codex, which therefore also gets the
 machine-change, credential and heavy-command rules):
 
 - A typed command, or a script it runs, is refused when it signals a process
-  group or `-1`, uses `pkill` or `killall` (beyond the interface agents), or
-  feeds `kill` from `pgrep` or `pidof`. The program is found wherever it
-  stands: after `do`, inside `$(...)`, behind `xargs`, `command` or `builtin`,
-  and as `/bin/kill`.
+  group or `-1`, uses `pkill` or `killall` (beyond the interface agents),
+  feeds `kill` from `pgrep` or `pidof`, or reaches `kill` any way but as the
+  bare word (`/bin/kill`, or behind `xargs`, `command`, `builtin`, `env`):
+  those forms skip the shell guard. The program is read in the positions a
+  shell walker can see: after `do`, `then` or a `case` label, in a function
+  body, inside `$(...)` and backticks, and inside the substitutions of an
+  unquoted heredoc. A repository's own unchanged script is not judged, but
+  the scripts it runs are.
 - A file edit (Claude Code's Edit and Write, Codex's `apply_patch`) is refused
-  when it introduces such a command into a shell file, or a string that shells
-  out to a pattern-based terminator into a source file in another language.
-  Text the file already had may stay. Prose and Nix modules are not judged.
+  when the file it produces holds such a command that the file did not hold
+  before. This applies to a shell file (by extension, startup-file name or
+  shebang). For a source file in another language a line-by-line heuristic
+  looks for a string that shells out to a pattern-based terminator. Prose and
+  Nix modules are not judged.
+- Not read by the hooks: a command held in a string (`trap '…'`) or built
+  from a variable, a script whose path is computed at run time, a shell file
+  with neither a known name nor a shebang, and any signal another language
+  sends by system call. For the shell cases the shell guard still refuses a
+  foreign group at the moment of the call.
 
 **The limit.** Agents and the owner's applications run as one user, so the
 system delivers any signal an agent process does send. The shell guard covers
@@ -151,8 +167,10 @@ not a boundary against intent.
 `checks.<system>.agent-kill-guard` (macOS) runs `kill-guard-test.sh` in Nix's
 bash and zsh and the system's `/bin/bash` and `/bin/zsh`. The test sends a real
 signal only to processes it started; a target that must never be signalled is
-given only to the function that returns a verdict and sends nothing. Keep it
-that way.
+given only to the function that returns a verdict and sends nothing; and the
+guard's `pkill` and `killall` are called only with stubs of those programs
+first on PATH. Keep it that way. Run the test through the check: there it
+runs as a build user, and the hook refuses a hand-run of an edited copy.
 
 ## Claude Code
 

@@ -10,6 +10,7 @@ applied by `darwin-rebuild switch`. Nothing else may touch the machine.
 """
 
 import fnmatch
+import collections
 import json
 import os
 import re
@@ -114,6 +115,10 @@ def denial(reason):
     while len(output) > DENIAL_LIMIT and DENIAL_HEAD + cut < len(reason):
         cut += 20
         output = encoded(reason[:DENIAL_HEAD] + " [...] " + reason[DENIAL_HEAD + cut:])
+    if len(output) > DENIAL_LIMIT:
+        # The start alone is too long once escaped (non-ASCII text costs six
+        # bytes a character). A denial with a bare reason still denies.
+        output = encoded("Blocked by the machine's command guard (the reason was too long to send).")
     return output
 
 
@@ -356,7 +361,36 @@ def heredoc_word(command, i):
 
 
 def unquoted_heredoc_substitution(command):
-    """True when an unquoted heredoc's body contains a backtick or `$(`.
+    """True when an unquoted heredoc's body contains a backtick or `$(`."""
+    return any(SUBSTITUTION_RE.search(body) for body in unquoted_heredoc_bodies(command))
+
+
+def substitutions(body):
+    """The command text inside each `$(...)` and backtick pair of a heredoc
+    body. Quotes do not quote there, so the body is not walked as shell."""
+    i, n = 0, len(body)
+    while i < n:
+        if body.startswith("$((", i):
+            close = body.find("))", i)
+            i = n if close == -1 else close + 2
+        elif body.startswith("$(", i):
+            depth, j = 1, i + 2
+            while j < n and depth:
+                depth += (body[j] == "(") - (body[j] == ")")
+                j += 1
+            yield body[i + 2:j - 1 if depth == 0 else n]
+            i = j
+        elif body[i] == "`":
+            close = body.find("`", i + 1)
+            close = n if close == -1 else close
+            yield body[i + 1:close]
+            i = close + 1
+        else:
+            i += 1
+
+
+def unquoted_heredoc_bodies(command):
+    """The body of each unquoted heredoc, where the shell runs substitutions.
 
     HEREDOC_RE reads lines without quote context, which would take a `<<EOF`
     that is only named inside a quoted --body or -m string for a real heredoc.
@@ -425,13 +459,11 @@ def unquoted_heredoc_substitution(command):
                         break
                     body.append(line)
                 # \\, \` and \$ are literal in an unquoted body.
-                text = re.sub(r"\\[\\`$]", "", "\n".join(body))
-                if not quoted and SUBSTITUTION_RE.search(text):
-                    return True
+                if not quoted:
+                    yield re.sub(r"\\[\\`$]", "", "\n".join(body))
             pending = []
             continue
         i += 1
-    return False
 
 
 # Claude Code cannot statically check a script handed to a shell as a string,
@@ -525,29 +557,32 @@ def runs_script_string(command, scripts=None, commands=None):
     which script_verdict() opens only if it has a shell shebang.
 
     When `commands` is a list, every other simple command is appended to it
-    as {"argv": [program name, argument, ...], "lookup": bool}, wherever it
-    stands (after `do`, inside `$(...)`, behind `xargs`). `lookup` is true
-    when its targets come from a process search: a PROCESS_LOOKUPS program
-    earlier in the same pipeline, or inside a substitution among its
-    arguments. An argument that is only a substitution leaves no word."""
+    as {"argv": [program name, argument, ...], "lookup": bool, "direct":
+    bool}, wherever it stands (after `do`, inside `$(...)`, behind `xargs`).
+    `lookup` is true when its targets come from a process search: a
+    PROCESS_LOOKUPS program earlier in the same pipeline, or inside a
+    substitution among its arguments. `direct` is true when the program is
+    the bare word the shell resolves itself, with no path and no wrapper or
+    runner in front. An argument that is only a substitution leaves no word."""
     command = strip_heredoc_bodies(command)
     mode, skip, wrapper, duration = "cmd", 0, None, False
     stack = []  # open '"', or '(' / '`' with the outer word and state saved
     word, started = [], False
     found = False  # a script string, when collecting scripts past it
     current, fed = None, False  # the command being collected; a lookup feeds this pipeline
+    wrapped = False  # a wrapper or runner stands in front of the program
 
-    def begin(name):
+    def begin(name, direct):
         nonlocal current, fed
         if commands is None:
             return
-        current = {"argv": [name], "lookup": fed}
+        current = {"argv": [name], "lookup": fed, "direct": direct}
         commands.append(current)
         if name in PROCESS_LOOKUPS:
             fed = True
-            outer = next((entry[7] for entry in reversed(stack) if len(entry) > 1), None)
-            if outer is not None:
-                outer["lookup"] = True
+            for entry in stack:
+                if len(entry) > 1 and entry[7] is not None:
+                    entry[7]["lookup"] = True
 
     def hit():
         # Typed, the first hit decides. Collecting, keep walking: a file's
@@ -557,7 +592,7 @@ def runs_script_string(command, scripts=None, commands=None):
         return scripts is None
 
     def judge(text):
-        nonlocal mode, skip, wrapper, duration
+        nonlocal mode, skip, wrapper, duration, current, wrapped
         if skip:
             skip -= 1
         elif mode == "dashdash":
@@ -573,7 +608,10 @@ def runs_script_string(command, scripts=None, commands=None):
                 if scripts is not None:
                     scripts.append((text, "shell"))
         elif mode == "wrapper" and text.startswith("-"):
-            skip = int(text in COMMAND_WRAPPERS[wrapper])
+            if wrapper == "command" and text in ("-v", "-V"):
+                mode = "arg"  # `command -v NAME` asks what NAME is; it runs nothing
+            else:
+                skip = int(text in COMMAND_WRAPPERS[wrapper])
         elif mode == "wrapper" and duration:
             duration = False
         elif mode in ("cmd", "wrapper"):
@@ -584,15 +622,20 @@ def runs_script_string(command, scripts=None, commands=None):
                 return hit()
             elif name in COMMAND_WRAPPERS:
                 mode, wrapper, duration = "wrapper", name, name in ("timeout", "gtimeout")
+                wrapped = True
             elif name in QUEUE_RUNNERS:
-                mode = "dashdash"
+                mode, wrapped = "dashdash", True
             elif name in SHELL_INTERPRETERS or name in ("source", "."):
                 mode = "shell"
             else:
                 mode = "arg"
                 if scripts is not None and "/" in text:
                     scripts.append((text, "program"))
-                begin(name)
+                begin(name, not wrapped and text == name)
+        elif mode == "arg" and text == "{":
+            # `name() { command` and `function name { command`: the brace
+            # opens a body, so the next word is a program again.
+            mode, current, wrapped = "cmd", None, False
         elif mode == "arg" and current is not None:
             current["argv"].append(text)
         return False
@@ -604,16 +647,21 @@ def runs_script_string(command, scripts=None, commands=None):
         return had and judge(text)
 
     def open_command(context):
-        nonlocal mode, skip, wrapper, duration, word, started, current, fed
-        stack.append((context, word, started, mode, skip, wrapper, duration, current, fed))
+        nonlocal mode, skip, wrapper, duration, word, started, current, fed, wrapped
+        stack.append((context, word, started, mode, skip, wrapper, duration, current, fed, wrapped))
         word, started = [], False
         mode, skip, wrapper, duration = "cmd", 0, None, False
-        current, fed = None, False
+        current, wrapped = None, False  # `fed` carries in: `pgrep … | (xargs kill)`
 
     def close_command():
-        nonlocal mode, skip, wrapper, duration, word, started, current, fed
+        nonlocal mode, skip, wrapper, duration, word, started, current, fed, wrapped
         hit = finish()
-        _, word, started, mode, skip, wrapper, duration, current, fed = stack.pop()
+        _, word, started, mode, skip, wrapper, duration, current, fed, wrapped = stack.pop()
+        if skip or mode == "arg":
+            # A substitution that adds no text is still the word it stands
+            # for: a redirection's operand (`>$(mktemp) NAME` must not take
+            # NAME for the operand) or an argument.
+            started = True
         return hit
 
     i, n = 0, len(command)
@@ -683,6 +731,11 @@ def runs_script_string(command, scripts=None, commands=None):
                     return True
             elif finish():
                 return True
+            else:
+                # A `)` that closes nothing ends a `case` pattern: what
+                # follows is a command.
+                mode, skip, wrapper, duration = "cmd", 0, None, False
+                current, wrapped = None, False
         elif c in "<>" or (c == "&" and command.startswith(">", i + 1)):
             if finish():
                 return True
@@ -695,7 +748,7 @@ def runs_script_string(command, scripts=None, commands=None):
             if finish():
                 return True
             mode, skip, wrapper, duration = "cmd", 0, None, False
-            current = None
+            current, wrapped = None, False
             # `a | b` and `a |& b` keep the pipeline; `||` and the rest end it.
             before, after = command[i - 1:i], command[i + 1:i + 2]
             if not ((c == "|" and "|" not in (before, after)) or (c == "&" and before == "|")):
@@ -722,9 +775,17 @@ def runs_script_string(command, scripts=None, commands=None):
 #   - `pkill`, and `killall` beyond the interface agents: they choose targets
 #     by name or pattern;
 #   - `kill` fed by `pgrep` or `pidof` (`pgrep … | xargs kill`,
-#     `kill $(pgrep …)`), the same thing in two steps.
+#     `kill $(pgrep …)`), the same thing in two steps;
+#   - `kill` reached any way but as the bare word: by path (`/bin/kill`) or
+#     behind `xargs`, `command`, `builtin`, `env`, `sudo`, `exec` and the
+#     like. Those skip the shell guard's function, and a target held in a
+#     variable or arriving on a pipe cannot be read here, so nothing would
+#     check it. The bare word is all an agent needs.
 # Listing (`kill -l`) and the probe signal 0 deliver nothing and pass. `kill 0`
 # passes too: it reaches only the caller's own group.
+#
+# Not read: a command held in a string (`trap 'kill …' EXIT`) or built from a
+# variable. There the shell guard is what refuses a group.
 #
 # The limit: this reads shell text. A program that makes the system call
 # itself is not seen, and the shell guard (../shell-guard/kill-guard.sh) is
@@ -738,34 +799,55 @@ SIGNAL_RULE = (" Signal only process ids this command started and recorded (`cmd
                "open (nix-config issue 270).")
 
 
-def kill_reaches_a_group(args):
-    """True when `kill ARGS` names a process group or every process."""
-    first = 0
+OPTION_RE = re.compile(r"-[A-Za-z]")
+
+
+def kill_targets(args):
+    """The targets of `kill ARGS`, or None when it delivers nothing (a
+    listing, or the probe signal 0).
+
+    bash keeps reading options after the first signal, so `-0 -s TERM` and
+    `-s 0 -s TERM` send TERM (builtins/kill.def). A probe therefore counts
+    only when no later argument looks like an option; otherwise that argument
+    is read as a target, and a target that starts with `-` is refused."""
+    first, quiet = 0, False
     if args and args[0].startswith("-") and args[0] != "--":
-        if args[0] in ("-l", "-L", "-0"):
-            return False
+        if args[0] in ("-l", "-L"):
+            return None
         first = 1
+        quiet = args[0] == "-0"
         if args[0] in ("-s", "-n"):
-            if args[1:2] == ["0"]:
-                return False
+            quiet = args[1:2] == ["0"]
             first = 2
-    return any("".join(target.split()).startswith("-") for target in args[first:] if target != "--")
+    targets = [target for target in args[first:] if target != "--"]
+    if quiet and not any(OPTION_RE.match(target) for target in targets):
+        return None
+    return targets
 
 
 def signalling(commands):
     """(the command as written, why it is refused) for each collected command
     that signals a process group or chooses its targets by name or pattern."""
     for record in commands:
-        argv = record["argv"][1:] if record["argv"][0] == "builtin" else record["argv"]
+        argv = record["argv"]
+        if argv[0] == "builtin":
+            argv = argv[2:] if argv[1:2] == ["--"] else argv[1:]
         if not argv:
             continue
         prog, args, shown = argv[0], argv[1:], " ".join(argv)
         if prog == "pkill" or (prog == "killall" and not restarts_only_ui_agents(args)):
             yield shown, f"`{prog}` chooses its targets by name or pattern."
-        elif prog == "kill" and kill_reaches_a_group(args):
-            yield shown, "It signals a process group, or every process the user owns."
-        elif prog == "kill" and record["lookup"]:
-            yield shown, "Its targets come from a search of the process table."
+        elif prog == "kill":
+            targets = kill_targets(args)
+            if targets is None:
+                continue
+            if any("".join(target.split()).startswith("-") for target in targets):
+                yield shown, "It signals a process group, or every process the user owns."
+            elif record["lookup"]:
+                yield shown, "Its targets come from a search of the process table."
+            elif not record["direct"] or argv is not record["argv"]:
+                yield shown, ("It reaches `kill` by a path or behind a wrapper, which skips the "
+                              "shell guard. Call plain `kill`.")
 
 
 def signal_verdict(commands):
@@ -776,94 +858,177 @@ def signal_verdict(commands):
 
 # The same rule at the moment such code is written (both clients offer a hook
 # on file edits: Claude Code's Edit and Write tools, Codex's apply_patch,
-# whose `tool_input.command` is the patch text). Only what an edit INTRODUCES
-# is judged: text it replaces, or that the file already holds, may stay.
-#   - A shell file (by extension or shebang) is read with the rule above.
-#   - A source file in another language is searched for a string literal that
-#     starts with a pattern-based terminator (`execSync("pkill -f …")`,
-#     `["killall", name]`): it runs through `sh`, which loads no shell guard,
-#     so nothing else would stop it.
+# whose `tool_input.command` is the patch text). The file the edit PRODUCES is
+# compared with the file as it is: what it already held may stay, one more
+# occurrence may not, and a changed argument is read inside its command.
+#   - A shell file (by extension, by a startup file's name, or by the shebang
+#     of the result) is read with the rule above.
+#   - A source file in another language is searched, by a heuristic, for a
+#     string literal that starts with a pattern-based terminator
+#     (`execSync("pkill -f …")`, `["killall", name]`): it runs through `sh`,
+#     which loads no shell guard, so nothing else would stop it.
 # Not judged: prose, Nix modules (declaring an application restart there is
-# what this guard tells agents to do), and signals another language sends by
-# system call, where a group the code started itself cannot be told from one
-# it looked up. The signal guard's own sources and tests, and this file's,
-# necessarily contain the code they refuse.
+# what this guard tells agents to do), a shell file with neither a known name
+# nor a shebang, and signals another language sends by system call, where a
+# group the code started itself cannot be told from one it looked up.
 EDIT_TOOLS = {"Edit", "Write", "MultiEdit", "apply_patch"}
-SIGNAL_GUARD_SOURCES = ("/ai/shell-guard/kill-guard.sh", "/ai/shell-guard/kill-guard-test.sh",
-                        "/ai/hooks/nix-only-guard.py", "/ai/hooks/nix-only-guard-test.py")
+# The signal guard's own sources and tests necessarily contain the code they
+# refuse. Relative to the root of the machine's nix-config checkout or one of
+# its linked worktrees, which main() is told with `--nix-config`; the same
+# path anywhere else is judged (see guard_source).
+SIGNAL_GUARD_SOURCES = ("ai/shell-guard/kill-guard.sh", "ai/shell-guard/kill-guard-test.sh",
+                        "ai/hooks/nix-only-guard.py", "ai/hooks/nix-only-guard-test.py")
 SHELL_FILE_RE = re.compile(r"\.(?:sh|bash|zsh|ksh|command)$")
+SHELL_STARTUP_FILES = {".zshenv", ".zshrc", ".zprofile", ".zlogin", ".bashrc", ".bash_profile",
+                       ".profile", ".envrc"}
 SOURCE_FILE_RE = re.compile(r"\.(?:py|js|mjs|cjs|ts|mts|cts|tsx|jsx|rb|pl|php|lua|go|rs|swift|java|kt)$"
                             r"|(?:^|/)package\.json$")
-TERMINATOR_LITERAL_RE = re.compile(r"""["'`](?:/usr/bin/)?(pkill|killall)(?=["'`\s])""")
-PATCH_FILE_RE = re.compile(r"\*\*\* (?:Add|Update) File: (.+)$")
+TERMINATOR_LITERAL_RE = re.compile(
+    r"""["'`](?:/usr/bin/)?(?:pkill|(?P<by_name>killall))(?=["'`\s])""")
+COMMENT_LINE_RE = re.compile(r"\s*(?:#|//|\*|--)")
+PATCH_FILE_RE = re.compile(r"\*\*\* (Add|Update) File: (.+)")
+PATCH_MOVE_RE = re.compile(r"\*\*\* Move to: (.+)")
 
 
-def edit_changes(tool_input):
-    """(path, text added, text replaced) for each file an edit call writes.
-    The replaced text is None for a whole-file write."""
+def read_text(full):
+    """The file's text, or None when it cannot be read."""
+    try:
+        with open(full, "rb") as handle:
+            return handle.read(SCRIPT_MAX_BYTES).decode("utf-8", "replace")
+    except OSError:
+        return None
+
+
+def apply_edit(before, after, old, new, everywhere=False):
+    """(before, after) once `old` is replaced by `new` in `after`, as an edit
+    tool applies it. An `old` the text does not hold is added to `before` and
+    `new` to `after`, so the comparison still sees what the edit adds."""
+    if not old:
+        return before, f"{after}\n{new}" if after else new
+    if old in after:
+        return before, after.replace(old, new) if everywhere else after.replace(old, new, 1)
+    return f"{before}\n{old}", f"{after}\n{new}"
+
+
+def patch_results(patch, full_path):
+    """(destination path, text before, text after) for each file of a Codex
+    patch: each hunk's context and removed lines are replaced in the file by
+    its context and added lines, and a move names the destination."""
+    results = []
+    for section in re.split(r"(?m)^(?=\*\*\* (?:Add|Update|Delete) File: )", patch):
+        header = PATCH_FILE_RE.match(section)
+        if not header:
+            continue
+        kind, path = header.group(1), header.group(2).strip()
+        before = "" if kind == "Add" else (read_text(full_path(path)) or "")
+        after = before
+        for hunk in re.split(r"(?m)^@@.*$", section[header.end():]):
+            old, new = [], []
+            for line in hunk.split("\n"):
+                move = PATCH_MOVE_RE.match(line)
+                if move:
+                    path = move.group(1).strip()
+                elif line.startswith("*** "):
+                    continue
+                elif line.startswith("+"):
+                    new.append(line[1:])
+                elif line.startswith("-"):
+                    old.append(line[1:])
+                elif line.startswith(" "):
+                    old.append(line[1:])
+                    new.append(line[1:])
+            if old or new:
+                before, after = apply_edit(before, after, "\n".join(old), "\n".join(new))
+        results.append((path, before, after))
+    return results
+
+
+def edit_results(tool_input, full_path):
+    """(destination path, text before, text after) for each file an edit call
+    writes: whole files, so a command is read in its real context."""
     path = tool_input.get("file_path")
     if isinstance(path, str):
+        before = read_text(full_path(path)) or ""
         if isinstance(tool_input.get("content"), str):
-            return [(path, tool_input["content"], None)]
+            return [(path, before, tool_input["content"])]
         edits = tool_input.get("edits")
         edits = [e for e in edits if isinstance(e, dict)] if isinstance(edits, list) else [tool_input]
-        return [(path,
-                 "\n".join(e["new_string"] for e in edits if isinstance(e.get("new_string"), str)),
-                 "\n".join(e["old_string"] for e in edits if isinstance(e.get("old_string"), str)))]
+        after = before
+        for edit in edits:
+            old, new = edit.get("old_string"), edit.get("new_string")
+            if isinstance(old, str) and isinstance(new, str):
+                before, after = apply_edit(before, after, old, new, bool(edit.get("replace_all")))
+        return [(path, before, after)]
     patch = tool_input.get("command")
-    if not isinstance(patch, str):
-        return []
-    changes, current = [], None
-    for line in patch.split("\n"):
-        header = PATCH_FILE_RE.match(line)
-        if header:
-            current = (header.group(1).strip(), [], [])
-            changes.append(current)
-        elif line.startswith(("*** Delete File:", "*** Begin Patch", "*** End Patch")):
-            current = None
-        elif current is not None and line.startswith("+"):
-            current[1].append(line[1:])
-        elif current is not None and line.startswith("-"):
-            current[2].append(line[1:])
-    return [(path, "\n".join(added), "\n".join(removed)) for path, added, removed in changes]
+    return patch_results(patch, full_path) if isinstance(patch, str) else []
 
 
-def signalling_text(text, shell):
-    """What `text` holds that the signalling rule refuses, as a set."""
-    if shell:
-        commands = []
-        runs_script_string(text, [], commands)
-        return {shown for shown, _why in signalling(commands)}
-    found = set()
+def terminator_literals(text):
+    """Each string literal in another language's source that shells out to a
+    pattern-based terminator. A heuristic, not a parser: it reads one line at
+    a time, skips comment lines, and lets the name-based one through only
+    when the rest of its call, on that line, names interface agents alone."""
+    found = []
     for line in text.split("\n"):
-        match = TERMINATOR_LITERAL_RE.search(line)
-        if match and not (match.group(1) == "killall"
-                          and any(agent in line for agent in SELF_RESTARTING_UI_AGENTS)):
-            found.add(line.strip())
+        if COMMENT_LINE_RE.match(line):
+            continue
+        for match in TERMINATOR_LITERAL_RE.finditer(line):
+            rest = re.split(r"[)\]]", line[match.end():], maxsplit=1)[0]
+            words = re.findall(r"-?[A-Za-z0-9_.$-]+", rest)
+            if match.group("by_name") is None or not restarts_only_ui_agents(words):
+                found.append(line.strip())
     return found
 
 
-def edit_verdict(tool_input, cwd=None):
+def signalling_text(text, shell):
+    """What `text` holds that the signalling rule refuses, one entry per
+    occurrence."""
+    if not shell:
+        return terminator_literals(text)
+    commands = []
+    runs_script_string(text, [], commands)
+    return [shown for shown, _why in signalling(commands)]
+
+
+def guard_source(full, checkout):
+    """True when `full` is one of SIGNAL_GUARD_SOURCES in the machine's
+    nix-config repository: the checkout `--nix-config` names, or a linked
+    worktree whose git directory is that checkout's."""
+    relative = next((source for source in SIGNAL_GUARD_SOURCES if full.endswith("/" + source)), None)
+    if not checkout or relative is None:
+        return False
+    root = os.path.realpath(full[:-len(relative) - 1])
+    if root == os.path.realpath(checkout):
+        return True
+    env = {key: value for key, value in os.environ.items() if not key.startswith("GIT_")}
+    try:
+        found = subprocess.run(["git", "-C", root, "rev-parse", "--path-format=absolute",
+                                "--git-common-dir", "--show-toplevel"],
+                               capture_output=True, text=True, timeout=5, env=env)
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+    lines = found.stdout.split("\n")
+    return (found.returncode == 0 and len(lines) >= 2
+            and os.path.realpath(lines[0]) == os.path.realpath(os.path.join(checkout, ".git"))
+            and os.path.realpath(lines[1]) == root)
+
+
+def edit_verdict(tool_input, cwd=None, checkout=None):
     """The denial reason for a file edit that introduces signalling code."""
-    for path, added, replaced in edit_changes(tool_input):
+    def full_path(path):
         full = os.path.expanduser(path)
-        if not os.path.isabs(full):
-            full = os.path.join(cwd or "", full)
-        if full.endswith(SIGNAL_GUARD_SOURCES):
+        return full if os.path.isabs(full) else os.path.join(cwd or "", full)
+
+    for path, before, after in edit_results(tool_input, full_path):
+        if guard_source(full_path(path), checkout):
             continue
-        existing = None
-        try:
-            with open(full, "rb") as handle:
-                existing = handle.read(SCRIPT_MAX_BYTES).decode("utf-8", "replace")
-        except OSError:
-            pass
-        if replaced is None:
-            replaced = existing or ""
-        head = (added if existing is None else existing)[:128].encode("utf-8")
-        shell = bool(SHELL_FILE_RE.search(path) or SHELL_SHEBANG_RE.match(head))
+        shell = bool(SHELL_FILE_RE.search(path) or os.path.basename(path) in SHELL_STARTUP_FILES
+                     or SHELL_SHEBANG_RE.match(after[:128].encode("utf-8")))
         if not shell and not SOURCE_FILE_RE.search(path):
             continue
-        introduced = sorted(signalling_text(added, shell) - signalling_text(replaced, shell))
+        counts = collections.Counter(signalling_text(after, shell))
+        counts.subtract(collections.Counter(signalling_text(before, shell)))
+        introduced = sorted(shown for shown, count in counts.items() if count > 0)
         if introduced:
             # The file's name, not its path: a long path would push the reason
             # out of the one pipe write a denial has (see denial()).
@@ -873,7 +1038,7 @@ def edit_verdict(tool_input, cwd=None):
     return None
 
 
-def check_command(command, typed=True):
+def check_command(command, typed=True, prompts=True):
     """Rules that need the whole command, heredoc bodies included.
 
     split_segments() drops a heredoc fed to an interpreter as data, which is
@@ -889,7 +1054,7 @@ def check_command(command, typed=True):
     heredocs expand on purpose."""
     if typed and unquoted_heredoc_substitution(command):
         return HEREDOC_SUBSTITUTION
-    if typed and runs_script_string(command):
+    if typed and prompts and runs_script_string(command):
         return STRING_EXECUTION
     if not GITHUB_API_RE.search(command) or not SCRIPT_WRITE_RE.search(command):
         return None
@@ -1524,10 +1689,21 @@ def script_verdict(path, kind, cwd, depth, seen):
             data += handle.read(SCRIPT_MAX_BYTES + 1 - len(data))
     except OSError:
         return None
-    if len(data) > SCRIPT_MAX_BYTES or repository_script(full):
+    if len(data) > SCRIPT_MAX_BYTES:
         return None
-    reason = command_verdict(expand_assignments(data.decode("utf-8", "replace")),
-                             cwd, depth + 1, seen, typed=False)
+    text = expand_assignments(data.decode("utf-8", "replace"))
+    if repository_script(full):
+        # Its own lines pass, but not the files it runs: on 2026-11-11 the
+        # typed script and the one below it were unchanged, and the edited
+        # file was the one they sourced.
+        inner, reason = [], None
+        runs_script_string(text, inner)
+        for inner_path, inner_kind in inner:
+            reason = script_verdict(inner_path, inner_kind, cwd, depth + 1, seen)
+            if reason:
+                break
+    else:
+        reason = command_verdict(text, cwd, depth + 1, seen, typed=False)
     # The file's name, not its path, for the same reason as in edit_verdict().
     return reason and f"Blocked: the script {os.path.basename(path)} would run this.\n\n{reason}"
 
@@ -1535,11 +1711,12 @@ def script_verdict(path, kind, cwd, depth, seen):
 def command_verdict(command, cwd=None, depth=0, seen=None, typed=True, prompts=True):
     """The denial reason for a typed command or a script's text, or None.
 
-    `prompts` selects the two rules that exist only because Claude Code stops
-    to ask the owner (a script string, an unquoted heredoc that substitutes);
-    Codex asks nothing, so its hook passes False."""
+    `prompts` selects the rule that exists only because Claude Code stops to
+    ask the owner about a script string; Codex asks nothing, so its hook
+    passes False. The unquoted-heredoc rule stays for both: it is what keeps
+    a command inside a heredoc's substitution from running unread."""
     seen = set() if seen is None else seen
-    reason = check_command(command, typed and prompts)
+    reason = check_command(command, typed, prompts)
     if reason:
         return reason
     for segment in split_segments(command):
@@ -1554,6 +1731,12 @@ def command_verdict(command, cwd=None, depth=0, seen=None, typed=True, prompts=T
             return reason
     scripts, commands = [], []
     runs_script_string(command, scripts, commands)
+    if not typed:
+        # A script's own heredocs expand on purpose (see check_command), so
+        # the commands inside their substitutions are read here instead.
+        for body in unquoted_heredoc_bodies(command):
+            for inner in substitutions(body):
+                runs_script_string(inner, [], commands)
     reason = signal_verdict(commands)
     if reason:
         return reason
@@ -1575,15 +1758,19 @@ def main():
     tool_input = payload.get("tool_input")
     if not isinstance(tool_input, dict):
         sys.exit(0)
+    # `--client codex` and `--nix-config CHECKOUT`, each optional, as
+    # ai/hooks/default.nix declares them. Anything else keeps the defaults,
+    # which are the stricter ones.
+    options = dict(zip(sys.argv[1::2], sys.argv[2::2]))
     cwd = payload.get("cwd")
     cwd = cwd if isinstance(cwd, str) else None
     if payload.get("tool_name") in EDIT_TOOLS:
-        reason = edit_verdict(tool_input, cwd)
+        reason = edit_verdict(tool_input, cwd, options.get("--nix-config"))
     else:
         command = tool_input.get("command")
         if not isinstance(command, str) or not command:
             sys.exit(0)
-        reason = command_verdict(command, cwd, prompts=sys.argv[1:] != ["--client", "codex"])
+        reason = command_verdict(command, cwd, prompts=options.get("--client") != "codex")
     if reason:
         deny(reason)
 

@@ -59,6 +59,11 @@ before you changed anything, in your handoff.
 - Never run `sh -c`, `bash -c`, `zsh -c` or `eval` with a script string, and never put `rm` inside
   heredocs or command substitutions: each puts a permission prompt in front of the owner, who must
   never see one. Write a multi-step script to a file and run it with `bash <file>`.
+- Never write or run code that signals a process group (a negative `kill` target, `killpg`), `-1`,
+  or a target chosen by name, pattern or a search of the process table (`pkill`, `killall`,
+  `pgrep … | xargs kill`). Stop only process ids your own command started and recorded
+  (`cmd & pid=$!`, later `kill "$pid"`). Never test process-termination code on this machine: on
+  2026-11-11 a worker's cleanup script terminated every application the owner had open.
 - When a required decision is missing, stop and report it rather than expanding the work.
 - Stop when the acceptance criteria are met.
 

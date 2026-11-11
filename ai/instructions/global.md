@@ -156,15 +156,13 @@ alias). When memory is short it waits for a turn; otherwise it starts at once.
 Either way the command runs under macOS's utility QoS clamp at `nice` 10, below
 the owner's interactive apps and below the self-hosted CI runners, which
 outrank agent work so the gate is not starved. Never run heavy work outside it.
-Where this is enforced: in Claude Code sessions the managed command guard
-refuses known-heavy commands (`tsc`, `vitest`, `cargo test`, `pnpm test`,
+Where this is enforced: in Claude Code and Codex sessions the managed command
+guard refuses known-heavy commands (`tsc`, `vitest`, `cargo test`, `pnpm test`,
 `just verify` and the like, launched directly or through `npx`, `pnpm dlx`,
 `nix develop -c` and similar) that skip the queue. It cannot know every heavy
-command, so a command it allows is not thereby light. In Codex sessions nothing
-refuses them yet (issue #252), so there the rule is an instruction and you keep
-it yourself. Run long heavy commands in the background, so a tool timeout
-cannot kill a command that is still queued. `membrake status` shows the queue
-and the frozen jobs.
+command, so a command it allows is not thereby light. Run long heavy commands
+in the background, so a tool timeout cannot kill a command that is still
+queued. `membrake status` shows the queue and the frozen jobs.
 
 Memory is guarded by `membrake`, a root daemon. When memory gets tight it
 freezes (`SIGSTOP`) the newest heavy agent job, freezes them all if the Mac
@@ -322,6 +320,35 @@ Python that needs packages through uv (`uv run`, a project venv,
 interactive terminal and an agent's shell. Never `pip install` into an
 interpreter and never pass `--break-system-packages`: uv's interpreters refuse
 it on purpose.
+
+## Stopping processes
+
+**Never signal what your own command did not start.** On 2026-11-11 a script
+written by a delegated worker walked the process table, collected every
+process group on this Mac and signalled each one. Every application the owner
+had open was terminated, in every session (nix-config issue #270). The cleanup
+it was written for was not needed.
+
+- Stop only process ids your own command started and recorded when it started
+  them (`cmd & pid=$!`, later `kill "$pid"` and `wait "$pid"`).
+- Never write, run or delegate code, in any language, that signals a process
+  group (a negative `kill` target, `killpg`), `-1`, or a target chosen by
+  name, by pattern or by searching the process table (`pkill`, `killall`,
+  `pgrep … | xargs kill`). The one exception is `killall` on the interface
+  agents the command guard allows (Dock, Finder, the menu bar agents).
+- Do not write cleanup that hunts for leftovers: a bug in the search has no
+  boundary. If something a command started is still running, stop the ids you
+  recorded, or report what is left.
+- Never test process-termination code against the live machine. A target that
+  must not be signalled goes only to a function that returns a verdict and
+  sends nothing; a real signal goes only to a process the test itself started.
+
+Where this is enforced: every shell Claude Code and Codex start refuses a
+process group it did not start and the pattern-based terminators, and both
+clients' hooks refuse such code when it is typed, run from a script, or
+written into a shell file. Agents and the owner's applications run as one
+user, so the system delivers any signal that is sent: a program that makes
+the system call itself is stopped by this rule and by nothing else.
 
 ## Credentials
 

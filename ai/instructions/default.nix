@@ -141,6 +141,11 @@ let
     "progress comes from the current client's status and wait tools for the"
     "**closed immediately afterwards**."
 
+    # Signalling (issue #270): the rule, and the half that keeps its own
+    # tests from repeating the incident.
+    "**Never signal what your own command did not start.**"
+    "- Never test process-termination code against the live machine. A target that"
+
     # Everything else that was asked for explicitly.
     "**Checkpoint durably.**"
     "**This machine is declarative.**"

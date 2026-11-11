@@ -89,14 +89,36 @@ def installs_python_packages_outside_uv(prog, args, raw):
     return flagless[:1] == ["install"]
 
 
+# The supervisor forwards a denial in one atomic pipe write and drops one
+# larger than PIPE_BUF (supervisor.py, emit(); 512 bytes on macOS), and a
+# dropped denial lets the command run. The build contract showed it on
+# 2026-11-11: a 560-byte reason for `kill -TERM -- "-$group"` was never
+# delivered. A long reason therefore loses its middle: the start names the
+# command, the end says what to do instead.
+DENIAL_LIMIT = 500
+DENIAL_HEAD = 120
+
+
+def denial(reason):
+    """The hook output for a denial, as the supervisor re-serialises it."""
+    def encoded(text):
+        return json.dumps({
+            "hookSpecificOutput": {
+                "hookEventName": "PreToolUse",
+                "permissionDecision": "deny",
+                "permissionDecisionReason": text,
+            }
+        }, separators=(",", ":"))
+
+    output, cut = encoded(reason), 0
+    while len(output) > DENIAL_LIMIT and DENIAL_HEAD + cut < len(reason):
+        cut += 20
+        output = encoded(reason[:DENIAL_HEAD] + " [...] " + reason[DENIAL_HEAD + cut:])
+    return output
+
+
 def deny(reason):
-    print(json.dumps({
-        "hookSpecificOutput": {
-            "hookEventName": "PreToolUse",
-            "permissionDecision": "deny",
-            "permissionDecisionReason": reason,
-        }
-    }))
+    print(denial(reason))
     sys.exit(0)
 
 
@@ -486,7 +508,7 @@ def peel(tokens):
     return None
 
 
-def runs_script_string(command, scripts=None):
+def runs_script_string(command, scripts=None, commands=None):
     """True when `sh|bash|zsh -c` or `eval` is in an executable position.
 
     Walks the command the way the shell tokenises it: quoting, `\\` escapes,
@@ -500,12 +522,32 @@ def runs_script_string(command, scripts=None):
     When `scripts` is a list, every file this command would execute as shell
     is appended to it: the file a shell is given (`bash file`, `zsh -li file`),
     the file `source` or `.` reads, and a program named by path (`./run.sh`),
-    which script_verdict() opens only if it has a shell shebang."""
+    which script_verdict() opens only if it has a shell shebang.
+
+    When `commands` is a list, every other simple command is appended to it
+    as {"argv": [program name, argument, ...], "lookup": bool}, wherever it
+    stands (after `do`, inside `$(...)`, behind `xargs`). `lookup` is true
+    when its targets come from a process search: a PROCESS_LOOKUPS program
+    earlier in the same pipeline, or inside a substitution among its
+    arguments. An argument that is only a substitution leaves no word."""
     command = strip_heredoc_bodies(command)
     mode, skip, wrapper, duration = "cmd", 0, None, False
     stack = []  # open '"', or '(' / '`' with the outer word and state saved
     word, started = [], False
     found = False  # a script string, when collecting scripts past it
+    current, fed = None, False  # the command being collected; a lookup feeds this pipeline
+
+    def begin(name):
+        nonlocal current, fed
+        if commands is None:
+            return
+        current = {"argv": [name], "lookup": fed}
+        commands.append(current)
+        if name in PROCESS_LOOKUPS:
+            fed = True
+            outer = next((entry[7] for entry in reversed(stack) if len(entry) > 1), None)
+            if outer is not None:
+                outer["lookup"] = True
 
     def hit():
         # Typed, the first hit decides. Collecting, keep walking: a file's
@@ -550,6 +592,9 @@ def runs_script_string(command, scripts=None):
                 mode = "arg"
                 if scripts is not None and "/" in text:
                     scripts.append((text, "program"))
+                begin(name)
+        elif mode == "arg" and current is not None:
+            current["argv"].append(text)
         return False
 
     def finish():
@@ -559,15 +604,16 @@ def runs_script_string(command, scripts=None):
         return had and judge(text)
 
     def open_command(context):
-        nonlocal mode, skip, wrapper, duration, word, started
-        stack.append((context, word, started, mode, skip, wrapper, duration))
+        nonlocal mode, skip, wrapper, duration, word, started, current, fed
+        stack.append((context, word, started, mode, skip, wrapper, duration, current, fed))
         word, started = [], False
         mode, skip, wrapper, duration = "cmd", 0, None, False
+        current, fed = None, False
 
     def close_command():
-        nonlocal mode, skip, wrapper, duration, word, started
+        nonlocal mode, skip, wrapper, duration, word, started, current, fed
         hit = finish()
-        _, word, started, mode, skip, wrapper, duration = stack.pop()
+        _, word, started, mode, skip, wrapper, duration, current, fed = stack.pop()
         return hit
 
     i, n = 0, len(command)
@@ -649,10 +695,182 @@ def runs_script_string(command, scripts=None):
             if finish():
                 return True
             mode, skip, wrapper, duration = "cmd", 0, None, False
+            current = None
+            # `a | b` and `a |& b` keep the pipeline; `||` and the rest end it.
+            before, after = command[i - 1:i], command[i + 1:i + 2]
+            if not ((c == "|" and "|" not in (before, after)) or (c == "&" and before == "|")):
+                fed = False
         else:
             word.append(c)
         i += 1
     return finish() or found
+
+
+# No agent command may signal what it did not start (issue #270). On
+# 2026-11-11 a script written by a delegated worker walked the process table,
+# collected 446 process groups, the first being group 1, and ran
+# `kill -TERM -- -<group>` for each: every application the owner had open was
+# terminated. This guard read only the typed command (`bash interrupt.sh`);
+# the script it ran was tracked and edited, and nothing judged its lines for
+# signalling.
+#
+# Three things are refused, wherever they stand in a typed command or in a
+# script it runs (the walker above finds the program after `do`, inside
+# `$(...)`, behind `xargs` or `command`):
+#   - `kill` aimed at a process group (any target that starts with `-`, which
+#     includes `-1`, every process the user owns);
+#   - `pkill`, and `killall` beyond the interface agents: they choose targets
+#     by name or pattern;
+#   - `kill` fed by `pgrep` or `pidof` (`pgrep … | xargs kill`,
+#     `kill $(pgrep …)`), the same thing in two steps.
+# Listing (`kill -l`) and the probe signal 0 deliver nothing and pass. `kill 0`
+# passes too: it reaches only the caller's own group.
+#
+# The limit: this reads shell text. A program that makes the system call
+# itself is not seen, and the shell guard (../shell-guard/kill-guard.sh) is
+# what refuses a group at the moment of the call. Agents and the owner's
+# applications run as one user, so the system delivers any signal that is
+# sent.
+PROCESS_LOOKUPS = {"pgrep", "pidof"}
+SIGNAL_RULE = (" Signal only process ids this command started and recorded (`cmd & pid=$!`, then "
+               "`kill $pid`). Never a process group, `-1`, or a target found by name, pattern or a "
+               "process search: on 2026-11-11 that terminated every application the owner had "
+               "open (nix-config issue 270).")
+
+
+def kill_reaches_a_group(args):
+    """True when `kill ARGS` names a process group or every process."""
+    first = 0
+    if args and args[0].startswith("-") and args[0] != "--":
+        if args[0] in ("-l", "-L", "-0"):
+            return False
+        first = 1
+        if args[0] in ("-s", "-n"):
+            if args[1:2] == ["0"]:
+                return False
+            first = 2
+    return any("".join(target.split()).startswith("-") for target in args[first:] if target != "--")
+
+
+def signalling(commands):
+    """(the command as written, why it is refused) for each collected command
+    that signals a process group or chooses its targets by name or pattern."""
+    for record in commands:
+        argv = record["argv"][1:] if record["argv"][0] == "builtin" else record["argv"]
+        if not argv:
+            continue
+        prog, args, shown = argv[0], argv[1:], " ".join(argv)
+        if prog == "pkill" or (prog == "killall" and not restarts_only_ui_agents(args)):
+            yield shown, f"`{prog}` chooses its targets by name or pattern."
+        elif prog == "kill" and kill_reaches_a_group(args):
+            yield shown, "It signals a process group, or every process the user owns."
+        elif prog == "kill" and record["lookup"]:
+            yield shown, "Its targets come from a search of the process table."
+
+
+def signal_verdict(commands):
+    for shown, why in signalling(commands):
+        return f"Blocked: `{shown}`\n\n{why}{SIGNAL_RULE}"
+    return None
+
+
+# The same rule at the moment such code is written (both clients offer a hook
+# on file edits: Claude Code's Edit and Write tools, Codex's apply_patch,
+# whose `tool_input.command` is the patch text). Only what an edit INTRODUCES
+# is judged: text it replaces, or that the file already holds, may stay.
+#   - A shell file (by extension or shebang) is read with the rule above.
+#   - A source file in another language is searched for a string literal that
+#     starts with a pattern-based terminator (`execSync("pkill -f …")`,
+#     `["killall", name]`): it runs through `sh`, which loads no shell guard,
+#     so nothing else would stop it.
+# Not judged: prose, Nix modules (declaring an application restart there is
+# what this guard tells agents to do), and signals another language sends by
+# system call, where a group the code started itself cannot be told from one
+# it looked up. The signal guard's own sources and tests, and this file's,
+# necessarily contain the code they refuse.
+EDIT_TOOLS = {"Edit", "Write", "MultiEdit", "apply_patch"}
+SIGNAL_GUARD_SOURCES = ("/ai/shell-guard/kill-guard.sh", "/ai/shell-guard/kill-guard-test.sh",
+                        "/ai/hooks/nix-only-guard.py", "/ai/hooks/nix-only-guard-test.py")
+SHELL_FILE_RE = re.compile(r"\.(?:sh|bash|zsh|ksh|command)$")
+SOURCE_FILE_RE = re.compile(r"\.(?:py|js|mjs|cjs|ts|mts|cts|tsx|jsx|rb|pl|php|lua|go|rs|swift|java|kt)$"
+                            r"|(?:^|/)package\.json$")
+TERMINATOR_LITERAL_RE = re.compile(r"""["'`](?:/usr/bin/)?(pkill|killall)(?=["'`\s])""")
+PATCH_FILE_RE = re.compile(r"\*\*\* (?:Add|Update) File: (.+)$")
+
+
+def edit_changes(tool_input):
+    """(path, text added, text replaced) for each file an edit call writes.
+    The replaced text is None for a whole-file write."""
+    path = tool_input.get("file_path")
+    if isinstance(path, str):
+        if isinstance(tool_input.get("content"), str):
+            return [(path, tool_input["content"], None)]
+        edits = tool_input.get("edits")
+        edits = [e for e in edits if isinstance(e, dict)] if isinstance(edits, list) else [tool_input]
+        return [(path,
+                 "\n".join(e["new_string"] for e in edits if isinstance(e.get("new_string"), str)),
+                 "\n".join(e["old_string"] for e in edits if isinstance(e.get("old_string"), str)))]
+    patch = tool_input.get("command")
+    if not isinstance(patch, str):
+        return []
+    changes, current = [], None
+    for line in patch.split("\n"):
+        header = PATCH_FILE_RE.match(line)
+        if header:
+            current = (header.group(1).strip(), [], [])
+            changes.append(current)
+        elif line.startswith(("*** Delete File:", "*** Begin Patch", "*** End Patch")):
+            current = None
+        elif current is not None and line.startswith("+"):
+            current[1].append(line[1:])
+        elif current is not None and line.startswith("-"):
+            current[2].append(line[1:])
+    return [(path, "\n".join(added), "\n".join(removed)) for path, added, removed in changes]
+
+
+def signalling_text(text, shell):
+    """What `text` holds that the signalling rule refuses, as a set."""
+    if shell:
+        commands = []
+        runs_script_string(text, [], commands)
+        return {shown for shown, _why in signalling(commands)}
+    found = set()
+    for line in text.split("\n"):
+        match = TERMINATOR_LITERAL_RE.search(line)
+        if match and not (match.group(1) == "killall"
+                          and any(agent in line for agent in SELF_RESTARTING_UI_AGENTS)):
+            found.add(line.strip())
+    return found
+
+
+def edit_verdict(tool_input, cwd=None):
+    """The denial reason for a file edit that introduces signalling code."""
+    for path, added, replaced in edit_changes(tool_input):
+        full = os.path.expanduser(path)
+        if not os.path.isabs(full):
+            full = os.path.join(cwd or "", full)
+        if full.endswith(SIGNAL_GUARD_SOURCES):
+            continue
+        existing = None
+        try:
+            with open(full, "rb") as handle:
+                existing = handle.read(SCRIPT_MAX_BYTES).decode("utf-8", "replace")
+        except OSError:
+            pass
+        if replaced is None:
+            replaced = existing or ""
+        head = (added if existing is None else existing)[:128].encode("utf-8")
+        shell = bool(SHELL_FILE_RE.search(path) or SHELL_SHEBANG_RE.match(head))
+        if not shell and not SOURCE_FILE_RE.search(path):
+            continue
+        introduced = sorted(signalling_text(added, shell) - signalling_text(replaced, shell))
+        if introduced:
+            # The file's name, not its path: a long path would push the reason
+            # out of the one pipe write a denial has (see denial()).
+            return (f"Blocked: this edit to {os.path.basename(path)} introduces "
+                    f"`{introduced[0]}`.\n\nIt signals a "
+                    f"process group or chooses its targets by name or pattern.{SIGNAL_RULE}")
+    return None
 
 
 def check_command(command, typed=True):
@@ -1171,10 +1389,6 @@ def check(segment, typed=True, heavy=True, others=True):
                                        "bootout", "enable", "disable", "start",
                                        "stop", "remove", "submit", "setenv", "unsetenv"}:
         return blocked(f"`launchctl {sub}`")
-    if prog == "killall" and restarts_only_ui_agents(args):
-        return None
-    if prog in {"killall", "pkill"}:
-        return blocked(f"`{prog}`")
     if prog == "brew" and sub in {"install", "uninstall", "remove", "rm", "upgrade",
                                   "reinstall", "tap", "untap", "link", "unlink", "bundle"}:
         return blocked(f"`brew {sub}`")
@@ -1314,13 +1528,18 @@ def script_verdict(path, kind, cwd, depth, seen):
         return None
     reason = command_verdict(expand_assignments(data.decode("utf-8", "replace")),
                              cwd, depth + 1, seen, typed=False)
-    return reason and f"Blocked: the script {path} would run this.\n\n{reason}"
+    # The file's name, not its path, for the same reason as in edit_verdict().
+    return reason and f"Blocked: the script {os.path.basename(path)} would run this.\n\n{reason}"
 
 
-def command_verdict(command, cwd=None, depth=0, seen=None, typed=True):
-    """The denial reason for a typed command or a script's text, or None."""
+def command_verdict(command, cwd=None, depth=0, seen=None, typed=True, prompts=True):
+    """The denial reason for a typed command or a script's text, or None.
+
+    `prompts` selects the two rules that exist only because Claude Code stops
+    to ask the owner (a script string, an unquoted heredoc that substitutes);
+    Codex asks nothing, so its hook passes False."""
     seen = set() if seen is None else seen
-    reason = check_command(command, typed)
+    reason = check_command(command, typed and prompts)
     if reason:
         return reason
     for segment in split_segments(command):
@@ -1333,8 +1552,11 @@ def command_verdict(command, cwd=None, depth=0, seen=None, typed=True):
         reason = check(segment, typed, others=False)
         if reason:
             return reason
-    scripts = []
-    runs_script_string(command, scripts)
+    scripts, commands = [], []
+    runs_script_string(command, scripts, commands)
+    reason = signal_verdict(commands)
+    if reason:
+        return reason
     for path, kind in scripts:
         reason = script_verdict(path, kind, cwd, depth, seen)
         if reason:
@@ -1353,12 +1575,15 @@ def main():
     tool_input = payload.get("tool_input")
     if not isinstance(tool_input, dict):
         sys.exit(0)
-    command = tool_input.get("command")
-    if not isinstance(command, str) or not command:
-        sys.exit(0)
-
     cwd = payload.get("cwd")
-    reason = command_verdict(command, cwd if isinstance(cwd, str) else None)
+    cwd = cwd if isinstance(cwd, str) else None
+    if payload.get("tool_name") in EDIT_TOOLS:
+        reason = edit_verdict(tool_input, cwd)
+    else:
+        command = tool_input.get("command")
+        if not isinstance(command, str) or not command:
+            sys.exit(0)
+        reason = command_verdict(command, cwd, prompts=sys.argv[1:] != ["--client", "codex"])
     if reason:
         deny(reason)
 

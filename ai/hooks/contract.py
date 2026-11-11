@@ -22,14 +22,14 @@ def require(condition, message):
         raise ValueError(message)
 
 
-def payload(event, command="ls"):
+def payload(event, command="ls", tool_name="Bash", tool_input=None):
     return json.dumps({
         "hook_event_name": event,
         "session_id": "hook-contract",
         "cwd": "/nonexistent/agent-hook-contract/cwd",
         "source": "startup",
-        "tool_name": "Bash",
-        "tool_input": {"command": command},
+        "tool_name": tool_name,
+        "tool_input": {"command": command} if tool_input is None else tool_input,
     })
 
 
@@ -123,10 +123,14 @@ def main():
                         require(not run(hook, text, environment, scratch, env_program, bare_path),
                                 "denied malformed or harmless input")
                 for probe in hook.get("probes", []):
-                    denied = run(hook, payload(hook["event"], probe["command"]),
-                                 probe.get("environment", {}), scratch, env_program, bare_path)
-                    require(denied == probe["deny"], f"wrong decision for {probe['command']!r}")
-                    print(f"PASS {hook['name']}: {probe['command']!r}, {probe.get('environment', {})} -> {'deny' if denied else 'allow'}", flush=True)
+                    # A probe is a typed command, or another tool's whole input
+                    # (a file edit), named for the log by its `label`.
+                    label = probe.get("command") or probe["label"]
+                    text = payload(hook["event"], probe.get("command", "ls"),
+                                   probe.get("tool_name", "Bash"), probe.get("tool_input"))
+                    denied = run(hook, text, probe.get("environment", {}), scratch, env_program, bare_path)
+                    require(denied == probe["deny"], f"wrong decision for {label!r}")
+                    print(f"PASS {hook['name']}: {label!r}, {probe.get('environment', {})} -> {'deny' if denied else 'allow'}", flush=True)
             except (ValueError, OSError) as error:
                 raise ValueError(f"{hook['name']}: {error}") from None
             print(f"PASS {hook['name']}: malformed/empty/null/harmless inputs and output controls", flush=True)

@@ -122,12 +122,31 @@ shell:
 - `pkill` is refused. `killall` is refused except for the interface agents the
   command hook also allows (Dock, Finder and the menu bar agents).
 
+Both clients' PreToolUse hooks carry the same rule earlier, when the code is
+typed or written (`hooks/nix-only-guard.py`, declared for Claude Code and,
+with `--client codex`, for Codex, which therefore also gets the
+machine-change, credential and heavy-command rules):
+
+- A typed command, or a script it runs, is refused when it signals a process
+  group or `-1`, uses `pkill` or `killall` (beyond the interface agents), or
+  feeds `kill` from `pgrep` or `pidof`. The program is found wherever it
+  stands: after `do`, inside `$(...)`, behind `xargs`, `command` or `builtin`,
+  and as `/bin/kill`.
+- A file edit (Claude Code's Edit and Write, Codex's `apply_patch`) is refused
+  when it introduces such a command into a shell file, or a string that shells
+  out to a pattern-based terminator into a source file in another language.
+  Text the file already had may stay. Prose and Nix modules are not judged.
+
 **The limit.** Agents and the owner's applications run as one user, so the
-system delivers any signal an agent process does send. The guard covers the
-shell builtin, which is what scripts use. It does not cover a program that
+system delivers any signal an agent process does send. The shell guard covers
+the shell builtin, which is what scripts use. It does not cover a program that
 makes the system call itself (Python's `os.kill`, a compiled binary),
-`/bin/kill`, `builtin kill`, `command kill`, or `sh`. It stops a mistake at the
-moment it is made; it is not a boundary against intent.
+`/bin/kill`, `builtin kill`, `command kill`, or `sh`; the hooks catch the
+shell spellings of those when they are typed or written, and read no other
+language's signalling. For a program that makes the system call itself, the
+written rule in `instructions/global.md` ("Stopping processes") and review are
+all there is. These layers stop a mistake at the moment it is made; they are
+not a boundary against intent.
 
 `checks.<system>.agent-kill-guard` (macOS) runs `kill-guard-test.sh` in Nix's
 bash and zsh and the system's `/bin/bash` and `/bin/zsh`. The test sends a real

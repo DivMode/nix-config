@@ -138,6 +138,11 @@
       # bundle outside /Applications does not do reliably on darwin.
       "keka"
 
+      # Screenshot capture, annotation and OCR. An auto_updates cask kept
+      # current by Shottr's own updater (not Sparkle). Its settings and global
+      # hotkeys are declared in ../home/shottr.nix.
+      "shottr"
+
       # PDF editing. Reader cannot edit, which is the whole reason this is the
       # Pro cask and not `adobe-acrobat-reader`.
       #

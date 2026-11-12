@@ -8,6 +8,8 @@ let
   # mouse scrolled the trackpad's way until then.
   apps = {
     "com.lujjjh.LinearMouse" = "/Applications/LinearMouse.app";
+    # Its global hotkeys (./shottr.nix) only work while it runs.
+    "cc.ffitch.shottr" = "/Applications/Shottr.app";
   };
 
   # Launched through LaunchServices with `open`, never by exec'ing the binary.

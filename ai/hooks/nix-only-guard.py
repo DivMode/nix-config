@@ -960,12 +960,21 @@ def signal_verdict(commands):
 
 
 # The same rule at the moment such code is written (both clients offer a hook
-# on file edits: Claude Code's Edit and Write tools, Codex's apply_patch,
-# whose `tool_input.command` is the patch text). The file the edit PRODUCES is
-# compared with the file as it is: what it already held may stay, one more
-# occurrence may not, and a changed argument is read inside its command.
-#   - A shell file (by extension, by a startup file's name, or by the shebang
-#     of the result) is read with the rule above.
+# on file edits: Claude Code's Edit, MultiEdit and Write, Codex's apply_patch,
+# whose `tool_input.command` is the patch text). It judges the TEXT an edit
+# writes, each replacement against the text it replaces, and a whole-file
+# write against the file as it is. It does not rebuild the file the edit
+# produces: rounds 1 to 7 of the review of #271 showed that matching every
+# rule apply_patch and the edit tools use (anchors, blanks, line ends, end of
+# file) is a parser of its own that keeps being wrong. So an edit whose
+# meaning depends on the text around it (changing `12345` into `-1` inside
+# `kill -- 12345`) is not seen here. It is seen when the script runs: the
+# command hook reads an edited or untracked script it is asked to run, and the
+# shell guard refuses a foreign group at the call.
+#   - A shell file (by extension, by a startup file's name, by a shell shebang
+#     in the file now, or in any text the edit writes) is read with the rule
+#     above. Writing such a command into a string or a heredoc of one is
+#     refused too: the text is judged without knowing where it lands.
 #   - A source file in another language is searched, by a heuristic, for a
 #     string literal that starts with a pattern-based terminator
 #     (`execSync("pkill -f …")`, `["killall", name]`): it runs through `sh`,
@@ -1005,68 +1014,37 @@ def comment_line_re(path):
     if path.endswith(".php"):
         return re.compile(r"\s*(?:#|//)")
     return re.compile(r"(?!)")
+
+
 PATCH_FILE_RE = re.compile(r"\*\*\* (Add|Update) File: (.+)")
 PATCH_MOVE_RE = re.compile(r"\*\*\* Move to: (.+)")
-# The largest file, before or after an edit, that the check builds and reads
-# whole. Beyond it a shell file's edit is refused rather than judged in part.
+# The most text the check reads from one file or one replacement. A shell or
+# source file's edit that writes more is refused rather than judged in part;
+# an existing file larger than this counts as holding nothing.
 EDIT_MAX_BYTES = 4 << 20
 
 
-class Uncheckable(Exception):
-    """An edit whose file is too large to build and read whole."""
-
-
 def read_text(full):
-    """The file's text, or None when it cannot be read."""
+    """The file's text, or "" when it cannot be read or is too large."""
     try:
         with open(full, "rb") as handle:
             data = handle.read(EDIT_MAX_BYTES + 1)
     except OSError:
-        return None
-    if len(data) > EDIT_MAX_BYTES:
-        raise Uncheckable
-    return data.decode("utf-8", "replace")
+        return ""
+    return "" if len(data) > EDIT_MAX_BYTES else data.decode("utf-8", "replace")
 
 
-def apply_edit(before, after, old, new, everywhere=False, start=0):
-    """(before, after, end) once `old` is replaced by `new` in `after`, as an
-    edit tool applies it: the first occurrence at or after `start`, or every
-    one. `end` is where the replacement ends. An `old` the text does not hold
-    is added to `before` and `new` to `after`, so the comparison still sees
-    what the edit adds."""
-    if not old:
-        if len(after) + 1 + len(new) > EDIT_MAX_BYTES:
-            raise Uncheckable
-        joined = f"{after}\n{new}" if after else new
-        return before, joined, len(joined)
-    at = after.find(old, start)
-    if at == -1:
-        at = after.find(old)
-    if at == -1:
-        if len(after) + 1 + len(new) > EDIT_MAX_BYTES or len(before) + 1 + len(old) > EDIT_MAX_BYTES:
-            raise Uncheckable
-        return f"{before}\n{old}", f"{after}\n{new}", len(after) + 1 + len(new)
-    count = after.count(old) if everywhere else 1
-    if len(after) + count * (len(new) - len(old)) > EDIT_MAX_BYTES:
-        raise Uncheckable
-    if everywhere:
-        result = after.replace(old, new)
-        return before, result, len(result)
-    return before, after[:at] + new + after[at + len(old):], at + len(new)
-
-
-def edit_files(tool_input):
-    """(path read, path written, steps) for each file an edit call writes.
-    A step is (anchor, old text, new text, replace every occurrence); a
-    whole-file write is one step with old text None."""
+def edit_changes(tool_input):
+    """(path read, path written, [(old text or None, new text)]) for each file
+    an edit call writes. None stands for the whole file as it is: a Write,
+    or a patch that adds a file."""
     path = tool_input.get("file_path")
     if isinstance(path, str):
         if isinstance(tool_input.get("content"), str):
-            return [(path, path, [("", None, tool_input["content"], False)])]
+            return [(path, path, [(None, tool_input["content"])])]
         edits = tool_input.get("edits")
         edits = [e for e in edits if isinstance(e, dict)] if isinstance(edits, list) else [tool_input]
-        return [(path, path, [("", e["old_string"], e["new_string"], bool(e.get("replace_all")))
-                              for e in edits
+        return [(path, path, [(e["old_string"], e["new_string"]) for e in edits
                               if isinstance(e.get("old_string"), str) and isinstance(e.get("new_string"), str)])]
     patch = tool_input.get("command")
     files = []
@@ -1075,10 +1053,8 @@ def edit_files(tool_input):
         if not header:
             continue
         kind, path = header.group(1), header.group(2).strip()
-        destination, steps = path, []
-        # `@@ LINE` positions a hunk after that line of the file.
-        parts = re.split(r"(?m)^@@(.*)$", section[header.end():])
-        for anchor, hunk in [("", parts[0])] + list(zip(parts[1::2], parts[2::2])):
+        destination, changes = path, []
+        for hunk in re.split(r"(?m)^@@.*$", section[header.end():]):
             old, new = [], []
             for line in hunk.split("\n"):
                 move = PATCH_MOVE_RE.match(line)
@@ -1094,53 +1070,9 @@ def edit_files(tool_input):
                     old.append(line[1:])
                     new.append(line[1:])
             if old or new:
-                # `@@ TEXT`: the context is TEXT after the one blank.
-                anchor = anchor[1:] if anchor.startswith(" ") else anchor
-                steps.append((anchor.rstrip("\r"), "\n".join(old), "\n".join(new), False))
-        if kind == "Add":
-            steps = [("", None, "\n".join(new for _a, _o, new, _e in steps) + "\n", False)]
-        files.append((path, destination, steps))
+                changes.append((None if kind == "Add" else "\n".join(old), "\n".join(new)))
+        files.append((path, destination, changes))
     return files
-
-
-def anchor_end(text, anchor, position):
-    """Where a hunk's search starts once its `@@` anchor is placed: after the
-    first LINE at or past `position` that equals the anchor, trying in turn
-    exactly, then ignoring trailing blanks, then ignoring blanks on both
-    sides, as apply_patch does (codex-rs/apply-patch, seek_sequence.rs). A
-    line's end, CR LF or LF, is not part of it."""
-    lines, offset = [], position
-    for line in text[position:].split("\n"):
-        lines.append((line.rstrip("\r"), offset + len(line)))
-        offset += len(line) + 1
-    for same in (lambda a, b: a == b,
-                 lambda a, b: a.rstrip() == b.rstrip(),
-                 lambda a, b: a.strip() == b.strip()):
-        for line, end in lines:
-            if same(line, anchor):
-                return end
-    return position
-
-
-def edit_texts(before, steps, crlf=False):
-    """(text before, text after) for one file: the whole file, so a command
-    is read in its real context. With `crlf`, line ends are read as
-    apply_patch reads them: `\r\n` is one line end."""
-    if crlf:
-        # Not after a backslash: `\` CR LF is an escaped CR and then the end
-        # of the command, not a line continuation, and must stay so.
-        before = re.sub(r"(?<!\\)\r\n", "\n", before)
-    after, position = before, 0
-    for anchor, old, new, everywhere in steps:
-        if old is None:
-            if len(new) > EDIT_MAX_BYTES:
-                raise Uncheckable
-            after, position = new, len(new)
-            continue
-        if anchor.strip():
-            position = anchor_end(after, anchor, position)
-        before, after, position = apply_edit(before, after, old, new, everywhere, position)
-    return before, after
 
 
 def terminator_literals(text, path):
@@ -1211,72 +1143,33 @@ def read_edit(tool_input, cwd, checkout):
         full = os.path.expanduser(path)
         return full if os.path.isabs(full) else os.path.join(cwd or "", full)
 
-    def shell_file(path, head):
-        return bool(SHELL_FILE_RE.search(path) or os.path.basename(path) in SHELL_STARTUP_FILES
-                    or SHELL_SHEBANG_RE.match(head[:128].encode("utf-8", "replace")))
+    def shebang(text):
+        return bool(SHELL_SHEBANG_RE.match(text[:128].encode("utf-8", "replace")))
 
-    # apply_patch reads a file as lines, whatever ends them; Edit and Write
-    # match the bytes as they are.
-    crlf = not isinstance(tool_input.get("file_path"), str)
-    for path, destination, steps in edit_files(tool_input):
+    for path, destination, changes in edit_changes(tool_input):
         if guard_source(full_path(destination), checkout):
             continue
-        try:
-            before, after = edit_texts(read_text(full_path(path)) or "", steps, crlf)
-        except Uncheckable:
-            # Not judged in part: the text an edit carries is not the file it
-            # makes. Prose is not judged at all, so only files the rule reads
-            # are refused: a shell or source name, or a shell shebang in the
-            # file now or in anything the edit writes.
-            try:
-                with open(full_path(path), "rb") as handle:
-                    head = handle.read(128).decode("utf-8", "replace")
-            except OSError:
-                head = ""
-            def at_start(old):
-                # A whole-file write, or a replacement whose old text is the
-                # file's start, line by line and ignoring trailing blanks, as
-                # apply_patch may match it. A pure insertion goes at the end.
-                if old is None:
-                    return True
-                if not old:
-                    return False
-                trimmed = [line.rstrip() for line in old.split("\n")]
-                start = [line.rstrip() for line in head.replace("\r\n", "\n").split("\n")]
-                return start[:len(trimmed) - 1] == trimmed[:-1] and start[len(trimmed) - 1:len(trimmed)] in (
-                    [trimmed[-1]], []) or (len(trimmed) == 1 and start[0].startswith(trimmed[0]))
-
-            becomes_shell = any(shell_file("", new) and at_start(old) for _a, old, new, _e in steps)
-            if shell_file(destination, head) or SOURCE_FILE_RE.search(destination) or becomes_shell:
-                return (f"Blocked: {os.path.basename(destination)} is, or would become, too large "
-                        f"({EDIT_MAX_BYTES >> 20} MB) for the signalling check to read whole, so "
-                        "this edit cannot be judged. Make the change in a smaller file.")
-            continue
-        shell = shell_file(destination, after)
+        existing = read_text(full_path(path))
+        shell = bool(SHELL_FILE_RE.search(destination)
+                     or os.path.basename(destination) in SHELL_STARTUP_FILES
+                     or shebang(existing) or any(shebang(new) for _old, new in changes))
         if not shell and not SOURCE_FILE_RE.search(destination):
             continue
-        counts = collections.Counter(signalling_text(after, shell, destination))
-        counts.subtract(collections.Counter(signalling_text(before, shell, destination)))
-        introduced = [shown for shown, count in counts.items() if count > 0]
-        # The rebuilt file is apply_patch's result only as far as the hook
-        # follows its matching rules. So the text each replacement writes is
-        # also compared with the text it replaces: a forbidden command the
-        # replacement adds is refused even where the rebuild went astray. This
-        # errs towards refusing: writing such a command into a string of a
-        # shell file is refused too.
-        added = "\n".join(new for _a, old, new, _e in steps if old is not None)
-        removed = "\n".join(old for _a, old, _n, _e in steps if old is not None)
-        if added:
-            counts = collections.Counter(signalling_text(added, shell, destination))
-            counts.subtract(collections.Counter(signalling_text(removed, shell, destination)))
-            introduced += [shown for shown, count in counts.items() if count > 0]
-        introduced = sorted(set(introduced))
-        if introduced:
-            # The file's name, not its path: a long path would push the reason
-            # out of the one pipe write a denial has (see denial()).
-            return (f"Blocked: this edit to {os.path.basename(destination)} introduces "
-                    f"`{introduced[0]}`.\n\nIt signals a "
-                    f"process group or chooses its targets by name or pattern.{SIGNAL_RULE}")
+        for old, new in changes:
+            if len(new) > EDIT_MAX_BYTES:
+                return (f"Blocked: this edit writes more than {EDIT_MAX_BYTES >> 20} MB into "
+                        f"{os.path.basename(destination)}, too much for the signalling check to "
+                        "read. Make the change in smaller parts.")
+            counts = collections.Counter(signalling_text(new, shell, destination))
+            counts.subtract(collections.Counter(
+                signalling_text(existing if old is None else old, shell, destination)))
+            introduced = sorted(shown for shown, count in counts.items() if count > 0)
+            if introduced:
+                # The file's name, not its path: a long path would push the
+                # reason out of the one pipe write a denial has (see denial()).
+                return (f"Blocked: this edit to {os.path.basename(destination)} introduces "
+                        f"`{introduced[0]}`.\n\nIt signals a "
+                        f"process group or chooses its targets by name or pattern.{SIGNAL_RULE}")
     return None
 
 

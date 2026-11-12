@@ -145,18 +145,24 @@ machine-change, credential and heavy-command rules):
   `eval` (nested more than eight deep, the command is refused rather than
   read in part). A repository's own unchanged script is not judged, but the
   scripts it runs are.
-- A file edit (Claude Code's Edit and Write, Codex's `apply_patch`) is refused
-  when the file it produces holds such a command that the file did not hold
-  before, or when the text a replacement writes holds one that the text it
-  replaces did not (so a rebuild that strays from apply_patch's matching still
-  sees what is written; writing such a command into a string or heredoc of a
-  shell file is refused too). This applies to a shell file (by extension,
-  startup-file name or shebang). For a source file in another language a
-  line-by-line heuristic
-  looks for a string that shells out to a pattern-based terminator. It errs
-  towards refusing: a string that only holds such a command as data is
-  refused too. A shell or source file too large to read whole (4 MB) is
-  refused rather than judged in part. Prose and Nix modules are not judged.
+- A file edit (Claude Code's Edit, MultiEdit and Write, Codex's
+  `apply_patch`) is refused when the text it writes holds such a command that
+  the text it replaces did not (for a whole-file write, the file as it is).
+  This applies to a shell file: by extension, startup-file name, or a shell
+  shebang in the file or in what the edit writes. The text is judged without
+  knowing where it lands, so writing such a command into a string or a
+  heredoc of a shell file is refused too. An edit whose meaning depends on
+  the text around it (changing `12345` into `-1` inside `kill -- 12345`) is
+  not seen at this point; the command hook reads the edited script when it
+  is run, and the shell guard refuses at the call. The edit check does not
+  rebuild the edited file: seven review rounds showed that matching every
+  rule of apply_patch and the edit tools is a parser of its own that keeps
+  being wrong. For a source file in another language a line-by-line
+  heuristic looks for a string that shells out to a pattern-based
+  terminator; it errs towards refusing, so a string that only holds such a
+  command as data is refused too. An edit that writes more than 4 MB into a
+  shell or source file is refused rather than judged in part. Prose and Nix
+  modules are not judged.
 - If the hook itself fails on an input, it refuses the call and names the
   failure: a hook that crashes would let the call run.
 - Not read by the hooks: a command built from a variable (`$cmd …`,

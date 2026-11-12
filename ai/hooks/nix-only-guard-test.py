@@ -752,6 +752,8 @@ SCRIPT_FILES = {
     # Codex, when typed) is read too.
     "string.sh": "#!/bin/bash\nsh -c '/bin/kill -- -1'\n",
     "eval.sh": "#!/bin/bash\neval kill -- -1\n",
+    # What an argument-only edit to a script leaves behind (see EDIT_CASES).
+    "pid-edited.sh": "#!/bin/bash\nkill -- -1\n",
     "string-plain.sh": "#!/bin/bash\nsh -c 'echo hi'\neval echo hi\n",
     "string-dashdash.sh": "#!/bin/bash\nbash -c -- '/bin/kill -- -1'\n",
     "eval-dashdash.sh": "#!/bin/bash\neval -- '/bin/kill -- -1'\n",
@@ -776,6 +778,7 @@ SCRIPT_CASES = [
     ("a script only shown, not run", "cat {d}/plain.sh", "ALLOW"),
     ("the incident: group signals two scripts below the typed command", "bash {d}/interrupt.sh", "DENY"),
     ("a script that stops the process id it recorded", "bash {d}/own-child.sh", "ALLOW"),
+    ("an argument changed into a group, then run", "bash {d}/pid-edited.sh", "DENY"),
     ("a script whose unquoted heredoc runs a group signal", "bash {d}/heredoc.sh", "DENY"),
     ("a script whose heredocs hold it as data, or substitute something else",
      "bash {d}/heredoc-data.sh", "ALLOW"),
@@ -792,37 +795,77 @@ SCRIPT_CASES = [
 GROUP_SIGNAL = 'kill -TERM -- "-$group"'
 PATTERN_CALL = "p" + 'kill -f vite'
 EDIT_CASES = [
+    # Whole files.
     ("writing a shell script that signals a group",
      {"file_path": "{d}/new.sh", "content": f"#!/bin/bash\n{GROUP_SIGNAL}\n"}, "DENY"),
     ("writing a shell script that stops a recorded id",
      {"file_path": "{d}/new.sh", "content": "#!/bin/bash\nsleep 60 &\npid=$!\nkill \"$pid\"\n"}, "ALLOW"),
     ("a shell script by shebang alone",
      {"file_path": "{d}/run", "content": f"#!/usr/bin/env bash\n{GROUP_SIGNAL}\n"}, "DENY"),
+    ("a shell startup file with no shebang",
+     {"file_path": "{d}/.zshenv", "content": f"{GROUP_SIGNAL}\n"}, "DENY"),
     ("the pattern terminator in a shell script",
      {"file_path": "{d}/new.zsh", "content": f"{PATTERN_CALL}\n"}, "DENY"),
+    ("a shell script whose unquoted heredoc runs a group signal",
+     {"file_path": "{d}/new.sh", "content": "cat <<EOF\n$(/bin/kill -- -1)\nEOF\n"}, "DENY"),
+    ("rewriting a file with the group signal it already had",
+     {"file_path": "{d}/existing.sh", "content": f"#!/bin/bash\n{GROUP_SIGNAL}\necho finished\n"}, "ALLOW"),
+    ("rewriting a file of another language as a shell script",
+     {"file_path": "{d}/tool", "content": f"#!/bin/bash\n{GROUP_SIGNAL}\n"}, "DENY"),
     ("prose that names the forbidden form",
      {"file_path": "{d}/notes.md", "content": f"Never write `{GROUP_SIGNAL}` or `{PATTERN_CALL}`.\n"}, "ALLOW"),
     ("a Nix module declaring an application restart",
      {"file_path": "{d}/mouse.nix", "content": f"run /usr/bin/{PATTERN_CALL} || true\n"}, "ALLOW"),
+    ("a shell file too large to read",
+     {"file_path": "{d}/big.sh", "content": "# filler\n" * 600000}, "DENY"),
+    ("prose too large to read",
+     {"file_path": "{d}/big.md", "content": "filler\n" * 800000}, "ALLOW"),
+    # Replacements: each is judged against the text it replaces.
     ("an edit that adds a group signal",
      {"file_path": "{d}/existing.sh", "old_string": "echo done", "new_string": f"{GROUP_SIGNAL}\necho done"}, "DENY"),
     ("an edit that keeps a group signal the file already had",
      {"file_path": "{d}/existing.sh", "old_string": f"{GROUP_SIGNAL}\n", "new_string": f"{GROUP_SIGNAL}  # stop\n"}, "ALLOW"),
-    ("rewriting a file with the group signal it already had",
-     {"file_path": "{d}/existing.sh", "content": f"#!/bin/bash\n{GROUP_SIGNAL}\necho finished\n"}, "ALLOW"),
+    ("an edit that adds a second copy",
+     {"file_path": "{d}/existing.sh", "old_string": f"{GROUP_SIGNAL}\n",
+      "new_string": f"{GROUP_SIGNAL}\n{GROUP_SIGNAL}\n"}, "DENY"),
     ("several edits, one adding a group signal",
      {"file_path": "{d}/existing.sh", "edits": [{"old_string": "a", "new_string": "b"},
                                                 {"old_string": "echo done", "new_string": "kill -- -1"}]}, "DENY"),
+    # The deliberate refusal: the text is judged without knowing where it lands.
+    ("writing the form into a quoted message of a shell script",
+     {"file_path": "{d}/message.sh", "old_string": "old", "new_string": "kill -- -1"}, "DENY"),
+    # Two replacements are judged apart: their texts do not join into one.
+    ("two harmless replacements that would read as one command if joined",
+     {"file_path": "{d}/assign.sh", "edits": [{"old_string": "old-a", "new_string": "p\\"},
+                                              {"old_string": "old-b", "new_string": "kill worker"}]}, "ALLOW"),
+    # The stated limit: a change whose meaning depends on the text around it is
+    # not seen here; the command hook reads the edited script when it runs
+    # (see "an argument changed into a group, then run" below).
+    ("changing only an argument into a group",
+     {"file_path": "{d}/pid.sh", "old_string": "12345", "new_string": "-1"}, "ALLOW"),
+    # Another language.
     ("another language shelling out to the pattern terminator",
      {"file_path": "{d}/stop.ts", "content": f'execSync("{PATTERN_CALL}");\n'}, "DENY"),
     ("an argument list starting with the name terminator",
      {"file_path": "{d}/stop.py", "content": f'subprocess.run(["{KILL}", name])\n'}, "DENY"),
     ("restarting an interface agent from code",
      {"file_path": "{d}/dock.py", "content": f'subprocess.run(["/usr/bin/{KILL}", "Dock"])\n'}, "ALLOW"),
-    ("a comment in code that names the terminator",
-     {"file_path": "{d}/stop.py", "content": "# never shell out to " + "p" + "kill here\n"}, "ALLOW"),
+    ("two calls on one line, the second a pattern terminator",
+     {"file_path": "{d}/stop.py",
+      "content": f'run(["{KILL}", "Dock"]); run(["' + "p" + 'kill", "worker"])\n'}, "DENY"),
+    ("an application beside a comment that mentions the Dock",
+     {"file_path": "{d}/stop.py", "content": f'run(["{KILL}", "SomeApplication"])  # not Dock\n'}, "DENY"),
+    ("a comment line that quotes the terminator",
+     {"file_path": "{d}/stop.py", "content": '# Never run "' + "p" + 'kill -f worker" here\n'}, "ALLOW"),
+    ("a slash comment in a C-family file",
+     {"file_path": "{d}/stop.ts", "content": '// never execSync("' + "p" + 'kill -f worker")\n'}, "ALLOW"),
+    ("a statement that starts with a decrement is not a comment",
+     {"file_path": "{d}/stop.js", "content": '-- remaining; execSync("' + "p" + 'kill -f worker");\n'}, "DENY"),
+    ("a statement that starts with a dereference is not a comment",
+     {"file_path": "{d}/stop.go", "content": '* result = exec.Command("' + "p" + 'kill", "worker").Run()\n'}, "DENY"),
     ("a group signal by system call is not judged",
      {"file_path": "{d}/stop.py", "content": "os.killpg(process.pid, signal.SIGTERM)\n"}, "ALLOW"),
+    # Codex patches.
     ("a patch that adds a shell script signalling a group",
      {"command": f"*** Begin Patch\n*** Add File: {{d}}/patched.sh\n+#!/bin/bash\n+{GROUP_SIGNAL}\n*** End Patch\n"}, "DENY"),
     ("a patch that moves a group signal the file already had",
@@ -832,102 +875,17 @@ EDIT_CASES = [
                   f"*** Add File: {{d}}/two.sh\n+{PATTERN_CALL}\n*** End Patch\n")}, "DENY"),
     ("a patch to prose",
      {"command": f"*** Begin Patch\n*** Add File: {{d}}/notes.md\n+{GROUP_SIGNAL}\n*** End Patch\n"}, "ALLOW"),
-    ("the signal guard's own path, with no checkout named",
-     {"file_path": "{d}/ai/shell-guard/kill-guard-test.sh", "content": f"{GROUP_SIGNAL}\n"}, "DENY"),
-    # Found by the independent review of #271: the file the edit produces is
-    # what counts, not the fragment the edit carries.
-    ("changing only an argument into a group",
-     {"file_path": "{d}/pid.sh", "old_string": "12345", "new_string": "-1"}, "DENY"),
-    # Deliberately refused since the sixth review pass: what a replacement
-    # writes is read on its own as well as in the rebuilt file, so writing
-    # such a command into a string or a heredoc of a shell file is refused.
-    ("replacing text inside a quoted message",
-     {"file_path": "{d}/message.sh", "old_string": "old", "new_string": "kill -- -1"}, "DENY"),
-    ("rewriting a file of another language as a shell script",
-     {"file_path": "{d}/tool", "content": f"#!/bin/bash\n{GROUP_SIGNAL}\n"}, "DENY"),
-    ("a shell startup file with no shebang",
-     {"file_path": "{d}/.zshenv", "content": f"{GROUP_SIGNAL}\n"}, "DENY"),
     ("a patch that moves a text file to a shell script and adds a group signal",
      {"command": ("*** Begin Patch\n*** Update File: {d}/stop.txt\n*** Move to: {d}/moved.sh\n"
                   f"@@\n notes\n+{GROUP_SIGNAL}\n*** End Patch\n")}, "DENY"),
-    ("two calls on one line, the second a pattern terminator",
-     {"file_path": "{d}/stop.py",
-      "content": f'run(["{KILL}", "Dock"]); run(["' + "p" + 'kill", "worker"])\n'}, "DENY"),
-    ("an application beside a comment that mentions the Dock",
-     {"file_path": "{d}/stop.py", "content": f'run(["{KILL}", "SomeApplication"])  # not Dock\n'}, "DENY"),
-    ("a comment line that quotes the terminator",
-     {"file_path": "{d}/stop.py", "content": '# Never run "' + "p" + 'kill -f worker" here\n'}, "ALLOW"),
-    # Found by the re-review.
-    ("a shell script whose unquoted heredoc runs a group signal",
-     {"file_path": "{d}/new.sh", "content": "cat <<EOF\n$(/bin/kill -- -1)\nEOF\n"}, "DENY"),
-    ("a patch hunk placed by its anchor, past the same text held as data",
-     {"command": ("*** Begin Patch\n*** Update File: {d}/anchored.sh\n@@ echo anchor\n"
-                  "-kill -- 12345\n+kill -- -1\n*** End Patch\n")}, "DENY"),
-    ("the same patch aimed at the data copy (refused: the replacement is read on its own)",
-     {"command": ("*** Begin Patch\n*** Update File: {d}/anchored.sh\n@@ cat <<'EOF'\n"
-                  "-kill -- 12345\n+kill -- -1\n*** End Patch\n")}, "DENY"),
-    ("a patch that changes data in a heredoc to other data",
-     {"command": ("*** Begin Patch\n*** Update File: {d}/anchored.sh\n@@ cat <<'EOF'\n"
-                  "-kill -- 12345\n+kill -- 23456\n*** End Patch\n")}, "ALLOW"),
-    ("a statement that starts with a decrement is not a comment",
-     {"file_path": "{d}/stop.js", "content": '--remaining; execSync("' + "p" + 'kill -f worker");\n'}, "DENY"),
-    ("a statement that starts with a dereference is not a comment",
-     {"file_path": "{d}/stop.go",
-      "content": '*result = exec.Command("' + "p" + 'kill", "worker").Run()\n'}, "DENY"),
-    ("a shell file too large to read whole",
-     {"file_path": "{d}/large.sh", "old_string": "12345", "new_string": "-1"}, "DENY"),
-    ("a replacement that would grow a shell file past what can be read",
-     {"file_path": "{d}/pid.sh", "old_string": "1", "new_string": "x" * (5 << 20), "replace_all": True}, "DENY"),
-    ("a patch anchor is a whole line, not text containing it",
-     {"command": ("*** Begin Patch\n*** Update File: {d}/anchored-line.sh\n@@ echo anchor\n"
-                  "-kill -- 12345\n+kill -- -1\n*** End Patch\n")}, "DENY"),
-    ("a statement that starts with a spaced decrement",
-     {"file_path": "{d}/stop.js", "content": '-- remaining; execSync("' + "p" + 'kill -f worker");\n'}, "DENY"),
-    ("a statement that starts with a spaced dereference",
-     {"file_path": "{d}/stop.go",
-      "content": '* result = exec.Command("' + "p" + 'kill", "worker").Run()\n'}, "DENY"),
-    ("a patch anchor on a line that ends in CR LF",
-     {"command": ("*** Begin Patch\n*** Update File: {d}/anchored-crlf.sh\n@@ echo anchor\n"
-                  "-kill -- 12345\n+kill -- -1\n*** End Patch\n")}, "DENY"),
-    ("a large file rewritten as a shell script, with an argument changed",
-     {"file_path": "{d}/big-tool.py",
-      # The first edit replaces two megabytes with two megabytes: the result
-      # stays well under the limit, which must be measured on it.
-      "edits": [{"old_string": "#!/usr/bin/env python3\n#" + "x" * 2_200_000 + "\n",
-                 "new_string": "#!/bin/bash\n#" + "x" * 2_200_000 + "\n"},
-                {"old_string": "12345", "new_string": "-1"}]}, "DENY"),
-    ("an edit to a shell file exactly at the size limit that keeps its size",
-     {"file_path": "{d}/at-limit.sh", "old_string": "# old", "new_string": "# new"}, "ALLOW"),
-    ("a patch after an escaped CR keeps the command apart",
-     {"command": ("*** Begin Patch\n*** Update File: {d}/continuation.sh\n@@\n"
-                  "-/bin/echo done\n+/bin/kill -- -1 # stop\n*** End Patch\n")}, "DENY"),
-    ("a patch anchor matched exactly before a looser match",
-     {"command": ("*** Begin Patch\n*** Update File: {d}/anchored-exact.sh\n@@ echo anchor\n"
-                  "-kill -- 12345\n+kill -- -1\n*** End Patch\n")}, "DENY"),
-    # Found by the sixth review pass.
-    ("a CR LF context line followed by the line the patch replaces",
-     {"command": ("*** Begin Patch\n*** Update File: {d}/ctx.sh\n@@\n echo safe\\\\\n"
-                  "-/bin/echo done\n+/bin/kill -- -1 # stop\n*** End Patch\n")}, "DENY"),
-    ("a large file made a shell script through a loosely matched first line",
-     {"command": ("*** Begin Patch\n*** Update File: {d}/becomes.md\n@@\n-# old \n+#!/bin/bash\n"
-                  "@@\n-/bin/echo done\n+/bin/kill -- -1 # stop\n*** End Patch\n")}, "DENY"),
-    # The replaced line holds no command on its own (`-- 12345` continues
-    # `kill \`), so only placing the hunk where apply_patch places it shows
-    # the group signal: after the anchor that differs only in trailing
-    # blanks, not the earlier one that differs in leading blanks.
-    ("an anchor matched ignoring trailing blanks before one ignoring leading blanks",
-     {"command": ("*** Begin Patch\n*** Update File: {d}/anchored-trailing.sh\n@@ echo anchor\n"
-                  "--- 12345\n+-- -1\n*** End Patch\n")}, "DENY"),
-    ("a shebang appended to large prose",
-     {"command": "*** Begin Patch\n*** Update File: {d}/large.md\n@@\n+#!/bin/bash\n*** End Patch\n"}, "ALLOW"),
-    ("a shebang written into the body of large prose",
-     {"file_path": "{d}/large.md", "old_string": "filler\nkill", "new_string": "#!/bin/bash\nkill"}, "ALLOW"),
-    ("a slash comment in a C-family file",
-     {"file_path": "{d}/stop.ts", "content": '// never execSync("' + "p" + 'kill -f worker")\n'}, "ALLOW"),
-    ("an insertion past what can be read",
-     {"file_path": "{d}/pid.sh", "old_string": "", "new_string": "x" * (5 << 20)}, "DENY"),
-    ("prose too large to read whole",
-     {"file_path": "{d}/large.md", "old_string": "12345", "new_string": "-1"}, "ALLOW"),
+    ("a patch that makes a prose file a shell script with a group signal",
+     {"command": ("*** Begin Patch\n*** Update File: {d}/becomes.md\n@@\n-# old\n+#!/bin/bash\n"
+                  "@@\n-/bin/echo done\n+/bin/kill -- -1\n*** End Patch\n")}, "DENY"),
+    ("a patch hunk that changes data in a heredoc to other data",
+     {"command": ("*** Begin Patch\n*** Update File: {d}/existing.sh\n@@\n-echo done\n+echo finished\n"
+                  "*** End Patch\n")}, "ALLOW"),
+    ("the signal guard's own path, with no checkout named",
+     {"file_path": "{d}/ai/shell-guard/kill-guard-test.sh", "content": f"{GROUP_SIGNAL}\n"}, "DENY"),
 ]
 
 
@@ -1124,22 +1082,10 @@ def main():
             "existing.sh": f"#!/bin/bash\n{GROUP_SIGNAL}\necho done\n",
             "pid.sh": "#!/bin/bash\nkill -- 12345\n",
             "message.sh": '#!/bin/bash\necho "old"\n',
+            "assign.sh": "#!/bin/bash\na='old-a'\nb='old-b'\n",
             "tool": "#!/usr/bin/env python3\nprint(1)\n",
             "stop.txt": "notes\n",
-            "anchored.sh": "#!/bin/bash\ncat <<'EOF'\nkill -- 12345\nEOF\necho anchor\nkill -- 12345\n",
-            "large.sh": "#!/bin/bash\n" + "# filler\n" * 600000 + "kill -- 12345\n",
-            "large.md": "filler\n" * 800000 + "kill -- 12345\n",
-            "ctx.sh": "echo safe\\\\\r\n/bin/echo done\necho \"<<'EOF'\"\n",
-            "becomes.md": "# old\n#" + "x" * 4_194_304 + "\n/bin/echo done\n",
-            "anchored-trailing.sh": ("cat <<'EOF'\n echo anchor\nkill \\\n-- 12345\nEOF\n"
-                                     "echo anchor \nkill \\\n-- 12345\n"),
-            "continuation.sh": "echo safe\\\r\n/bin/echo done\n",
-            "anchored-exact.sh": "cat <<'EOF'\n echo anchor\nkill -- 12345\nEOF\necho anchor\nkill -- 12345\n",
-            "anchored-crlf.sh": "cat <<'EOF'\nkill -- 12345\nEOF\necho anchor\r\nkill -- 12345\n",
-            "big-tool.py": "#!/usr/bin/env python3\n#" + "x" * 2_200_000 + "\nkill=0\nkill -- 12345\n",
-            "at-limit.sh": ("#!/bin/bash\n# old\n" + "#" * (4 * 1024 * 1024 - 19) + "\n"),
-            "anchored-line.sh": ("#!/bin/bash\ncat <<'EOF'\nprefix echo anchor\nkill -- 12345\nEOF\n"
-                                 "echo anchor\nkill -- 12345\n"),
+            "becomes.md": "# old\n/bin/echo done\n",
         }.items():
             with open(os.path.join(d, file), "w") as handle:
                 handle.write(text)

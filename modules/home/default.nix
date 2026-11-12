@@ -65,6 +65,7 @@ in
     ./scheduled-commands.nix
     ./screensaver.nix
     ./secrets.nix
+    ./shottr.nix
     ./sparkle.nix
     ./terminal.nix
   ];

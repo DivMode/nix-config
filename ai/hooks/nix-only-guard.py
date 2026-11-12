@@ -15,6 +15,7 @@ import json
 import os
 import re
 import shlex
+import signal
 import subprocess
 import sys
 
@@ -996,13 +997,6 @@ SHELL_STARTUP_FILES = {".zshenv", ".zshrc", ".zprofile", ".zlogin", ".bashrc", "
 SOURCE_FILE_RE = re.compile(r"\.(?:py|js|mjs|cjs|ts|mts|cts|tsx|jsx|rb|pl|php|lua|go|rs|swift|java|kt)$"
                             r"|(?:^|/)package\.json$")
 TERMINATOR_LITERAL_RE = re.compile(r"""["'`](?:/usr/bin/)?(?:pkill|killall)(?=["'`\s])""")
-# The two shapes in which another language may restart one interface agent:
-# an argument list `["/usr/bin/killall", "Dock"]` (or a tuple) that ends right
-# after the agent, and a command string `"killall Dock"`.
-_UI_AGENT = "(?:" + "|".join(sorted(SELF_RESTARTING_UI_AGENTS)) + ")"
-UI_AGENT_CALL_RE = re.compile(
-    r"""(["'`])(?:/usr/bin/)?killall\1\s*,\s*(["'`])""" + _UI_AGENT + r"""\2\s*,?\s*[\])]"""
-    r"""|(["'`])(?:/usr/bin/)?killall\s+""" + _UI_AGENT + r"""\3""")
 # In a replacement the quotes may lie outside the text it writes (changing
 # `printf` into `pkill` in `run(["/usr/bin/printf", …])`), and no run-time
 # layer reads another language. So there the word itself counts.
@@ -1101,20 +1095,20 @@ def terminator_literals(text, path, fragment=False):
     a time and skips whole-line comments. It errs towards refusing: a string
     that merely holds such a command as data is refused too.
 
-    The name-based one passes only in the two exact shapes UI_AGENT_CALL_RE
-    describes, naming one interface agent and ending there. Rounds 9 to 11
-    of the review of #271 each found a way to read other call arguments
-    wrongly (an inner bracket, a computed target, an option taken for a
-    target, and a quadratic look-ahead); an exact shape cannot be extended
-    without leaving it."""
+    The name-based one gets no interface-agent exception here, unlike a
+    typed command or a shell script. Rounds 9 to 12 of the review of #271
+    each found a way past one: reading the call's arguments (an inner
+    bracket, a computed target, an option taken for a target, a quadratic
+    look-ahead), then exact shapes, which a literal `+ [...]` or an adjacent
+    string extends. A restart that existing code already makes may stay (the
+    count compares before and after); a new one belongs in a Nix activation
+    entry, which is not judged here, or is typed."""
     found, comment = [], comment_line_re(path)
+    pattern = TERMINATOR_WORD_RE if fragment else TERMINATOR_LITERAL_RE
     for line in text.split("\n"):
         if comment.match(line):
             continue
-        allowed = [match.span() for match in UI_AGENT_CALL_RE.finditer(line)]
-        for match in (TERMINATOR_WORD_RE if fragment else TERMINATOR_LITERAL_RE).finditer(line):
-            if not any(start <= match.start() < end for start, end in allowed):
-                found.append(line.strip())
+        found.extend(line.strip() for _match in pattern.finditer(line))
     return found
 
 
@@ -1870,8 +1864,10 @@ def script_verdict(path, kind, cwd, depth, seen):
             data = handle.read(SHEBANG_MAX_BYTES)
             # A program run by path is shell when its shebang says so, or its
             # name does: a `.sh` file with no shebang still runs as shell.
-            if kind == "program" and not (SHELL_SHEBANG_RE.match(data) or SHELL_FILE_RE.search(path)
-                                          or SHELL_FILE_RE.search(full)):
+            names = (path, full)
+            if kind == "program" and not (
+                    SHELL_SHEBANG_RE.match(data) or any(SHELL_FILE_RE.search(name) for name in names)
+                    or any(os.path.basename(name) in SHELL_STARTUP_FILES for name in names)):
                 return None  # a binary or another language's script
             if len(seen) >= SCRIPT_MAX_FILES:
                 return UNREAD_SCRIPT.format(what=f"this command runs more than {SCRIPT_MAX_FILES} scripts, "
@@ -1953,6 +1949,54 @@ def read_command(command, cwd, depth, seen, typed, prompts):
     return None
 
 
+# The client gives the hook ten seconds, and the supervisor forwards a
+# denial only from a hook that finished within that (supervisor.py). A
+# refusal that arrives late is no refusal: rounds 9 to 12 of the review of
+# #271 each found an input slow enough to miss it. So the reading stops at
+# this many seconds and the call is refused instead. Ordinary commands take
+# milliseconds; a 4 MB script takes about three seconds.
+HOOK_BUDGET_SECONDS = 7.0
+TOO_SLOW = ("Blocked: this took the command guard too long to read, so it cannot be judged in "
+            "time. Write it more plainly, or split it.")
+
+
+class TooSlow(Exception):
+    """The reading ran past HOOK_BUDGET_SECONDS."""
+
+
+def answer(payload, options, budget=HOOK_BUDGET_SECONDS):
+    """The denial reason for a hook payload, or None. Any failure while
+    reading, and running out of time, is a refusal: a hook that raises or
+    answers late lets the tool call run, so a defect here would be a hole."""
+    tool_input = payload.get("tool_input")
+    if not isinstance(tool_input, dict):
+        return None
+    cwd = payload.get("cwd")
+    cwd = cwd if isinstance(cwd, str) else None
+    tool_name = payload.get("tool_name")
+
+    def expired(_signum, _frame):
+        raise TooSlow
+
+    previous = signal.signal(signal.SIGALRM, expired)
+    signal.setitimer(signal.ITIMER_REAL, budget)
+    try:
+        if isinstance(tool_name, str) and tool_name in EDIT_TOOLS:
+            return edit_verdict(tool_input, cwd, options.get("--nix-config"))
+        command = tool_input.get("command")
+        if not isinstance(command, str) or not command:
+            return None
+        return command_verdict(command, cwd, prompts=options.get("--client") != "codex")
+    except TooSlow:
+        return TOO_SLOW
+    except Exception as error:
+        return (f"Blocked: the command guard failed while reading this ({type(error).__name__}), "
+                "so it cannot be judged. Write it more plainly, and report the failure.")
+    finally:
+        signal.setitimer(signal.ITIMER_REAL, 0)
+        signal.signal(signal.SIGALRM, previous)
+
+
 def main():
     try:
         payload = json.load(sys.stdin)
@@ -1961,29 +2005,10 @@ def main():
 
     if not isinstance(payload, dict):
         sys.exit(0)
-    tool_input = payload.get("tool_input")
-    if not isinstance(tool_input, dict):
-        sys.exit(0)
     # `--client codex` and `--nix-config CHECKOUT`, each optional, as
     # ai/hooks/default.nix declares them. Anything else keeps the defaults,
     # which are the stricter ones.
-    options = dict(zip(sys.argv[1::2], sys.argv[2::2]))
-    cwd = payload.get("cwd")
-    cwd = cwd if isinstance(cwd, str) else None
-    tool_name = payload.get("tool_name")
-    try:
-        if isinstance(tool_name, str) and tool_name in EDIT_TOOLS:
-            reason = edit_verdict(tool_input, cwd, options.get("--nix-config"))
-        else:
-            command = tool_input.get("command")
-            if not isinstance(command, str) or not command:
-                sys.exit(0)
-            reason = command_verdict(command, cwd, prompts=options.get("--client") != "codex")
-    except Exception as error:
-        # A hook that raises lets the tool call run, so a defect here would
-        # be a hole. It is a refusal instead, naming the defect.
-        reason = (f"Blocked: the command guard failed while reading this ({type(error).__name__}), "
-                  "so it cannot be judged. Write it more plainly, and report the failure.")
+    reason = answer(payload, dict(zip(sys.argv[1::2], sys.argv[2::2])))
     if reason:
         deny(reason)
 

@@ -147,7 +147,8 @@ machine-change, credential and heavy-command rules):
   is not judged, but the scripts it runs are; a staged change earns no trust.
   Every script is read once and whole, however deep, with every script it
   runs followed in turn; a `.sh` file run by path counts as shell even
-  without a shebang. A command that reaches more than 64 different scripts,
+  without a shebang, and so does a shell startup file (`.envrc`, `.zshrc` and
+  the like). A command that reaches more than 64 different scripts,
   or more than 4 MB of script text in all (read in about a second per MB,
   against the hook's ten), is refused rather than read in part, and so is
   a script over 1 MB, unless
@@ -170,13 +171,15 @@ machine-change, credential and heavy-command rules):
   terminator, and in a replacement for the bare word, because the quotes may
   lie outside it and no run-time layer reads another language; it errs
   towards refusing, so a string or name that only holds such a word is
-  refused too. There the name-based one restarts an interface agent only in
-  two exact shapes, `["/usr/bin/killall", "Dock"]` ending after the agent,
-  or the string `"killall Dock"`. An edit that writes more than 4 MB into a
+  refused too. There the name-based one gets no interface-agent exception:
+  a restart the code already makes may stay, and a new one belongs in a Nix
+  activation entry or is typed. Rounds 9 to 12 of the review found a way past
+  each exception tried. An edit that writes more than 4 MB into a
   shell or source file is refused rather than judged in part. Prose and Nix
   modules are not judged.
-- If the hook itself fails on an input, it refuses the call and names the
-  failure: a hook that crashes would let the call run.
+- If the hook itself fails on an input, or takes more than seven seconds to
+  read it, it refuses the call and says so: a hook that crashes, or answers
+  after the client's ten seconds, would let the call run.
 - Not read by the hooks: a command built from a variable (`$cmd …`,
   `eval "$cmd"`), a script whose path is computed at run time, a shell file
   with neither a known name nor a shebang, and any signal another language

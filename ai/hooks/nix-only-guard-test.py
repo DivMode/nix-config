@@ -765,6 +765,7 @@ SCRIPT_FILES = {
     # Five scripts of almost 1 MB each: each may be read, all may not.
     **{f"bulk{n}.sh": f"#!/bin/bash\nbash bulk{n + 1}.sh\n" + "# filler\n" * 110000 for n in range(5)},
     "bulk5.sh": "#!/bin/bash\necho bottom\n",
+    ".envrc": "/usr/bin/" + "p" + "kill -f worker\n",
     "direct.sh": "/usr/bin/" + "p" + "kill -f worker\n",
     "string-plain.sh": "#!/bin/bash\nsh -c 'echo hi'\neval echo hi\n",
     "string-dashdash.sh": "#!/bin/bash\nbash -c -- '/bin/kill -- -1'\n",
@@ -802,6 +803,7 @@ SCRIPT_CASES = [
     # A program run by path with a shell name and no shebang runs as shell.
     ("a .sh file with no shebang, run by path", "{d}/direct.sh", "DENY"),
     ("a .sh link to a file with no shebang and no shell name, run by path", "{d}/launch.sh", "DENY"),
+    ("a shell startup file with no shebang, run by path", "{d}/.envrc", "DENY"),
     ("a script whose unquoted heredoc runs a group signal", "bash {d}/heredoc.sh", "DENY"),
     ("a script whose heredocs hold it as data, or substitute something else",
      "bash {d}/heredoc-data.sh", "ALLOW"),
@@ -871,15 +873,17 @@ EDIT_CASES = [
      {"file_path": "{d}/stop.ts", "content": f'execSync("{PATTERN_CALL}");\n'}, "DENY"),
     ("an argument list starting with the name terminator",
      {"file_path": "{d}/stop.py", "content": f'subprocess.run(["{KILL}", name])\n'}, "DENY"),
-    # Another language may restart one interface agent only in two exact
-    # shapes: rounds 9 to 11 each found a way to read looser call arguments
-    # wrongly.
+    # Another language gets no interface-agent exception: rounds 9 to 12 each
+    # found a way past one (an argument reader, then exact shapes that a
+    # literal `+ [...]` or an adjacent string extends). A restart the code
+    # already makes may stay; a new one belongs in a Nix activation entry.
     ("restarting an interface agent from code",
-     {"file_path": "{d}/dock.py", "content": f'subprocess.run(["/usr/bin/{KILL}", "Dock"])\n'}, "ALLOW"),
-    ("restarting an interface agent from code, with an option after the list",
-     {"file_path": "{d}/dock.py", "content": f'subprocess.run(["/usr/bin/{KILL}", "Dock"], cwd="/tmp")\n'}, "ALLOW"),
-    ("restarting an interface agent through a command string",
-     {"file_path": "{d}/dock.js", "content": f'execSync("{KILL} Dock");\n'}, "ALLOW"),
+     {"file_path": "{d}/dock.py", "content": f'subprocess.run(["/usr/bin/{KILL}", "Dock"])\n'}, "DENY"),
+    ("an interface agent list extended by another",
+     {"file_path": "{d}/dock.py",
+      "content": f'subprocess.run(["/usr/bin/{KILL}", "Dock"] + ["SomeApplication"])\n'}, "DENY"),
+    ("an interface agent string extended by an adjacent one",
+     {"file_path": "{d}/dock.py", "content": f'os.system("{KILL} Dock" " SomeApplication")\n'}, "DENY"),
     ("two interface agents in one list are not one of the exact shapes",
      {"file_path": "{d}/dock.py", "content": f'subprocess.run(["/usr/bin/{KILL}", "Dock", "Finder"])\n'}, "DENY"),
     ("a computed target beside an interface agent",
@@ -1238,6 +1242,35 @@ def main():
         failures += 1
         print(f"FAIL  a source replacement with 16,000 matches took {elapsed:.1f} s", file=sys.stderr)
 
+    # The two inputs round 12 found slow: many allowed calls before a refused
+    # one, and a long run of blanks inside a call. Each must be answered in
+    # time now that no allowed shape is searched for.
+    for name, content in [
+        ("32,000 interface-agent calls, then another", "commands = [" + ", ".join(
+            [f'["/usr/bin/{KILL}", "Dock"]'] * 32000) + f']\nsubprocess.run(["/usr/bin/{KILL}", "SomeApplication"])\n'),
+        ("60,000 blanks inside a name-based call", f'subprocess.run(["/usr/bin/{KILL}", "Dock"' + " " * 60000
+         + ', "SomeApplication"])\n'),
+    ]:
+        started = time.monotonic()
+        got = "DENY" if guard.edit_verdict({"file_path": "/nonexistent/run.py", "content": content}) else "ALLOW"
+        elapsed = time.monotonic() - started
+        if got != "DENY" or elapsed > 5:
+            failures += 1
+            print(f"FAIL  expected DENY  got {got:<5} in {elapsed:.1f} s  {name}", file=sys.stderr)
+
+    # Whatever is slow, the answer is a refusal on time, not a late one.
+    reader = guard.command_verdict
+    guard.command_verdict = lambda *args, **kwargs: time.sleep(3)
+    try:
+        started = time.monotonic()
+        got = guard.answer({"tool_name": "Bash", "tool_input": {"command": "echo hi"}}, {}, budget=0.5)
+        elapsed = time.monotonic() - started
+    finally:
+        guard.command_verdict = reader
+    if got != guard.TOO_SLOW or elapsed > 1.5:
+        failures += 1
+        print(f"FAIL  a reading past the budget gave {got!r} after {elapsed:.1f} s", file=sys.stderr)
+
     # Four million characters of the name-based word in one replacement: the
     # source rule must stay linear (13 s in the eleventh pass).
     many = "killall = None\nnames = [" + ", ".join(["kill" + "all"] * 450000) + "]\n"
@@ -1248,7 +1281,7 @@ def main():
         failures += 1
         print(f"FAIL  a source replacement of four million characters took {elapsed:.1f} s", file=sys.stderr)
 
-    total = len(CASES) + len(SCRIPT_CASES) + repository_cases + len(EDIT_CASES) + len(HOOK_CASES) + 3
+    total = len(CASES) + len(SCRIPT_CASES) + repository_cases + len(EDIT_CASES) + len(HOOK_CASES) + 6
     if failures:
         print(
             f"\n{failures} of {total} nix-only-guard tests failed.\n"

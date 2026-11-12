@@ -1001,11 +1001,13 @@ SHELL_STARTUP_FILES = {".zshenv", ".zshrc", ".zprofile", ".zlogin", ".bashrc", "
                        ".profile", ".envrc"}
 SOURCE_FILE_RE = re.compile(r"\.(?:py|js|mjs|cjs|ts|mts|cts|tsx|jsx|rb|pl|php|lua|go|rs|swift|java|kt)$"
                             r"|(?:^|/)package\.json$")
-# The name, right after a quote or a `/`, and followed by a quote or a blank:
-# a string that starts with it or with any path to it (`/usr/bin/./killall`
-# and the like, a fourteenth-pass finding). A fixed-width look-behind keeps it
-# linear.
-TERMINATOR_LITERAL_RE = re.compile(r"""(?<=["'`/])(?:pkill|killall)(?=["'`\s])""")
+# The name, right after a quote, a `/` or a blank, and followed by a quote or
+# a blank: a string that starts with it, with any path to it
+# (`/usr/bin/./killall`, a fourteenth-pass finding), or with a word in front
+# of it (`"command killall Other"`, a fifteenth-pass finding). It errs towards
+# refusing: a variable of that name between two blanks is refused too. A
+# fixed-width look-behind keeps it linear.
+TERMINATOR_LITERAL_RE = re.compile(r"""(?<=["'`/\s])(?:pkill|killall)(?=["'`\s])""")
 # In a replacement the quotes may lie outside the text it writes (changing
 # `printf` into `pkill` in `run(["/usr/bin/printf", …])`), and no run-time
 # layer reads another language. So there the word itself counts.

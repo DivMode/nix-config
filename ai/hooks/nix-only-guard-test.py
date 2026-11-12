@@ -894,6 +894,8 @@ EDIT_CASES = [
     ("a changed target written after a hash inside a string",
      {"file_path": "{d}/hashed.py",
       "content": f'subprocess.run(["/usr/bin/{KILL}", """#SomeApplication\n""".lstrip("#").strip()])\n'}, "DENY"),
+    ("a word in front of the terminator in a command string",
+     {"file_path": "{d}/wrapped.py", "content": f'os.system("command {KILL} SomeApplication")\n'}, "DENY"),
     ("a path to the terminator that is not the usual one",
      {"file_path": "{d}/alias.py", "content": f'subprocess.run(["/usr/bin/./{KILL}", "SomeApplication"])\n'}, "DENY"),
     ("a rewrite that changes the target of an existing restart",

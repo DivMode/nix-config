@@ -997,6 +997,10 @@ SOURCE_FILE_RE = re.compile(r"\.(?:py|js|mjs|cjs|ts|mts|cts|tsx|jsx|rb|pl|php|lu
                             r"|(?:^|/)package\.json$")
 TERMINATOR_LITERAL_RE = re.compile(
     r"""["'`](?:/usr/bin/)?(?:pkill|(?P<by_name>killall))(?=["'`\s])""")
+# In a replacement the quotes may lie outside the text it writes (changing
+# `printf` into `pkill` in `run(["/usr/bin/printf", …])`), and no run-time
+# layer reads another language. So there the word itself counts.
+TERMINATOR_WORD_RE = re.compile(r"(?<![\w-])(?:/usr/bin/)?(?:pkill|(?P<by_name>killall))(?![\w-])")
 # A whole-line comment, by the file's language: `#` in Python, Ruby and Perl,
 # `//` in the C family, either in PHP. Nothing else is skipped (a block
 # comment's ` * ` line, Lua's `--`), because the same start is code elsewhere
@@ -1022,6 +1026,15 @@ PATCH_MOVE_RE = re.compile(r"\*\*\* Move to: (.+)")
 # source file's edit that writes more is refused rather than judged in part;
 # an existing file larger than this counts as holding nothing.
 EDIT_MAX_BYTES = 4 << 20
+
+
+def read_head(full):
+    """The file's first 128 bytes, as text, or "" when it cannot be read."""
+    try:
+        with open(full, "rb") as handle:
+            return handle.read(128).decode("utf-8", "replace")
+    except OSError:
+        return ""
 
 
 def read_text(full):
@@ -1075,7 +1088,7 @@ def edit_changes(tool_input):
     return files
 
 
-def terminator_literals(text, path):
+def terminator_literals(text, path, fragment=False):
     """Each string literal in another language's source that shells out to a
     pattern-based terminator. A heuristic, not a parser: it reads one line at
     a time, skips whole-line comments, and lets the name-based one through
@@ -1086,7 +1099,7 @@ def terminator_literals(text, path):
     for line in text.split("\n"):
         if comment.match(line):
             continue
-        for match in TERMINATOR_LITERAL_RE.finditer(line):
+        for match in (TERMINATOR_WORD_RE if fragment else TERMINATOR_LITERAL_RE).finditer(line):
             rest = re.split(r"[)\]]", line[match.end():], maxsplit=1)[0]
             words = re.findall(r"-?[A-Za-z0-9_.$-]+", rest)
             if match.group("by_name") is None or not restarts_only_ui_agents(words):
@@ -1094,11 +1107,11 @@ def terminator_literals(text, path):
     return found
 
 
-def signalling_text(text, shell, path=""):
+def signalling_text(text, shell, path="", fragment=False):
     """What `text` holds that the signalling rule refuses, one entry per
-    occurrence."""
+    occurrence. `fragment`: the text a replacement writes, not a whole file."""
     if not shell:
-        return terminator_literals(text, path)
+        return terminator_literals(text, path, fragment)
     commands = []
     walk_script(text, [], commands)
     return [shown for shown, _why in signalling(commands)]
@@ -1149,20 +1162,24 @@ def read_edit(tool_input, cwd, checkout):
     for path, destination, changes in edit_changes(tool_input):
         if guard_source(full_path(destination), checkout):
             continue
-        existing = read_text(full_path(path))
-        shell = bool(SHELL_FILE_RE.search(destination)
-                     or os.path.basename(destination) in SHELL_STARTUP_FILES
-                     or shebang(existing) or any(shebang(new) for _old, new in changes))
-        if not shell and not SOURCE_FILE_RE.search(destination):
-            continue
+        existing, head = read_text(full_path(path)), read_head(full_path(path))
+        named = bool(SHELL_FILE_RE.search(destination)
+                     or os.path.basename(destination) in SHELL_STARTUP_FILES)
+        # A replacement keeps the file's interpreter, unless one of this
+        # file's replacements writes a shell shebang; a whole-file write names
+        # its own.
+        replaced_shell = shebang(head) or any(shebang(n) for o, n in changes if o is not None)
         for old, new in changes:
+            shell = named or (shebang(new) if old is None else replaced_shell)
+            if not shell and not SOURCE_FILE_RE.search(destination):
+                continue
             if len(new) > EDIT_MAX_BYTES:
                 return (f"Blocked: this edit writes more than {EDIT_MAX_BYTES >> 20} MB into "
                         f"{os.path.basename(destination)}, too much for the signalling check to "
                         "read. Make the change in smaller parts.")
-            counts = collections.Counter(signalling_text(new, shell, destination))
+            counts = collections.Counter(signalling_text(new, shell, destination, old is not None))
             counts.subtract(collections.Counter(
-                signalling_text(existing if old is None else old, shell, destination)))
+                signalling_text(existing if old is None else old, shell, destination, old is not None)))
             introduced = sorted(shown for shown, count in counts.items() if count > 0)
             if introduced:
                 # The file's name, not its path: a long path would push the
@@ -1748,7 +1765,9 @@ def check(segment, typed=True, heavy=True, others=True):
 # agents' scratchpads, Codex run scripts): 15 s in all, none over 0.5 s.
 SHELL_SHEBANG_RE = re.compile(rb"#![ \t]*/\S*/(?:env[ \t]+(?:-\S+[ \t]+)*)?(?:ba|z|da|k)?sh\b")
 SCRIPT_MAX_BYTES = 1 << 20
-SCRIPT_MAX_DEPTH = 4
+SCRIPT_MAX_DEPTH = 8
+UNREAD_SCRIPT = ("Blocked: the script {name} is {why} for the command guard to read, so what it "
+                 "runs cannot be judged. Run a smaller script, or one fewer levels deep.")
 ASSIGNMENT_LINE_RE = re.compile(
     r"^\s*(?:(?:export|local|readonly|declare|typeset)\s+(?:-\S+\s+)*)?"
     r"([A-Za-z_][A-Za-z0-9_]*)=(.*)$")
@@ -1784,7 +1803,10 @@ def expand_assignments(text):
 
 
 def repository_script(full):
-    """True when git tracks this file and its contents match the index.
+    """True when the file is committed and unchanged since: its contents
+    match HEAD. Not the index: staging is a step any agent takes, so what an
+    agent wrote would be trusted the moment it ran `git add` (an eighth-pass
+    finding).
 
     Inherited GIT_DIR / GIT_INDEX_FILE / GIT_WORK_TREE (set inside git hooks)
     would point git at another repository's index, so git finds the file's
@@ -1796,7 +1818,7 @@ def repository_script(full):
                                  capture_output=True, timeout=5, env=env)
         if tracked.returncode != 0:
             return False
-        unchanged = subprocess.run(["git", "-C", directory, "diff", "--quiet", "--", full],
+        unchanged = subprocess.run(["git", "-C", directory, "diff", "--quiet", "HEAD", "--", full],
                                    capture_output=True, timeout=5, env=env)
         return unchanged.returncode == 0
     except (OSError, subprocess.TimeoutExpired):
@@ -1804,8 +1826,12 @@ def repository_script(full):
 
 
 def script_verdict(path, kind, cwd, depth, seen):
-    """The denial reason for a file a command runs as shell, or None."""
-    if depth > SCRIPT_MAX_DEPTH or "$" in path or "`" in path:
+    """The denial reason for a file a command runs as shell, or None. A file
+    the hook knows it runs but cannot read whole (too large, or more than
+    SCRIPT_MAX_DEPTH scripts deep) is refused, unless it is the repository's
+    own and unchanged: the edit check leaves some changes to this reader, so
+    passing what it cannot read would be a hole."""
+    if "$" in path or "`" in path:
         return None
     full = os.path.expanduser(path)
     if not os.path.isabs(full):
@@ -1816,6 +1842,10 @@ def script_verdict(path, kind, cwd, depth, seen):
     if full in seen or not os.path.isfile(full):
         return None
     seen.add(full)
+    if depth > SCRIPT_MAX_DEPTH:
+        if repository_script(full):
+            return None
+        return UNREAD_SCRIPT.format(name=os.path.basename(path), why="nested too deeply")
     try:
         with open(full, "rb") as handle:
             data = handle.read(128)
@@ -1825,7 +1855,10 @@ def script_verdict(path, kind, cwd, depth, seen):
     except OSError:
         return None
     if len(data) > SCRIPT_MAX_BYTES:
-        return None
+        if repository_script(full):
+            return None
+        return UNREAD_SCRIPT.format(name=os.path.basename(path),
+                                    why=f"larger than {SCRIPT_MAX_BYTES >> 20} MB")
     text = expand_assignments(data.decode("utf-8", "replace"))
     if repository_script(full):
         # Its own lines pass, but not the files it runs: on 2026-11-11 the

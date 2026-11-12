@@ -754,6 +754,9 @@ SCRIPT_FILES = {
     "eval.sh": "#!/bin/bash\neval kill -- -1\n",
     # What an argument-only edit to a script leaves behind (see EDIT_CASES).
     "pid-edited.sh": "#!/bin/bash\nkill -- -1\n",
+    "huge.sh": "#!/bin/bash\n" + "# filler\n" * 150000 + "echo done\n",
+    **{f"deep{n}.sh": f"#!/bin/bash\nbash deep{n + 1}.sh\n" for n in range(1, 10)},
+    "deep10.sh": "#!/bin/bash\necho bottom\n",
     "string-plain.sh": "#!/bin/bash\nsh -c 'echo hi'\neval echo hi\n",
     "string-dashdash.sh": "#!/bin/bash\nbash -c -- '/bin/kill -- -1'\n",
     "eval-dashdash.sh": "#!/bin/bash\neval -- '/bin/kill -- -1'\n",
@@ -779,6 +782,11 @@ SCRIPT_CASES = [
     ("the incident: group signals two scripts below the typed command", "bash {d}/interrupt.sh", "DENY"),
     ("a script that stops the process id it recorded", "bash {d}/own-child.sh", "ALLOW"),
     ("an argument changed into a group, then run", "bash {d}/pid-edited.sh", "DENY"),
+    # Found by the eighth review pass: a known script the reader cannot read
+    # whole is refused, not passed.
+    ("a script too large to read", "bash {d}/huge.sh", "DENY"),
+    ("a script nine levels deep", "bash {d}/deep1.sh", "DENY"),
+    ("a script eight levels deep", "bash {d}/deep2.sh", "ALLOW"),
     ("a script whose unquoted heredoc runs a group signal", "bash {d}/heredoc.sh", "DENY"),
     ("a script whose heredocs hold it as data, or substitute something else",
      "bash {d}/heredoc-data.sh", "ALLOW"),
@@ -884,6 +892,13 @@ EDIT_CASES = [
     ("a patch hunk that changes data in a heredoc to other data",
      {"command": ("*** Begin Patch\n*** Update File: {d}/existing.sh\n@@\n-echo done\n+echo finished\n"
                   "*** End Patch\n")}, "ALLOW"),
+    # Found by the eighth review pass.
+    ("a complete command written into a large extensionless shell script",
+     {"file_path": "{d}/bigrun", "old_string": "printf safe", "new_string": "/bin/kill -- -1"}, "DENY"),
+    ("a shell script rewritten as Python with an ordinary variable",
+     {"file_path": "{d}/was-shell.py", "content": "#!/usr/bin/env python3\n" + "p" + "kill = 1\nprint(1)\n"}, "ALLOW"),
+    ("a source replacement that turns a quoted program into the pattern terminator",
+     {"file_path": "{d}/run.py", "old_string": "printf", "new_string": "p" + "kill"}, "DENY"),
     ("the signal guard's own path, with no checkout named",
      {"file_path": "{d}/ai/shell-guard/kill-guard-test.sh", "content": f"{GROUP_SIGNAL}\n"}, "DENY"),
 ]
@@ -992,6 +1007,15 @@ def main():
     # repository's; without clearing them the scratch repository's `git add`
     # stages into this one (it did, 2026-10-31).
     git_env = {key: value for key, value in os.environ.items() if not key.startswith("GIT_")}
+
+    def commit(directory, *files):
+        # A scratch repository's commit: no signing key belongs to a fixture.
+        if files:
+            subprocess.run(["git", "-C", directory, "add", *files], check=True, env=git_env)
+        subprocess.run(["git", "-C", directory, "-c", "user.name=Example", "-c",
+                        "user.email=example@example.invalid", "-c", "commit.gpgsign=false",
+                        "commit", "-q", "--allow-empty", "-m", "fixture"], check=True, env=git_env)
+
     with tempfile.TemporaryDirectory() as d:
         subprocess.run(["git", "init", "-q", d], check=True, env=git_env)
         loader = os.path.join(d, "loader.sh")
@@ -999,14 +1023,19 @@ def main():
             handle.write("unset OP_CONNECT_TOKEN\nmkdir -p ~/Library/Caches/x\n")
         for name, expected, step in [
             ("an untracked script is read", "DENY", None),
-            ("a script git tracks unchanged is the repository's own", "ALLOW", ["add", "loader.sh"]),
-            ("a tracked script edited after it was added is read", "DENY", "edit"),
+            # Staging is a step any agent takes, so it earns no trust.
+            ("a staged script is read", "DENY", "stage"),
+            ("a committed script unchanged since is the repository's own", "ALLOW", "commit"),
+            ("a committed script edited since is read", "DENY", "edit"),
+            ("a committed script edited and staged since is read", "DENY", "stage"),
         ]:
             if step == "edit":
                 with open(loader, "a") as handle:
                     handle.write("echo edited\n")
-            elif step:
-                subprocess.run(["git", "-C", d, *step], check=True, env=git_env)
+            elif step == "stage":
+                subprocess.run(["git", "-C", d, "add", "loader.sh"], check=True, env=git_env)
+            elif step == "commit":
+                commit(d, "loader.sh")
             repository_cases += 1
             got = verdict("bash loader.sh", cwd=d)
             if got != expected:
@@ -1020,7 +1049,7 @@ def main():
                            "tree.sh": "stop_tree() {\n  echo nothing to stop\n}\n"}.items():
             with open(os.path.join(d, file), "w") as handle:
                 handle.write(text)
-        subprocess.run(["git", "-C", d, "add", "interrupt.sh", "stop.sh", "tree.sh"], check=True, env=git_env)
+        commit(d, "interrupt.sh", "stop.sh", "tree.sh")
         for name, expected, leaf in [
             ("unchanged scripts that run unchanged scripts", "ALLOW", None),
             ("an edited script below two unchanged ones", "DENY",
@@ -1041,7 +1070,7 @@ def main():
                            "child.sh": f"#!/bin/bash\n{GROUP_SIGNAL}\n"}.items():
             with open(os.path.join(d, file), "w") as handle:
                 handle.write(text)
-        subprocess.run(["git", "-C", d, "add", "report.sh"], check=True, env=git_env)
+        commit(d, "report.sh")
         repository_cases += 1
         got = verdict("bash report.sh", cwd=d)
         if got != "DENY":
@@ -1053,8 +1082,7 @@ def main():
         # the checkout the hook is told about, or a linked worktree of it.
         source = {"file_path": "ai/shell-guard/kill-guard-test.sh", "content": f"{GROUP_SIGNAL}\n"}
         linked = os.path.join(d, "linked")
-        subprocess.run(["git", "-C", d, "-c", "user.name=Example", "-c", "user.email=example@example.invalid",
-                        "-c", "commit.gpgsign=false", "commit", "-q", "-m", "baseline"], check=True, env=git_env)
+        commit(d)
         subprocess.run(["git", "-C", d, "worktree", "add", "-q", linked], check=True, env=git_env)
         with tempfile.TemporaryDirectory() as elsewhere:
             for name, expected, cwd, checkout in [
@@ -1086,6 +1114,9 @@ def main():
             "tool": "#!/usr/bin/env python3\nprint(1)\n",
             "stop.txt": "notes\n",
             "becomes.md": "# old\n/bin/echo done\n",
+            "bigrun": "#!/bin/bash\n#" + "x" * 4_194_304 + "\nprintf safe\n",
+            "was-shell.py": "#!/bin/bash\necho old\n",
+            "run.py": 'import subprocess\nsubprocess.run(["/usr/bin/printf", "worker"])\n',
         }.items():
             with open(os.path.join(d, file), "w") as handle:
                 handle.write(text)

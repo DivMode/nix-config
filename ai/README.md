@@ -143,8 +143,10 @@ machine-change, credential and heavy-command rules):
   body, inside `$(...)` and backticks, inside the substitutions of an
   unquoted heredoc, in a `trap` handler, and in the text handed to `sh -c` or
   `eval` (nested more than eight deep, the command is refused rather than
-  read in part). A repository's own unchanged script is not judged, but the
-  scripts it runs are.
+  read in part). A repository's own script, committed and unchanged since,
+  is not judged, but the scripts it runs are; a staged change earns no trust.
+  A script it knows it runs but cannot read whole (over 1 MB, or more than
+  eight scripts deep) is refused rather than passed.
 - A file edit (Claude Code's Edit, MultiEdit and Write, Codex's
   `apply_patch`) is refused when the text it writes holds such a command that
   the text it replaces did not (for a whole-file write, the file as it is).
@@ -159,8 +161,10 @@ machine-change, credential and heavy-command rules):
   rule of apply_patch and the edit tools is a parser of its own that keeps
   being wrong. For a source file in another language a line-by-line
   heuristic looks for a string that shells out to a pattern-based
-  terminator; it errs towards refusing, so a string that only holds such a
-  command as data is refused too. An edit that writes more than 4 MB into a
+  terminator, and in a replacement for the bare word, because the quotes may
+  lie outside it and no run-time layer reads another language; it errs
+  towards refusing, so a string or name that only holds such a word is
+  refused too. An edit that writes more than 4 MB into a
   shell or source file is refused rather than judged in part. Prose and Nix
   modules are not judged.
 - If the hook itself fails on an input, it refuses the call and names the

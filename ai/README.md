@@ -148,11 +148,13 @@ machine-change, credential and heavy-command rules):
 - A file edit (Claude Code's Edit and Write, Codex's `apply_patch`) is refused
   when the file it produces holds such a command that the file did not hold
   before. This applies to a shell file (by extension, startup-file name or
-  shebang); one too large to read whole (4 MB) is refused rather than judged
-  in part. For a source file in another language a line-by-line heuristic
+  shebang). For a source file in another language a line-by-line heuristic
   looks for a string that shells out to a pattern-based terminator. It errs
   towards refusing: a string that only holds such a command as data is
-  refused too. Prose and Nix modules are not judged.
+  refused too. A shell or source file too large to read whole (4 MB) is
+  refused rather than judged in part. Prose and Nix modules are not judged.
+- If the hook itself fails on an input, it refuses the call and names the
+  failure: a hook that crashes would let the call run.
 - Not read by the hooks: a command built from a variable (`$cmd …`,
   `eval "$cmd"`), a script whose path is computed at run time, a shell file
   with neither a known name nor a shebang, and any signal another language

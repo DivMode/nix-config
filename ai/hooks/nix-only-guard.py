@@ -648,7 +648,7 @@ def runs_script_string(command, scripts=None, commands=None, nesting=0):
             name = os.path.basename(text)
             if ASSIGNMENT_RE.match(text) or (mode == "cmd" and text in SHELL_KEYWORDS):
                 pass
-            elif mode == "cmd" and text == "esac":
+            elif mode == "cmd" and text == "esac" and not quoted:
                 cases = max(0, cases - 1)
             elif name == "eval":
                 return hit("all")
@@ -693,9 +693,17 @@ def runs_script_string(command, scripts=None, commands=None, nesting=0):
 
     def in_case_pattern():
         # The word before this `)` is a `case` pattern: at a command's start
-        # inside a `case`, or among the words of `case WORD in`.
-        return cases and (mode == "cmd" or (current is not None and current["argv"][0] == "case"
-                                            and "in" in current["argv"]))
+        # inside a `case` (still pending, or already ended by a blank and so
+        # taken for a command name), or among the words of `case WORD in`.
+        return cases and (mode == "cmd" or (current is not None and (
+            (current["argv"][0] == "case" and "in" in current["argv"])
+            or (mode == "arg" and len(current["argv"]) == 1))))
+
+    def drop_pattern():
+        # A pattern ended by a blank was recorded as a command; it is not one.
+        if (current is not None and len(current["argv"]) == 1 and commands
+                and commands[-1] is current):
+            commands.pop()
 
     def open_command(context, piped=False):
         nonlocal mode, skip, wrapper, duration, word, started, current, fed, wrapped, code, cases
@@ -799,6 +807,7 @@ def runs_script_string(command, scripts=None, commands=None, nesting=0):
                 # `PATTERN)`: what follows is the arm's command, also inside
                 # a substitution, whose own `)` this is not.
                 word, started = [], False
+                drop_pattern()
                 restart()
             elif stack and stack[-1][0] == "(":
                 if close_command():
@@ -1095,7 +1104,9 @@ def edit_texts(before, steps, crlf=False):
     is read in its real context. With `crlf`, line ends are read as
     apply_patch reads them: `\r\n` is one line end."""
     if crlf:
-        before = before.replace("\r\n", "\n")
+        # Not after a backslash: `\` CR LF is an escaped CR and then the end
+        # of the command, not a line continuation, and must stay so.
+        before = re.sub(r"(?<!\\)\r\n", "\n", before)
     after, position = before, 0
     for anchor, old, new, everywhere in steps:
         if old is None:
@@ -1106,8 +1117,14 @@ def edit_texts(before, steps, crlf=False):
         if anchor:
             # apply_patch places a hunk after the LINE equal to its anchor
             # (blanks around it aside), not after any text containing it.
-            line = re.compile(r"(?m)^[ \t]*" + re.escape(anchor) + r"[ \t\r]*$").search(after, position)
-            position = position if line is None else line.end()
+            # apply_patch seeks the exact line first, then one that differs
+            # only in surrounding blanks (codex-rs/apply-patch, seek_sequence).
+            for pattern in (r"(?m)^" + re.escape(anchor) + r"\r?$",
+                            r"(?m)^[ \t]*" + re.escape(anchor) + r"[ \t\r]*$"):
+                line = re.compile(pattern).search(after, position)
+                if line is not None:
+                    position = line.end()
+                    break
         before, after, position = apply_edit(before, after, old, new, everywhere, position)
     return before, after
 
@@ -1182,7 +1199,7 @@ def read_edit(tool_input, cwd, checkout):
 
     def shell_file(path, head):
         return bool(SHELL_FILE_RE.search(path) or os.path.basename(path) in SHELL_STARTUP_FILES
-                    or SHELL_SHEBANG_RE.match(head[:128].encode("utf-8")))
+                    or SHELL_SHEBANG_RE.match(head[:128].encode("utf-8", "replace")))
 
     # apply_patch reads a file as lines, whatever ends them; Edit and Write
     # match the bytes as they are.
@@ -1202,8 +1219,9 @@ def read_edit(tool_input, cwd, checkout):
                     head = handle.read(128).decode("utf-8", "replace")
             except OSError:
                 head = ""
-            if (shell_file(destination, head) or SOURCE_FILE_RE.search(destination)
-                    or any(shell_file("", new) for _a, _o, new, _e in steps)):
+            becomes_shell = any(shell_file("", new) and (old is None or head.startswith(old[:128]))
+                                for _a, old, new, _e in steps)
+            if shell_file(destination, head) or SOURCE_FILE_RE.search(destination) or becomes_shell:
                 return (f"Blocked: {os.path.basename(destination)} is, or would become, too large "
                         f"({EDIT_MAX_BYTES >> 20} MB) for the signalling check to read whole, so "
                         "this edit cannot be judged. Make the change in a smaller file.")
@@ -1956,13 +1974,19 @@ def main():
     cwd = payload.get("cwd")
     cwd = cwd if isinstance(cwd, str) else None
     tool_name = payload.get("tool_name")
-    if isinstance(tool_name, str) and tool_name in EDIT_TOOLS:
-        reason = edit_verdict(tool_input, cwd, options.get("--nix-config"))
-    else:
-        command = tool_input.get("command")
-        if not isinstance(command, str) or not command:
-            sys.exit(0)
-        reason = command_verdict(command, cwd, prompts=options.get("--client") != "codex")
+    try:
+        if isinstance(tool_name, str) and tool_name in EDIT_TOOLS:
+            reason = edit_verdict(tool_input, cwd, options.get("--nix-config"))
+        else:
+            command = tool_input.get("command")
+            if not isinstance(command, str) or not command:
+                sys.exit(0)
+            reason = command_verdict(command, cwd, prompts=options.get("--client") != "codex")
+    except Exception as error:
+        # A hook that raises lets the tool call run, so a defect here would
+        # be a hole. It is a refusal instead, naming the defect.
+        reason = (f"Blocked: the command guard failed while reading this ({type(error).__name__}), "
+                  "so it cannot be judged. Write it more plainly, and report the failure.")
     if reason:
         deny(reason)
 

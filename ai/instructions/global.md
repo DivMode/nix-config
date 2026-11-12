@@ -337,8 +337,12 @@ it was written for was not needed.
   `pgrep … | xargs kill`). The one exception is `killall` on the interface
   agents the command guard allows (Dock, Finder, the menu bar agents).
 - Do not write cleanup that hunts for leftovers: a bug in the search has no
-  boundary. If something a command started is still running, stop the ids you
-  recorded, or report what is left.
+  boundary. A job whose leftovers must go runs as
+  `membrake exec --reap --label "<repo>: <what>" -- <command>`, the one tested
+  path: when the command ends, it stops what the command left in the process
+  group it created for it, and nothing else. To stop the job early, signal the
+  `membrake exec` process you started, by the pid you recorded, and `wait`
+  for it; it passes the signal to the job and then stops what is left.
 - Never test process-termination code against the live machine. A target that
   must not be signalled goes only to a function that returns a verdict and
   sends nothing; a real signal goes only to a process the test itself started.

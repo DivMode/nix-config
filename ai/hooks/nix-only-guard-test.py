@@ -886,6 +886,12 @@ EDIT_CASES = [
      {"file_path": "{d}/dock.py", "content": f'os.system("{KILL} Dock" " SomeApplication")\n'}, "DENY"),
     ("two interface agents in one list are not one of the exact shapes",
      {"file_path": "{d}/dock.py", "content": f'subprocess.run(["/usr/bin/{KILL}", "Dock", "Finder"])\n'}, "DENY"),
+    ("a rewrite that changes only the comment on an existing restart",
+     {"file_path": "{d}/commented.py",
+      "content": f'subprocess.run(["/usr/bin/{KILL}", "Dock"])  # new comment\n'}, "ALLOW"),
+    ("a rewrite that changes the target of an existing restart",
+     {"file_path": "{d}/commented.py",
+      "content": f'subprocess.run(["/usr/bin/{KILL}", "SomeApplication"])  # old comment\n'}, "DENY"),
     ("a computed target beside an interface agent",
      {"file_path": "{d}/dock.py", "content": f'subprocess.run(["/usr/bin/{KILL}", "Dock", chr(88)])\n'}, "DENY"),
     ("rewriting a file that already restarts an interface agent",
@@ -1187,6 +1193,7 @@ def main():
             "tool": "#!/usr/bin/env python3\nprint(1)\n",
             "stop.txt": "notes\n",
             "becomes.md": "# old\n/bin/echo done\n",
+            "commented.py": f'subprocess.run(["/usr/bin/{KILL}", "Dock"])  # old comment\n',
             "ui.py": f'import os\nos.system("{KILL} Finder")\n',
             "longbang": "#!/" + "\u00e9" * 60 + "/bin/bash\nprintf safe\n",
             "bigrun": "#!/bin/bash\n#" + "x" * 4_194_304 + "\nprintf safe\n",
@@ -1258,6 +1265,40 @@ def main():
             failures += 1
             print(f"FAIL  expected DENY  got {got:<5} in {elapsed:.1f} s  {name}", file=sys.stderr)
 
+    # The whole answer, the denial's formatting included, must arrive in time:
+    # a 960 KB refused line took 27 s to format in the thirteenth pass.
+    long_line = "commands = [" + ", ".join([f'["/usr/bin/{KILL}", "Dock"]'] * 32000) + "]"
+    started = time.monotonic()
+    got = hook({"tool_name": "Write", "cwd": "/nonexistent",
+                "tool_input": {"file_path": "run.py", "content": long_line + "\n"}})
+    elapsed = time.monotonic() - started
+    if got != "DENY" or elapsed > 5:
+        failures += 1
+        print(f"FAIL  expected DENY  got {got:<5} in {elapsed:.1f} s  a refused 960 KB line, end to end",
+              file=sys.stderr)
+
+    # An expiry that lands while the timer is being disarmed is still a
+    # refusal, and the previous handler comes back. Modelled by delivering it
+    # from the disarming call itself; no signal is sent.
+    real_setitimer = guard.signal.setitimer
+
+    def setitimer_that_expires(which, seconds, *rest):
+        if seconds == 0:
+            guard.signal.getsignal(guard.signal.SIGALRM)(guard.signal.SIGALRM, None)
+        return real_setitimer(which, seconds, *rest)
+
+    before = guard.signal.getsignal(guard.signal.SIGALRM)
+    guard.signal.setitimer = setitimer_that_expires
+    try:
+        got = guard.answer({"tool_name": "Bash", "tool_input": {"command": "echo hi"}}, {})
+    except BaseException as error:
+        got = f"raised {type(error).__name__}"
+    finally:
+        guard.signal.setitimer = real_setitimer
+    if got != guard.TOO_SLOW or guard.signal.getsignal(guard.signal.SIGALRM) is not before:
+        failures += 1
+        print(f"FAIL  an expiry while disarming gave {got!r}", file=sys.stderr)
+
     # Whatever is slow, the answer is a refusal on time, not a late one.
     reader = guard.command_verdict
     guard.command_verdict = lambda *args, **kwargs: time.sleep(3)
@@ -1281,7 +1322,7 @@ def main():
         failures += 1
         print(f"FAIL  a source replacement of four million characters took {elapsed:.1f} s", file=sys.stderr)
 
-    total = len(CASES) + len(SCRIPT_CASES) + repository_cases + len(EDIT_CASES) + len(HOOK_CASES) + 6
+    total = len(CASES) + len(SCRIPT_CASES) + repository_cases + len(EDIT_CASES) + len(HOOK_CASES) + 8
     if failures:
         print(
             f"\n{failures} of {total} nix-only-guard tests failed.\n"

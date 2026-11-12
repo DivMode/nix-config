@@ -112,6 +112,11 @@ def denial(reason):
             }
         }, separators=(",", ":"))
 
+    # Cut first to a size the loop below finishes quickly: re-encoding a long
+    # reason twenty characters at a time took 27 seconds for a 960 KB line
+    # (a thirteenth-pass finding), past the client's ten.
+    if len(reason) > 2 * DENIAL_LIMIT:
+        reason = reason[:DENIAL_HEAD] + " [...] " + reason[-(2 * DENIAL_LIMIT - DENIAL_HEAD):]
     output, cut = encoded(reason), 0
     while len(output) > DENIAL_LIMIT and DENIAL_HEAD + cut < len(reason):
         cut += 20
@@ -1010,6 +1015,17 @@ HASH_COMMENT_FILE_RE = re.compile(r"\.(?:py|rb|pl)$")
 SLASH_COMMENT_FILE_RE = re.compile(r"\.(?:js|mjs|cjs|ts|mts|cts|tsx|jsx|go|rs|swift|java|kt)$|(?:^|/)package\.json$")
 
 
+def comment_markers(path):
+    """The markers that start a comment in the file's language."""
+    if HASH_COMMENT_FILE_RE.search(path):
+        return ("#",)
+    if SLASH_COMMENT_FILE_RE.search(path):
+        return ("//",)
+    if path.endswith(".php"):
+        return ("#", "//")
+    return ()
+
+
 def comment_line_re(path):
     if HASH_COMMENT_FILE_RE.search(path):
         return re.compile(r"\s*#")
@@ -1108,7 +1124,17 @@ def terminator_literals(text, path, fragment=False):
     for line in text.split("\n"):
         if comment.match(line):
             continue
-        found.extend(line.strip() for _match in pattern.finditer(line))
+        # Each occurrence counts as its line, without a trailing comment: a
+        # comment changed on an existing call does not make it new (a
+        # thirteenth-pass finding). A comment is a marker of the file's
+        # language after the line's last quote.
+        code = line
+        start = max(line.rfind(quote) for quote in "\"'`") + 1
+        for marker in comment_markers(path):
+            at = line.find(marker, start)
+            if at != -1:
+                code = code[:at]
+        found.extend(code.strip() for _match in pattern.finditer(line))
     return found
 
 
@@ -1975,25 +2001,39 @@ def answer(payload, options, budget=HOOK_BUDGET_SECONDS):
     cwd = cwd if isinstance(cwd, str) else None
     tool_name = payload.get("tool_name")
 
-    def expired(_signum, _frame):
-        raise TooSlow
+    # The timer fires once, and its handler raises once, so an expiry is a
+    # single TooSlow. It can land anywhere from the arming of the timer to
+    # its disarming, the inner `finally` included (a thirteenth-pass
+    # finding), and the outer `try` catches it in every one of those places.
+    pending = [True]
 
-    previous = signal.signal(signal.SIGALRM, expired)
-    signal.setitimer(signal.ITIMER_REAL, budget)
-    try:
+    def expired(_signum, _frame):
+        if pending[0]:
+            pending[0] = False
+            raise TooSlow
+
+    def read():
         if isinstance(tool_name, str) and tool_name in EDIT_TOOLS:
             return edit_verdict(tool_input, cwd, options.get("--nix-config"))
         command = tool_input.get("command")
         if not isinstance(command, str) or not command:
             return None
         return command_verdict(command, cwd, prompts=options.get("--client") != "codex")
+
+    previous = signal.signal(signal.SIGALRM, expired)
+    try:
+        try:
+            signal.setitimer(signal.ITIMER_REAL, budget)
+            return read()
+        finally:
+            signal.setitimer(signal.ITIMER_REAL, 0)
+            pending[0] = False
     except TooSlow:
         return TOO_SLOW
     except Exception as error:
         return (f"Blocked: the command guard failed while reading this ({type(error).__name__}), "
                 "so it cannot be judged. Write it more plainly, and report the failure.")
     finally:
-        signal.setitimer(signal.ITIMER_REAL, 0)
         signal.signal(signal.SIGALRM, previous)
 
 

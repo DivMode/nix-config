@@ -675,6 +675,8 @@ CASES = [
      "echo \"$(case esac in a) echo safe;; 'esac' ) /bin/kill -- -1;; esac)\"", "DENY"),
     ("a case closed inside a substitution, then a command",
      'echo "$(case x in x) echo safe;; esac)"; /bin/kill -- -1', "DENY"),
+    ("a substitution in an argument inside a case arm",
+     "case x in x) kill -$(printf TERM) -- -1;; esac", "DENY"),
     ("a case closed inside a substitution, then a pattern terminator",
      'echo "$(case x in x) echo safe;; esac)"; ' + "p" + "kill worker", "DENY"),
     # ---- ...and what delivers nothing, or reaches only what the command
@@ -682,6 +684,8 @@ CASES = [
     ("a search-fed probe", "kill -0 $(pgrep -f vite)", "ALLOW"),
     ("a search-fed probe behind xargs", "pgrep -f vite | xargs kill -0", "ALLOW"),
     ("asking what a name is", "command -v " + "p" + "kill", "ALLOW"),
+    ("a word that starts with a terminator's name, inside a case arm",
+     "case x in x) echo \"" + "p" + "kill$(printf '')\" worker;; esac", "ALLOW"),
     ("a case closed inside a substitution, then an ordinary command",
      'echo "$(case x in x) echo safe;; esac)"; echo done', "ALLOW"),
     ("a recorded id inside a function", 'stop() { kill "$pid"; }', "ALLOW"),
@@ -834,8 +838,11 @@ EDIT_CASES = [
     # what counts, not the fragment the edit carries.
     ("changing only an argument into a group",
      {"file_path": "{d}/pid.sh", "old_string": "12345", "new_string": "-1"}, "DENY"),
+    # Deliberately refused since the sixth review pass: what a replacement
+    # writes is read on its own as well as in the rebuilt file, so writing
+    # such a command into a string or a heredoc of a shell file is refused.
     ("replacing text inside a quoted message",
-     {"file_path": "{d}/message.sh", "old_string": "old", "new_string": "kill -- -1"}, "ALLOW"),
+     {"file_path": "{d}/message.sh", "old_string": "old", "new_string": "kill -- -1"}, "DENY"),
     ("rewriting a file of another language as a shell script",
      {"file_path": "{d}/tool", "content": f"#!/bin/bash\n{GROUP_SIGNAL}\n"}, "DENY"),
     ("a shell startup file with no shebang",
@@ -856,9 +863,12 @@ EDIT_CASES = [
     ("a patch hunk placed by its anchor, past the same text held as data",
      {"command": ("*** Begin Patch\n*** Update File: {d}/anchored.sh\n@@ echo anchor\n"
                   "-kill -- 12345\n+kill -- -1\n*** End Patch\n")}, "DENY"),
-    ("the same patch aimed at the data copy",
+    ("the same patch aimed at the data copy (refused: the replacement is read on its own)",
      {"command": ("*** Begin Patch\n*** Update File: {d}/anchored.sh\n@@ cat <<'EOF'\n"
-                  "-kill -- 12345\n+kill -- -1\n*** End Patch\n")}, "ALLOW"),
+                  "-kill -- 12345\n+kill -- -1\n*** End Patch\n")}, "DENY"),
+    ("a patch that changes data in a heredoc to other data",
+     {"command": ("*** Begin Patch\n*** Update File: {d}/anchored.sh\n@@ cat <<'EOF'\n"
+                  "-kill -- 12345\n+kill -- 23456\n*** End Patch\n")}, "ALLOW"),
     ("a statement that starts with a decrement is not a comment",
      {"file_path": "{d}/stop.js", "content": '--remaining; execSync("' + "p" + 'kill -f worker");\n'}, "DENY"),
     ("a statement that starts with a dereference is not a comment",
@@ -894,6 +904,22 @@ EDIT_CASES = [
     ("a patch anchor matched exactly before a looser match",
      {"command": ("*** Begin Patch\n*** Update File: {d}/anchored-exact.sh\n@@ echo anchor\n"
                   "-kill -- 12345\n+kill -- -1\n*** End Patch\n")}, "DENY"),
+    # Found by the sixth review pass.
+    ("a CR LF context line followed by the line the patch replaces",
+     {"command": ("*** Begin Patch\n*** Update File: {d}/ctx.sh\n@@\n echo safe\\\\\n"
+                  "-/bin/echo done\n+/bin/kill -- -1 # stop\n*** End Patch\n")}, "DENY"),
+    ("a large file made a shell script through a loosely matched first line",
+     {"command": ("*** Begin Patch\n*** Update File: {d}/becomes.md\n@@\n-# old \n+#!/bin/bash\n"
+                  "@@\n-/bin/echo done\n+/bin/kill -- -1 # stop\n*** End Patch\n")}, "DENY"),
+    # The replaced line holds no command on its own (`-- 12345` continues
+    # `kill \`), so only placing the hunk where apply_patch places it shows
+    # the group signal: after the anchor that differs only in trailing
+    # blanks, not the earlier one that differs in leading blanks.
+    ("an anchor matched ignoring trailing blanks before one ignoring leading blanks",
+     {"command": ("*** Begin Patch\n*** Update File: {d}/anchored-trailing.sh\n@@ echo anchor\n"
+                  "--- 12345\n+-- -1\n*** End Patch\n")}, "DENY"),
+    ("a shebang appended to large prose",
+     {"command": "*** Begin Patch\n*** Update File: {d}/large.md\n@@\n+#!/bin/bash\n*** End Patch\n"}, "ALLOW"),
     ("a shebang written into the body of large prose",
      {"file_path": "{d}/large.md", "old_string": "filler\nkill", "new_string": "#!/bin/bash\nkill"}, "ALLOW"),
     ("a slash comment in a C-family file",
@@ -1103,6 +1129,10 @@ def main():
             "anchored.sh": "#!/bin/bash\ncat <<'EOF'\nkill -- 12345\nEOF\necho anchor\nkill -- 12345\n",
             "large.sh": "#!/bin/bash\n" + "# filler\n" * 600000 + "kill -- 12345\n",
             "large.md": "filler\n" * 800000 + "kill -- 12345\n",
+            "ctx.sh": "echo safe\\\\\r\n/bin/echo done\necho \"<<'EOF'\"\n",
+            "becomes.md": "# old\n#" + "x" * 4_194_304 + "\n/bin/echo done\n",
+            "anchored-trailing.sh": ("cat <<'EOF'\n echo anchor\nkill \\\n-- 12345\nEOF\n"
+                                     "echo anchor \nkill \\\n-- 12345\n"),
             "continuation.sh": "echo safe\\\r\n/bin/echo done\n",
             "anchored-exact.sh": "cat <<'EOF'\n echo anchor\nkill -- 12345\nEOF\necho anchor\nkill -- 12345\n",
             "anchored-crlf.sh": "cat <<'EOF'\nkill -- 12345\nEOF\necho anchor\r\nkill -- 12345\n",

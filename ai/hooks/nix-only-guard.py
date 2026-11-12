@@ -691,13 +691,15 @@ def runs_script_string(command, scripts=None, commands=None, nesting=0):
         word, started = [], False
         return had and judge(text, quoted)
 
-    def in_case_pattern():
+    def in_case_pattern(after_blank=False):
         # The word before this `)` is a `case` pattern: at a command's start
-        # inside a `case` (still pending, or already ended by a blank and so
-        # taken for a command name), or among the words of `case WORD in`.
+        # inside a `case`, or among the words of `case WORD in`. With
+        # `after_blank` (a top-level `)` that follows a blank, never one that
+        # closes a substitution) also a single word a blank already ended and
+        # so took for a command name: `'esac' )`.
         return cases and (mode == "cmd" or (current is not None and (
             (current["argv"][0] == "case" and "in" in current["argv"])
-            or (mode == "arg" and len(current["argv"]) == 1))))
+            or (after_blank and mode == "arg" and len(current["argv"]) == 1))))
 
     def drop_pattern():
         # A pattern ended by a blank was recorded as a command; it is not one.
@@ -803,7 +805,7 @@ def runs_script_string(command, scripts=None, commands=None, nesting=0):
                 # the substitution's.
                 if finish():
                     return True
-            if in_case_pattern():
+            if in_case_pattern(after_blank=not word and not started and command[i - 1:i] in (" ", "\t")):
                 # `PATTERN)`: what follows is the arm's command, also inside
                 # a substitution, whose own `)` this is not.
                 word, started = [], False
@@ -1092,11 +1094,32 @@ def edit_files(tool_input):
                     old.append(line[1:])
                     new.append(line[1:])
             if old or new:
-                steps.append((anchor.strip(), "\n".join(old), "\n".join(new), False))
+                # `@@ TEXT`: the context is TEXT after the one blank.
+                anchor = anchor[1:] if anchor.startswith(" ") else anchor
+                steps.append((anchor.rstrip("\r"), "\n".join(old), "\n".join(new), False))
         if kind == "Add":
             steps = [("", None, "\n".join(new for _a, _o, new, _e in steps) + "\n", False)]
         files.append((path, destination, steps))
     return files
+
+
+def anchor_end(text, anchor, position):
+    """Where a hunk's search starts once its `@@` anchor is placed: after the
+    first LINE at or past `position` that equals the anchor, trying in turn
+    exactly, then ignoring trailing blanks, then ignoring blanks on both
+    sides, as apply_patch does (codex-rs/apply-patch, seek_sequence.rs). A
+    line's end, CR LF or LF, is not part of it."""
+    lines, offset = [], position
+    for line in text[position:].split("\n"):
+        lines.append((line.rstrip("\r"), offset + len(line)))
+        offset += len(line) + 1
+    for same in (lambda a, b: a == b,
+                 lambda a, b: a.rstrip() == b.rstrip(),
+                 lambda a, b: a.strip() == b.strip()):
+        for line, end in lines:
+            if same(line, anchor):
+                return end
+    return position
 
 
 def edit_texts(before, steps, crlf=False):
@@ -1114,17 +1137,8 @@ def edit_texts(before, steps, crlf=False):
                 raise Uncheckable
             after, position = new, len(new)
             continue
-        if anchor:
-            # apply_patch places a hunk after the LINE equal to its anchor
-            # (blanks around it aside), not after any text containing it.
-            # apply_patch seeks the exact line first, then one that differs
-            # only in surrounding blanks (codex-rs/apply-patch, seek_sequence).
-            for pattern in (r"(?m)^" + re.escape(anchor) + r"\r?$",
-                            r"(?m)^[ \t]*" + re.escape(anchor) + r"[ \t\r]*$"):
-                line = re.compile(pattern).search(after, position)
-                if line is not None:
-                    position = line.end()
-                    break
+        if anchor.strip():
+            position = anchor_end(after, anchor, position)
         before, after, position = apply_edit(before, after, old, new, everywhere, position)
     return before, after
 
@@ -1219,8 +1233,20 @@ def read_edit(tool_input, cwd, checkout):
                     head = handle.read(128).decode("utf-8", "replace")
             except OSError:
                 head = ""
-            becomes_shell = any(shell_file("", new) and (old is None or head.startswith(old[:128]))
-                                for _a, old, new, _e in steps)
+            def at_start(old):
+                # A whole-file write, or a replacement whose old text is the
+                # file's start, line by line and ignoring trailing blanks, as
+                # apply_patch may match it. A pure insertion goes at the end.
+                if old is None:
+                    return True
+                if not old:
+                    return False
+                trimmed = [line.rstrip() for line in old.split("\n")]
+                start = [line.rstrip() for line in head.replace("\r\n", "\n").split("\n")]
+                return start[:len(trimmed) - 1] == trimmed[:-1] and start[len(trimmed) - 1:len(trimmed)] in (
+                    [trimmed[-1]], []) or (len(trimmed) == 1 and start[0].startswith(trimmed[0]))
+
+            becomes_shell = any(shell_file("", new) and at_start(old) for _a, old, new, _e in steps)
             if shell_file(destination, head) or SOURCE_FILE_RE.search(destination) or becomes_shell:
                 return (f"Blocked: {os.path.basename(destination)} is, or would become, too large "
                         f"({EDIT_MAX_BYTES >> 20} MB) for the signalling check to read whole, so "
@@ -1231,7 +1257,20 @@ def read_edit(tool_input, cwd, checkout):
             continue
         counts = collections.Counter(signalling_text(after, shell, destination))
         counts.subtract(collections.Counter(signalling_text(before, shell, destination)))
-        introduced = sorted(shown for shown, count in counts.items() if count > 0)
+        introduced = [shown for shown, count in counts.items() if count > 0]
+        # The rebuilt file is apply_patch's result only as far as the hook
+        # follows its matching rules. So the text each replacement writes is
+        # also compared with the text it replaces: a forbidden command the
+        # replacement adds is refused even where the rebuild went astray. This
+        # errs towards refusing: writing such a command into a string of a
+        # shell file is refused too.
+        added = "\n".join(new for _a, old, new, _e in steps if old is not None)
+        removed = "\n".join(old for _a, old, _n, _e in steps if old is not None)
+        if added:
+            counts = collections.Counter(signalling_text(added, shell, destination))
+            counts.subtract(collections.Counter(signalling_text(removed, shell, destination)))
+            introduced += [shown for shown, count in counts.items() if count > 0]
+        introduced = sorted(set(introduced))
         if introduced:
             # The file's name, not its path: a long path would push the reason
             # out of the one pipe write a denial has (see denial()).

@@ -147,8 +147,12 @@ machine-change, credential and heavy-command rules):
   scripts it runs are.
 - A file edit (Claude Code's Edit and Write, Codex's `apply_patch`) is refused
   when the file it produces holds such a command that the file did not hold
-  before. This applies to a shell file (by extension, startup-file name or
-  shebang). For a source file in another language a line-by-line heuristic
+  before, or when the text a replacement writes holds one that the text it
+  replaces did not (so a rebuild that strays from apply_patch's matching still
+  sees what is written; writing such a command into a string or heredoc of a
+  shell file is refused too). This applies to a shell file (by extension,
+  startup-file name or shebang). For a source file in another language a
+  line-by-line heuristic
   looks for a string that shells out to a pattern-based terminator. It errs
   towards refusing: a string that only holds such a command as data is
   refused too. A shell or source file too large to read whole (4 MB) is

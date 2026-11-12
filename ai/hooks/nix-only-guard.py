@@ -1001,7 +1001,11 @@ SHELL_STARTUP_FILES = {".zshenv", ".zshrc", ".zprofile", ".zlogin", ".bashrc", "
                        ".profile", ".envrc"}
 SOURCE_FILE_RE = re.compile(r"\.(?:py|js|mjs|cjs|ts|mts|cts|tsx|jsx|rb|pl|php|lua|go|rs|swift|java|kt)$"
                             r"|(?:^|/)package\.json$")
-TERMINATOR_LITERAL_RE = re.compile(r"""["'`](?:/usr/bin/)?(?:pkill|killall)(?=["'`\s])""")
+# The name, right after a quote or a `/`, and followed by a quote or a blank:
+# a string that starts with it or with any path to it (`/usr/bin/./killall`
+# and the like, a fourteenth-pass finding). A fixed-width look-behind keeps it
+# linear.
+TERMINATOR_LITERAL_RE = re.compile(r"""(?<=["'`/])(?:pkill|killall)(?=["'`\s])""")
 # In a replacement the quotes may lie outside the text it writes (changing
 # `printf` into `pkill` in `run(["/usr/bin/printf", …])`), and no run-time
 # layer reads another language. So there the word itself counts.
@@ -1013,17 +1017,6 @@ TERMINATOR_WORD_RE = re.compile(r"(?<![\w-])(?:/usr/bin/)?(?:pkill|killall)(?![\
 # a terminator, which errs the safe way.
 HASH_COMMENT_FILE_RE = re.compile(r"\.(?:py|rb|pl)$")
 SLASH_COMMENT_FILE_RE = re.compile(r"\.(?:js|mjs|cjs|ts|mts|cts|tsx|jsx|go|rs|swift|java|kt)$|(?:^|/)package\.json$")
-
-
-def comment_markers(path):
-    """The markers that start a comment in the file's language."""
-    if HASH_COMMENT_FILE_RE.search(path):
-        return ("#",)
-    if SLASH_COMMENT_FILE_RE.search(path):
-        return ("//",)
-    if path.endswith(".php"):
-        return ("#", "//")
-    return ()
 
 
 def comment_line_re(path):
@@ -1124,17 +1117,14 @@ def terminator_literals(text, path, fragment=False):
     for line in text.split("\n"):
         if comment.match(line):
             continue
-        # Each occurrence counts as its line, without a trailing comment: a
-        # comment changed on an existing call does not make it new (a
-        # thirteenth-pass finding). A comment is a marker of the file's
-        # language after the line's last quote.
-        code = line
-        start = max(line.rfind(quote) for quote in "\"'`") + 1
-        for marker in comment_markers(path):
-            at = line.find(marker, start)
-            if at != -1:
-                code = code[:at]
-        found.extend(code.strip() for _match in pattern.finditer(line))
+        # Each occurrence counts as its whole line, comment included. So a
+        # comment changed on the line of an existing call makes it count as
+        # new and is refused: reading where a comment starts got a `#` inside
+        # a string wrong and let a changed target pass (fourteenth pass).
+        key = None
+        for _match in pattern.finditer(line):
+            key = key or line.strip()
+            found.append(key)
     return found
 
 

@@ -886,9 +886,16 @@ EDIT_CASES = [
      {"file_path": "{d}/dock.py", "content": f'os.system("{KILL} Dock" " SomeApplication")\n'}, "DENY"),
     ("two interface agents in one list are not one of the exact shapes",
      {"file_path": "{d}/dock.py", "content": f'subprocess.run(["/usr/bin/{KILL}", "Dock", "Finder"])\n'}, "DENY"),
+    # Deliberately refused: the line, comment included, is the call's identity;
+    # reading where a comment starts let a changed target pass (round 14).
     ("a rewrite that changes only the comment on an existing restart",
      {"file_path": "{d}/commented.py",
-      "content": f'subprocess.run(["/usr/bin/{KILL}", "Dock"])  # new comment\n'}, "ALLOW"),
+      "content": f'subprocess.run(["/usr/bin/{KILL}", "Dock"])  # new comment\n'}, "DENY"),
+    ("a changed target written after a hash inside a string",
+     {"file_path": "{d}/hashed.py",
+      "content": f'subprocess.run(["/usr/bin/{KILL}", """#SomeApplication\n""".lstrip("#").strip()])\n'}, "DENY"),
+    ("a path to the terminator that is not the usual one",
+     {"file_path": "{d}/alias.py", "content": f'subprocess.run(["/usr/bin/./{KILL}", "SomeApplication"])\n'}, "DENY"),
     ("a rewrite that changes the target of an existing restart",
      {"file_path": "{d}/commented.py",
       "content": f'subprocess.run(["/usr/bin/{KILL}", "SomeApplication"])  # old comment\n'}, "DENY"),
@@ -1193,6 +1200,7 @@ def main():
             "tool": "#!/usr/bin/env python3\nprint(1)\n",
             "stop.txt": "notes\n",
             "becomes.md": "# old\n/bin/echo done\n",
+            "hashed.py": f'subprocess.run(["/usr/bin/{KILL}", """#Dock\n""".lstrip("#").strip()])\n',
             "commented.py": f'subprocess.run(["/usr/bin/{KILL}", "Dock"])  # old comment\n',
             "ui.py": f'import os\nos.system("{KILL} Finder")\n',
             "longbang": "#!/" + "\u00e9" * 60 + "/bin/bash\nprintf safe\n",
@@ -1283,9 +1291,12 @@ def main():
     real_setitimer = guard.signal.setitimer
 
     def setitimer_that_expires(which, seconds, *rest):
+        # The real timer is disarmed first, then the expiry that was already
+        # pending is delivered, as the kernel would.
+        result = real_setitimer(which, seconds, *rest)
         if seconds == 0:
             guard.signal.getsignal(guard.signal.SIGALRM)(guard.signal.SIGALRM, None)
-        return real_setitimer(which, seconds, *rest)
+        return result
 
     before = guard.signal.getsignal(guard.signal.SIGALRM)
     guard.signal.setitimer = setitimer_that_expires
@@ -1295,7 +1306,8 @@ def main():
         got = f"raised {type(error).__name__}"
     finally:
         guard.signal.setitimer = real_setitimer
-    if got != guard.TOO_SLOW or guard.signal.getsignal(guard.signal.SIGALRM) is not before:
+    if (got != guard.TOO_SLOW or guard.signal.getsignal(guard.signal.SIGALRM) is not before
+            or real_setitimer(guard.signal.ITIMER_REAL, 0) != (0.0, 0.0)):
         failures += 1
         print(f"FAIL  an expiry while disarming gave {got!r}", file=sys.stderr)
 

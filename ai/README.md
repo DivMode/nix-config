@@ -146,7 +146,9 @@ machine-change, credential and heavy-command rules):
   read in part). A repository's own script, committed and unchanged since,
   is not judged, but the scripts it runs are; a staged change earns no trust.
   A script it knows it runs but cannot read whole (over 1 MB, or more than
-  eight scripts deep) is refused rather than passed.
+  eight scripts deep) is refused rather than passed, unless it is committed
+  and unchanged; such a committed script is then not read at all, so the
+  scripts it runs are not followed from it.
 - A file edit (Claude Code's Edit, MultiEdit and Write, Codex's
   `apply_patch`) is refused when the text it writes holds such a command that
   the text it replaces did not (for a whole-file write, the file as it is).

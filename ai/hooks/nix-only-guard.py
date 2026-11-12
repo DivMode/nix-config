@@ -1029,10 +1029,11 @@ EDIT_MAX_BYTES = 4 << 20
 
 
 def read_head(full):
-    """The file's first 128 bytes, as text, or "" when it cannot be read."""
+    """The file's start, enough for its interpreter line, as text, or ""
+    when it cannot be read."""
     try:
         with open(full, "rb") as handle:
-            return handle.read(128).decode("utf-8", "replace")
+            return handle.read(SHEBANG_MAX_BYTES).decode("utf-8", "replace")
     except OSError:
         return ""
 
@@ -1100,10 +1101,17 @@ def terminator_literals(text, path, fragment=False):
         if comment.match(line):
             continue
         for match in (TERMINATOR_WORD_RE if fragment else TERMINATOR_LITERAL_RE).finditer(line):
-            rest = re.split(r"[)\]]", line[match.end():], maxsplit=1)[0]
-            words = re.findall(r"-?[A-Za-z0-9_.$-]+", rest)
-            if match.group("by_name") is None or not restarts_only_ui_agents(words):
-                found.append(line.strip())
+            if match.group("by_name") is not None:
+                # The interface-agent exception reads the call's arguments up
+                # to its closing bracket, which must come within 200
+                # characters, so a line of many matches stays linear (a
+                # ninth-pass finding: 16,000 on one line took 15 seconds). A
+                # call that runs longer gets no exception.
+                ahead = line[match.end():match.end() + 200]
+                close = re.search(r"[)\]]", ahead)
+                if close and restarts_only_ui_agents(re.findall(r"-?[A-Za-z0-9_.$-]+", ahead[:close.start()])):
+                    continue
+            found.append(line.strip())
     return found
 
 
@@ -1157,7 +1165,7 @@ def read_edit(tool_input, cwd, checkout):
         return full if os.path.isabs(full) else os.path.join(cwd or "", full)
 
     def shebang(text):
-        return bool(SHELL_SHEBANG_RE.match(text[:128].encode("utf-8", "replace")))
+        return bool(SHELL_SHEBANG_RE.match(text[:SHEBANG_MAX_BYTES].encode("utf-8", "replace")))
 
     for path, destination, changes in edit_changes(tool_input):
         if guard_source(full_path(destination), checkout):
@@ -1763,6 +1771,7 @@ def check(segment, typed=True, heavy=True, others=True):
 # nix-config's setup scripts do what only the owner's setup may. Measured on
 # 2026-10-31 over 3,359 scripts on this Mac (repositories' tracked scripts,
 # agents' scratchpads, Codex run scripts): 15 s in all, none over 0.5 s.
+SHEBANG_MAX_BYTES = 4096
 SHELL_SHEBANG_RE = re.compile(rb"#![ \t]*/\S*/(?:env[ \t]+(?:-\S+[ \t]+)*)?(?:ba|z|da|k)?sh\b")
 SCRIPT_MAX_BYTES = 1 << 20
 SCRIPT_MAX_DEPTH = 8
@@ -1841,16 +1850,18 @@ def script_verdict(path, kind, cwd, depth, seen):
     full = os.path.realpath(full)
     if full in seen or not os.path.isfile(full):
         return None
-    seen.add(full)
-    if depth > SCRIPT_MAX_DEPTH:
-        if repository_script(full):
-            return None
-        return UNREAD_SCRIPT.format(name=os.path.basename(path), why="nested too deeply")
     try:
         with open(full, "rb") as handle:
-            data = handle.read(128)
+            data = handle.read(SHEBANG_MAX_BYTES)
             if kind == "program" and not SHELL_SHEBANG_RE.match(data):
                 return None  # a binary or another language's script
+            if depth > SCRIPT_MAX_DEPTH:
+                # Not marked seen: the same file reached again at a shallower
+                # depth must still be read (a ninth-pass finding).
+                if repository_script(full):
+                    return None
+                return UNREAD_SCRIPT.format(name=os.path.basename(path), why="nested too deeply")
+            seen.add(full)
             data += handle.read(SCRIPT_MAX_BYTES + 1 - len(data))
     except OSError:
         return None

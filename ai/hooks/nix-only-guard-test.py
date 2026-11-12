@@ -20,6 +20,7 @@ import os
 import subprocess
 import sys
 import tempfile
+import time
 
 GUARD = os.path.join(os.path.dirname(os.path.abspath(__file__)), "nix-only-guard.py")
 
@@ -756,7 +757,7 @@ SCRIPT_FILES = {
     "pid-edited.sh": "#!/bin/bash\nkill -- -1\n",
     "huge.sh": "#!/bin/bash\n" + "# filler\n" * 150000 + "echo done\n",
     **{f"deep{n}.sh": f"#!/bin/bash\nbash deep{n + 1}.sh\n" for n in range(1, 10)},
-    "deep10.sh": "#!/bin/bash\necho bottom\n",
+    "deep10.sh": "#!/bin/bash\n/bin/echo bottom\n",
     "string-plain.sh": "#!/bin/bash\nsh -c 'echo hi'\neval echo hi\n",
     "string-dashdash.sh": "#!/bin/bash\nbash -c -- '/bin/kill -- -1'\n",
     "eval-dashdash.sh": "#!/bin/bash\neval -- '/bin/kill -- -1'\n",
@@ -863,6 +864,9 @@ EDIT_CASES = [
       "content": f'run(["{KILL}", "Dock"]); run(["' + "p" + 'kill", "worker"])\n'}, "DENY"),
     ("an application beside a comment that mentions the Dock",
      {"file_path": "{d}/stop.py", "content": f'run(["{KILL}", "SomeApplication"])  # not Dock\n'}, "DENY"),
+    ("a name-based call whose arguments run past what is read gets no exception",
+     {"file_path": "{d}/dock.py",
+      "content": f'subprocess.run(["{KILL}", ' + '"Dock", ' * 40 + '"SomeApplication"])\n'}, "DENY"),
     ("a comment line that quotes the terminator",
      {"file_path": "{d}/stop.py", "content": '# Never run "' + "p" + 'kill -f worker" here\n'}, "ALLOW"),
     ("a slash comment in a C-family file",
@@ -893,6 +897,8 @@ EDIT_CASES = [
      {"command": ("*** Begin Patch\n*** Update File: {d}/existing.sh\n@@\n-echo done\n+echo finished\n"
                   "*** End Patch\n")}, "ALLOW"),
     # Found by the eighth review pass.
+    ("a complete command written into a script whose interpreter line is long",
+     {"file_path": "{d}/longbang", "old_string": "printf safe", "new_string": "/bin/kill -- -1"}, "DENY"),
     ("a complete command written into a large extensionless shell script",
      {"file_path": "{d}/bigrun", "old_string": "printf safe", "new_string": "/bin/kill -- -1"}, "DENY"),
     ("a shell script rewritten as Python with an ordinary variable",
@@ -1078,6 +1084,24 @@ def main():
             print(f"FAIL  expected DENY  got {got:<5}  an edited script run from an unchanged script's heredoc",
                   file=sys.stderr)
 
+        # A committed script first reached too deep to read is still read when
+        # the same command reaches it again at a shallower depth.
+        # w0 to w8 are read at depths 0 to 8; bridge.sh comes at depth 9.
+        chain = {f"w{n}.sh": f"#!/bin/bash\nbash w{n + 1}.sh\n" for n in range(8)}
+        chain["w8.sh"] = "#!/bin/bash\nbash bridge.sh\n"
+        chain["bridge.sh"] = "#!/bin/bash\nbash leaf.sh\n"
+        chain["leaf.sh"] = "#!/bin/bash\n/bin/kill -- -1\n"
+        for file, text in chain.items():
+            with open(os.path.join(d, file), "w") as handle:
+                handle.write(text)
+        commit(d, "bridge.sh")
+        repository_cases += 1
+        got = verdict("bash w0.sh; bash bridge.sh", cwd=d)
+        if got != "DENY":
+            failures += 1
+            print(f"FAIL  expected DENY  got {got:<5}  a committed script reached too deep, then again shallow",
+                  file=sys.stderr)
+
         # The signal guard's own sources are exempt from the edit rule only in
         # the checkout the hook is told about, or a linked worktree of it.
         source = {"file_path": "ai/shell-guard/kill-guard-test.sh", "content": f"{GROUP_SIGNAL}\n"}
@@ -1114,6 +1138,7 @@ def main():
             "tool": "#!/usr/bin/env python3\nprint(1)\n",
             "stop.txt": "notes\n",
             "becomes.md": "# old\n/bin/echo done\n",
+            "longbang": "#!/" + "\u00e9" * 60 + "/bin/bash\nprintf safe\n",
             "bigrun": "#!/bin/bash\n#" + "x" * 4_194_304 + "\nprintf safe\n",
             "was-shell.py": "#!/bin/bash\necho old\n",
             "run.py": 'import subprocess\nsubprocess.run(["/usr/bin/printf", "worker"])\n',
@@ -1131,7 +1156,18 @@ def main():
             failures += 1
             print(f"FAIL  expected {expected:<5} got {got:<5}  {name}", file=sys.stderr)
 
-    total = len(CASES) + len(SCRIPT_CASES) + repository_cases + len(EDIT_CASES) + len(HOOK_CASES)
+    # The hook has ten seconds, and a denial that arrives late is dropped. A
+    # line of 16,000 matches took 15 seconds when each looked ahead to the
+    # line's end.
+    many = "pkill = None\nnames = [" + ", ".join(["p" + "kill"] * 16000) + "]\n"
+    started = time.monotonic()
+    guard.edit_verdict({"file_path": "/nonexistent/run.py", "old_string": "pass", "new_string": many})
+    elapsed = time.monotonic() - started
+    if elapsed > 5:
+        failures += 1
+        print(f"FAIL  a source replacement with 16,000 matches took {elapsed:.1f} s", file=sys.stderr)
+
+    total = len(CASES) + len(SCRIPT_CASES) + repository_cases + len(EDIT_CASES) + len(HOOK_CASES) + 1
     if failures:
         print(
             f"\n{failures} of {total} nix-only-guard tests failed.\n"

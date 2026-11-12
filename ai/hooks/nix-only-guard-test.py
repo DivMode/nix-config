@@ -952,8 +952,16 @@ EDIT_CASES = [
      {"file_path": "{d}/longbang", "old_string": "printf safe", "new_string": "/bin/kill -- -1"}, "DENY"),
     ("a complete command written into a large extensionless shell script",
      {"file_path": "{d}/bigrun", "old_string": "printf safe", "new_string": "/bin/kill -- -1"}, "DENY"),
-    ("a shell script rewritten as Python with an ordinary variable",
-     {"file_path": "{d}/was-shell.py", "content": "#!/usr/bin/env python3\n" + "p" + "kill = 1\nprint(1)\n"}, "ALLOW"),
+    # In another language a new line that names the tool as a word is refused,
+    # wherever the word stands: rounds 9 to 16 found a way past each finer rule.
+    ("a shell script rewritten as Python with a variable of the tool's name",
+     {"file_path": "{d}/was-shell.py", "content": "#!/usr/bin/env python3\n" + "p" + "kill = 1\nprint(1)\n"}, "DENY"),
+    ("the tool's name after a separator in a command string",
+     {"file_path": "{d}/sep.py", "content": f'os.system("true;{KILL} SomeApplication")\n'}, "DENY"),
+    ("a call duplicated after its indentation changed",
+     {"file_path": "{d}/indented.rb",
+      "content": "def " + "p" + 'kill(pattern)\n  system("/usr/bin/' + "p" + 'kill", "-f", pattern)\nend\n'
+                 + ("p" + 'kill "' + KILL + '"\n') * 2}, "DENY"),
     ("a source replacement that turns a quoted program into the pattern terminator",
      {"file_path": "{d}/run.py", "old_string": "printf", "new_string": "p" + "kill"}, "DENY"),
     ("the signal guard's own path, with no checkout named",
@@ -1203,6 +1211,8 @@ def main():
             "stop.txt": "notes\n",
             "becomes.md": "# old\n/bin/echo done\n",
             "hashed.py": f'subprocess.run(["/usr/bin/{KILL}", """#Dock\n""".lstrip("#").strip()])\n',
+            "indented.rb": ("def " + "p" + 'kill(pattern)\n  system("/usr/bin/' + "p" + 'kill", "-f", pattern)\nend\n'
+                            "if false\n  " + "p" + 'kill "' + KILL + '"\nend\n'),
             "commented.py": f'subprocess.run(["/usr/bin/{KILL}", "Dock"])  # old comment\n',
             "ui.py": f'import os\nos.system("{KILL} Finder")\n',
             "longbang": "#!/" + "\u00e9" * 60 + "/bin/bash\nprintf safe\n",

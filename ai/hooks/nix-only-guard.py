@@ -1001,16 +1001,8 @@ SHELL_STARTUP_FILES = {".zshenv", ".zshrc", ".zprofile", ".zlogin", ".bashrc", "
                        ".profile", ".envrc"}
 SOURCE_FILE_RE = re.compile(r"\.(?:py|js|mjs|cjs|ts|mts|cts|tsx|jsx|rb|pl|php|lua|go|rs|swift|java|kt)$"
                             r"|(?:^|/)package\.json$")
-# The name, right after a quote, a `/` or a blank, and followed by a quote or
-# a blank: a string that starts with it, with any path to it
-# (`/usr/bin/./killall`, a fourteenth-pass finding), or with a word in front
-# of it (`"command killall Other"`, a fifteenth-pass finding). It errs towards
-# refusing: a variable of that name between two blanks is refused too. A
-# fixed-width look-behind keeps it linear.
-TERMINATOR_LITERAL_RE = re.compile(r"""(?<=["'`/\s])(?:pkill|killall)(?=["'`\s])""")
-# In a replacement the quotes may lie outside the text it writes (changing
-# `printf` into `pkill` in `run(["/usr/bin/printf", …])`), and no run-time
-# layer reads another language. So there the word itself counts.
+# The name of a pattern-based terminator as a word of its own: not part of a
+# longer name, whatever is around it (a quote, a path, a blank, `;`).
 TERMINATOR_WORD_RE = re.compile(r"(?<![\w-])(?:/usr/bin/)?(?:pkill|killall)(?![\w-])")
 # A whole-line comment, by the file's language: `#` in Python, Ruby and Perl,
 # `//` in the C family, either in PHP. Nothing else is skipped (a block
@@ -1101,33 +1093,22 @@ def edit_changes(tool_input):
 
 
 def terminator_literals(text, path, fragment=False):
-    """Each string literal in another language's source that shells out to a
-    pattern-based terminator. A heuristic, not a parser: it reads one line at
-    a time and skips whole-line comments. It errs towards refusing: a string
-    that merely holds such a command as data is refused too.
+    """The lines of another language's source that name a pattern-based
+    terminator as a word, each line once, whole-line comments skipped.
 
-    The name-based one gets no interface-agent exception here, unlike a
-    typed command or a shell script. Rounds 9 to 12 of the review of #271
-    each found a way past one: reading the call's arguments (an inner
-    bracket, a computed target, an option taken for a target, a quadratic
-    look-ahead), then exact shapes, which a literal `+ [...]` or an adjacent
-    string extends. A restart that existing code already makes may stay (the
-    count compares before and after); a new one belongs in a Nix activation
-    entry, which is not judged here, or is typed."""
-    found, comment = [], comment_line_re(path)
-    pattern = TERMINATOR_WORD_RE if fragment else TERMINATOR_LITERAL_RE
-    for line in text.split("\n"):
-        if comment.match(line):
-            continue
-        # Each occurrence counts as its whole line, comment included. So a
-        # comment changed on the line of an existing call makes it count as
-        # new and is refused: reading where a comment starts got a `#` inside
-        # a string wrong and let a changed target pass (fourteenth pass).
-        key = None
-        for _match in pattern.finditer(line):
-            key = key or line.strip()
-            found.append(key)
-    return found
+    A blunt rule on purpose. Rounds 9 to 16 of the review of #271 each found
+    a way past a finer one: reading a call's arguments, exact shapes, a
+    trailing comment, which characters may stand before the name, and
+    counting matches rather than lines (an indented call held two). Here a
+    line that names the tool in code, in a string or in a trailing comment
+    counts, and an edit that adds such a line is refused; a line the file
+    already had may stay. So a new restart of an interface agent belongs in
+    a Nix activation entry, which is not judged here, or is typed, and a
+    variable or comment that uses the word is refused too. `fragment` is
+    kept for the caller and changes nothing."""
+    comment = comment_line_re(path)
+    return [line.strip() for line in text.split("\n")
+            if not comment.match(line) and TERMINATOR_WORD_RE.search(line)]
 
 
 def signalling_text(text, shell, path="", fragment=False):

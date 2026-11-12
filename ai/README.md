@@ -166,15 +166,13 @@ machine-change, credential and heavy-command rules):
   is run, and the shell guard refuses at the call. The edit check does not
   rebuild the edited file: seven review rounds showed that matching every
   rule of apply_patch and the edit tools is a parser of its own that keeps
-  being wrong. For a source file in another language a line-by-line
-  heuristic looks for a string that shells out to a pattern-based
-  terminator, and in a replacement for the bare word, because the quotes may
-  lie outside it and no run-time layer reads another language; it errs
-  towards refusing, so a string or name that only holds such a word is
-  refused too. There the name-based one gets no interface-agent exception:
-  a restart the code already makes may stay, and a new one belongs in a Nix
-  activation entry or is typed. Rounds 9 to 12 of the review found a way past
-  each exception tried. An edit that writes more than 4 MB into a
+  being wrong. For a source file in another language the rule is blunt on
+  purpose: an edit that adds a line naming a pattern-based terminator as a
+  word, in code, in a string or in a trailing comment, is refused; a line the
+  file already had may stay. So a variable or a comment that uses the word is
+  refused too, and a new interface-agent restart belongs in a Nix activation
+  entry or is typed. Rounds 9 to 16 of the review found a way past each finer
+  rule tried. An edit that writes more than 4 MB into a
   shell or source file is refused rather than judged in part. Prose and Nix
   modules are not judged.
 - If the hook itself fails on an input, or takes more than seven seconds to

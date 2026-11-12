@@ -590,6 +590,11 @@ def runs_script_string(command, scripts=None, commands=None, nesting=0):
     word, started = [], False
     found = False  # a script string, when collecting scripts past it
     current, fed = None, False  # the command being collected; a lookup feeds this pipeline
+    # Loops and groups a lookup feeds, still open: `pgrep … | while read p;
+    # do kill "$p"; done` and `for p in $(pgrep …); do kill "$p"; done` feed
+    # every command up to the matching `done`, `fi`, `}` or `esac`.
+    fed_blocks = 0
+    loop = None  # the `for` or `select` whose word list is being read
     wrapped = False  # a wrapper or runner stands in front of the program
     code, code_words = None, []  # shell text follows: "one" word (`sh -c`) or "all" (`eval`)
     cases = 0  # `case` statements open in this context, whose patterns end in `)`
@@ -609,8 +614,10 @@ def runs_script_string(command, scripts=None, commands=None, nesting=0):
         current, wrapped, code = None, False, None
 
     def begin(name, direct):
-        nonlocal current, fed
+        nonlocal current, fed, loop
         current = {"argv": [name], "lookup": fed, "direct": direct}
+        if name in ("for", "select"):
+            loop = current
         if commands is not None:
             commands.append(current)
         if name in PROCESS_LOOKUPS:
@@ -628,7 +635,7 @@ def runs_script_string(command, scripts=None, commands=None, nesting=0):
         return scripts is None
 
     def judge(text, quoted=False):
-        nonlocal mode, skip, wrapper, duration, current, wrapped, code, cases
+        nonlocal mode, skip, wrapper, duration, current, wrapped, code, cases, fed, fed_blocks, loop
         if skip:
             skip -= 1
         elif mode == "dashdash":
@@ -652,6 +659,15 @@ def runs_script_string(command, scripts=None, commands=None, nesting=0):
             duration = False
         elif mode in ("cmd", "wrapper"):
             name = os.path.basename(text)
+            if mode == "cmd" and not quoted:
+                if text == "do" and loop is not None:
+                    if loop["lookup"] and not fed:
+                        fed, fed_blocks = True, fed_blocks + 1
+                    loop = None
+                elif fed and text in ("while", "until", "if", "{", "for", "select", "case"):
+                    fed_blocks += 1
+                elif fed_blocks and text in ("done", "fi", "}", "esac"):
+                    fed_blocks -= 1
             if ASSIGNMENT_RE.match(text) or (mode == "cmd" and text in SHELL_KEYWORDS):
                 pass
             elif mode == "cmd" and text == "esac" and not quoted:
@@ -715,8 +731,10 @@ def runs_script_string(command, scripts=None, commands=None, nesting=0):
 
     def open_command(context, piped=False):
         nonlocal mode, skip, wrapper, duration, word, started, current, fed, wrapped, code, cases
+        nonlocal fed_blocks, loop
         stack.append((context, word, started, mode, skip, wrapper, duration, current, fed, wrapped,
-                      code, cases, code_words[:]))
+                      code, cases, code_words[:], fed_blocks, loop))
+        fed_blocks, loop = 0, None
         del code_words[:]
         word, started = [], False
         mode, skip, wrapper, duration = "cmd", 0, None, False
@@ -727,10 +745,11 @@ def runs_script_string(command, scripts=None, commands=None, nesting=0):
 
     def close_command():
         nonlocal mode, skip, wrapper, duration, word, started, current, fed, wrapped, code, cases
+        nonlocal fed_blocks, loop
         hit = finish()
         flush()
         (_, word, started, mode, skip, wrapper, duration, current, fed, wrapped,
-         code, cases, saved_words) = stack.pop()
+         code, cases, saved_words, fed_blocks, loop) = stack.pop()
         code_words.extend(saved_words)
         if in_case_pattern():
             restart()  # `case WORD in (PATTERN) command`: the group was the pattern
@@ -839,7 +858,7 @@ def runs_script_string(command, scripts=None, commands=None, nesting=0):
             # `a | b` and `a |& b` keep the pipeline; `||` and the rest end it.
             before, after = command[i - 1:i], command[i + 1:i + 2]
             if not ((c == "|" and "|" not in (before, after)) or (c == "&" and before == "|")):
-                fed = False
+                fed = fed_blocks > 0
         else:
             word.append(c)
         i += 1
@@ -881,7 +900,10 @@ def runs_script_string(command, scripts=None, commands=None, nesting=0):
 # what refuses a group at the moment of the call. Agents and the owner's
 # applications run as one user, so the system delivers any signal that is
 # sent.
-PROCESS_LOOKUPS = {"pgrep", "pidof"}
+# Programs whose output is processes found by a search of the process table.
+# `ps`, `lsof` and `fuser` count as `pgrep` does: `kill $(lsof -ti :3000)`
+# signals whatever holds the port, which may be the owner's application.
+PROCESS_LOOKUPS = {"pgrep", "pidof", "ps", "lsof", "fuser"}
 SIGNAL_RULE = (" Signal only process ids this command started and recorded (`cmd & pid=$!`, then "
                "`kill $pid`). Never a process group, `-1`, or a target found by name, pattern or a "
                "process search: on 2026-11-11 that terminated every application the owner had "
@@ -995,6 +1017,7 @@ EDIT_TOOLS = {"Edit", "Write", "MultiEdit", "apply_patch"}
 # its linked worktrees, which main() is told with `--nix-config`; the same
 # path anywhere else is judged (see guard_source).
 SIGNAL_GUARD_SOURCES = ("ai/shell-guard/kill-guard.sh", "ai/shell-guard/kill-guard-test.sh",
+                        "ai/shell-guard/bin/agent-signal",
                         "ai/hooks/nix-only-guard.py", "ai/hooks/nix-only-guard-test.py")
 SHELL_FILE_RE = re.compile(r"\.(?:sh|bash|zsh|ksh|command)$")
 SHELL_STARTUP_FILES = {".zshenv", ".zshrc", ".zprofile", ".zlogin", ".bashrc", ".bash_profile",
@@ -1004,6 +1027,15 @@ SOURCE_FILE_RE = re.compile(r"\.(?:py|js|mjs|cjs|ts|mts|cts|tsx|jsx|rb|pl|php|lu
 # The name of a pattern-based terminator as a word of its own: not part of a
 # longer name, whatever is around it (a quote, a path, a blank, `;`).
 TERMINATOR_WORD_RE = re.compile(r"(?<![\w-])(?:/usr/bin/)?(?:pkill|killall)(?![\w-])")
+# A signal to a process group, or to every process (-1), sent by another
+# language's system call: `os.killpg(…)`, `os.kill(-pgid, …)`,
+# `process.kill(-pid)`, Go's `syscall.Kill(-pgid, …)`, Ruby's
+# `Process.kill("TERM", -pgid)`. Any case, so Go's name counts. Blunt like
+# the terminator rule: a line that holds one is refused wherever it stands. A
+# job whose children must go runs under `membrake exec --reap`, which stops
+# its group itself.
+GROUP_SIGNAL_RE = re.compile(r"(?i)(?<![a-z0-9])(?:killpg\b|kill\s*\(\s*-|kill\s*\(\s*[^()\n,]+,\s*-)")
+LINE_END_RE = re.compile(r"\r\n|\r|\n")
 # A whole-line comment, by the file's language: `#` in Python, Ruby and Perl,
 # `//` in the C family, either in PHP. Nothing else is skipped (a block
 # comment's ` * ` line, Lua's `--`), because the same start is code elsewhere
@@ -1105,10 +1137,19 @@ def terminator_literals(text, path, fragment=False):
     already had may stay. So a new restart of an interface agent belongs in
     a Nix activation entry, which is not judged here, or is typed, and a
     variable or comment that uses the word is refused too. `fragment` is
-    kept for the caller and changes nothing."""
+    kept for the caller and changes nothing.
+
+    The same goes for a line that signals a process group by system call
+    (GROUP_SIGNAL_RE): no other layer sees one, because the shell guard
+    covers only the shell's `kill` and the programs of that name.
+
+    Every line end counts, a carriage return alone included: Python reads
+    one as a line end, so splitting only on `\\n` let a file whose first
+    line is a comment hide the rest behind it (#272)."""
     comment = comment_line_re(path)
-    return [line.strip() for line in text.split("\n")
-            if not comment.match(line) and TERMINATOR_WORD_RE.search(line)]
+    return [line.strip() for line in LINE_END_RE.split(text)
+            if not comment.match(line)
+            and (TERMINATOR_WORD_RE.search(line) or GROUP_SIGNAL_RE.search(line))]
 
 
 def signalling_text(text, shell, path="", fragment=False):
@@ -1856,7 +1897,7 @@ def script_verdict(path, kind, cwd, depth, seen):
             return None
         full = os.path.join(cwd, full)
     full = os.path.realpath(full)
-    if full in seen or not os.path.isfile(full):
+    if full in seen or not os.path.isfile(full) or guard_source(full, GUARD_CHECKOUT):
         return None
     try:
         with open(full, "rb") as handle:
@@ -1867,7 +1908,11 @@ def script_verdict(path, kind, cwd, depth, seen):
             if kind == "program" and not (
                     SHELL_SHEBANG_RE.match(data) or any(SHELL_FILE_RE.search(name) for name in names)
                     or any(os.path.basename(name) in SHELL_STARTUP_FILES for name in names)):
-                return None  # a binary or another language's script
+                if INTERPRETER_SHEBANG_RE.match(data) or SOURCE_FILE_RE.search(full):
+                    handle.close()
+                    reason = source_verdict(full, cwd, seen)  # another language's script
+                    return None if reason == "missing" else reason
+                return None  # a binary
             if len(seen) >= SCRIPT_MAX_FILES:
                 return UNREAD_SCRIPT.format(what=f"this command runs more than {SCRIPT_MAX_FILES} scripts, "
                                                  "too many")
@@ -1900,6 +1945,203 @@ def script_verdict(path, kind, cwd, depth, seen):
         reason = command_verdict(text, cwd, depth + 1, seen, typed=False)
     # The file's name, not its path, for the same reason as in edit_verdict().
     return reason and f"Blocked: the script {os.path.basename(path)} would run this.\n\n{reason}"
+
+
+# Another language's code a command runs, judged where the program it runs
+# can be told from its words (run_target):
+#   - the program text an interpreter is handed (`python3 -c …`, `-Bc`,
+#     `node -pe …`, `--eval=…`, `perl -lne …`, `php -r …`, `deno eval …`) and
+#     a heredoc whose command runs an interpreter, however it is reached
+#     (`sudo`, `membrake exec … --`, `cat <<'PY' | python3 -`), searched for
+#     a group signal (GROUP_SIGNAL_RE) only, since a heredoc that writes a
+#     Nix module or a note may name a terminator; a terminator an interpreter
+#     actually runs reaches the shell guard's program of that name;
+#   - every source file among an interpreter's arguments, up to `-m` (so an
+#     option the guard does not know cannot hide the script:
+#     `python3 -I x.py`, `bun run x.ts`, `tsx watch x.ts`), also behind a
+#     launcher (`uv run cleanup.py`, `npx tsx stop.ts`,
+#     `nix develop .#default -c python3 …`, `mise exec python@3.12 -- …`) or
+#     run by its own shebang (`./cleanup.py`), judged as the edit check
+#     judges one, unless it is committed and unchanged or is one of the
+#     guard's own sources; a file over 1 MB, a bundle such as
+#     `node_modules/.bin` holds, is read in its first megabyte. A file a
+#     formatter, linter or test runner is given (`npx prettier --write x.ts`,
+#     `python3 -m black x.py`) is not run, and not judged;
+#   - a heredoc whose command names a script the same command runs, existing
+#     or not, searched as inline text is (`cat > x.py <<'EOF' … EOF` then
+#     `python3 x.py`).
+# Not read: a module (`python3 -m pkg.stop`), a script without a source
+# extension given to an interpreter (`node cleanup`), and a script written
+# by `printf`, `echo` or `tee` without a heredoc and run in the same command.
+INTERPRETER_SHEBANG_RE = re.compile(
+    rb"#![ \t]*/\S*/(?:env[ \t]+(?:-\S+[ \t]+)*)?(?:python[0-9.]*|node|nodejs|deno|bun|ruby|perl|php|tsx|ts-node)\b")
+SOURCE_INTERPRETER_RE = re.compile(r"(?:python[0-9.]*|node|nodejs|deno|bun|ruby|perl|php|tsx|ts-node)")
+# Launchers in front of an interpreter or a script, the words they take
+# before it, and their options that take a value. A word holding `#`, `@` or
+# `:` is a flake reference, a tool version or a path (`.#default`,
+# `nixpkgs#python3`, `python@3.12`, `path:.`); its last part may name the
+# interpreter.
+SOURCE_RUNNERS = {"uv", "uvx", "npx", "pnpm", "pnpx", "bunx", "yarn", "nix", "mise"}
+RUNNER_WORDS = {"run", "exec", "x", "dlx", "develop", "shell", "tool", "--"}
+RUNNER_VALUE_OPTIONS = {"--with", "--python", "-p", "--project", "--directory", "--env-file", "--extra",
+                        "--group", "--package", "--from", "--filter", "-F", "-C", "--dir"}
+
+
+def inline_flag_re(interpreter):
+    """The options after which this interpreter's next argument is program
+    text, alone or at the end of a cluster (`-Bc`, `-lne`)."""
+    if interpreter.startswith("python"):
+        return re.compile(r"-[A-Za-z]*c")
+    if interpreter == "perl":
+        return re.compile(r"-[A-Za-z]*[eE]")
+    if interpreter == "ruby":
+        return re.compile(r"-[A-Za-z]*e")
+    if interpreter == "php":
+        return re.compile(r"-r")
+    return re.compile(r"-[A-Za-z]*[ep]|--eval|--print")  # node, bun, tsx, ts-node, deno
+
+
+# The machine's nix-config checkout (`--nix-config`), whose signal guard
+# sources may be run though they hold what they refuse (see guard_source).
+GUARD_CHECKOUT = None
+
+
+def group_signal_line(text):
+    return next((line.strip() for line in LINE_END_RE.split(text) if GROUP_SIGNAL_RE.search(line)), None)
+
+
+def run_target(argv):
+    """(program texts, script paths) for a command that runs another
+    language's program, or None when it runs none that can be told."""
+    index, interpreter = 0, None
+    while interpreter is None:
+        if index >= len(argv):
+            return None
+        word = argv[index]
+        name = os.path.basename(word)
+        interpreter = next((part for part in (name, name.split("@")[0], re.split(r"[#:]", name)[-1])
+                            if SOURCE_INTERPRETER_RE.fullmatch(part)), None)
+        if interpreter is not None:
+            break
+        if index == 0:
+            if name not in SOURCE_RUNNERS:
+                return None
+        elif word in RUNNER_VALUE_OPTIONS:
+            index += 1
+        elif not (word.startswith("-") or ASSIGNMENT_RE.match(word) or word in RUNNER_WORDS
+                  or re.search(r"[#@:]", word)):
+            # `uv run x.py` runs the file; `pnpm exec eslint x.ts` runs
+            # something else, which is given the file.
+            return ([], [word]) if SOURCE_FILE_RE.search(word) else None
+        index += 1
+    texts, scripts, index = [], [], index + 1
+    if interpreter == "deno" and argv[index:index + 1] == ["eval"]:
+        return argv[index + 1:index + 2], []
+    inline = inline_flag_re(interpreter)
+    while index < len(argv):
+        word = argv[index]
+        if word == "-m":
+            break  # a module, not a file: `python3 -m black x.py`
+        if word.startswith("-") and word not in ("-", "--"):
+            # Every option's own text is searched: `-c'…'` and `--eval=…`
+            # carry program text attached.
+            texts.append(word)
+            if inline.fullmatch(word):
+                texts += argv[index + 1:index + 2]
+                index += 1
+        elif SOURCE_FILE_RE.search(word):
+            scripts.append(word)
+        index += 1
+    return texts, scripts
+
+
+def heredoc_bodies(command):
+    """(the text of the commands that read the heredoc, its body) for each
+    heredoc in `command`, in order: the command the operator belongs to,
+    with any command substitution it sits in (`python3 -c "$(cat <<'PY'`),
+    and a command the heredoc's own command pipes to on the same line
+    (`cat <<'PY' | python3 -`). A body is never searched for heredocs of its
+    own: a note that shows an example heredoc is data."""
+    lines = command.split("\n")
+    index = 0
+    while index < len(lines):
+        line = lines[index]
+        index += 1
+        for match in HEREDOC_RE.finditer(line):
+            readers = re.split(r"&&|\|\||[;&|]", line[:match.start()])[-1]
+            piped = re.match(r"[^;&|]*\|(?!\|)([^;&|]*)", line[match.end():])
+            if piped:
+                readers += "\n" + piped.group(1)
+            body = []
+            while index < len(lines) and lines[index].strip() != match.group(2):
+                body.append(lines[index])
+                index += 1
+            index += 1
+            yield readers, "\n".join(body)
+
+
+def source_verdict(path, cwd, seen):
+    """The denial reason for another language's source file a command runs;
+    "missing" when it does not exist."""
+    full = os.path.expanduser(path)
+    if "$" in path or "`" in path or (not os.path.isabs(full) and not cwd):
+        return None
+    full = os.path.realpath(os.path.join(cwd or "", full))
+    if full in seen:
+        return None
+    if not os.path.exists(full):
+        return "missing"
+    if not os.path.isfile(full) or guard_source(full, GUARD_CHECKOUT):
+        return None
+    try:
+        with open(full, "rb") as handle:
+            data = handle.read(SCRIPT_MAX_BYTES)
+    except OSError:
+        return None
+    seen[full] = len(data)
+    if repository_script(full):
+        return None
+    found = terminator_literals(data.decode("utf-8", "replace"), full)
+    return found and (f"Blocked: the program {os.path.basename(path)} would run `{found[0]}`.\n\n"
+                      f"It signals a process group or chooses its targets by name or pattern."
+                      f"{SIGNAL_RULE}")
+
+
+def interpreter_verdict(command, commands, cwd, seen):
+    def blocked(line):
+        return (f"Blocked: `{line}`\n\nIt signals a process group, or every process "
+                f"the user owns.{SIGNAL_RULE}")
+
+    run = []  # the names of the scripts this command runs
+    for record in commands:
+        argv = record["argv"]
+        if argv[0] == "fuser" and any(arg.startswith("-") and "k" in arg.lstrip("-") for arg in argv[1:]
+                                      if not arg.startswith("--")):
+            return (f"Blocked: `{' '.join(argv)}`\n\n`fuser -k` signals whatever its search "
+                    f"finds.{SIGNAL_RULE}")
+        target = run_target(argv)
+        if target is None:
+            continue
+        texts, scripts = target
+        for text in texts:
+            found = group_signal_line(text)
+            if found:
+                return blocked(found)
+        for script in scripts:
+            run.append(os.path.basename(script))
+            reason = source_verdict(script, cwd, seen)
+            if reason and reason != "missing":
+                return reason
+    for readers, body in heredoc_bodies(command):
+        consumers = []
+        runs_script_string(readers, None, consumers)
+        if (any(run_target(record["argv"]) is not None for record in consumers)
+                or any(re.search(r"(?<![\w.-])" + re.escape(name) + r"(?![\w.-])", readers)
+                       for name in run)):
+            found = group_signal_line(body)
+            if found:
+                return blocked(found)
+    return None
 
 
 def command_verdict(command, cwd=None, depth=0, seen=None, typed=True, prompts=True):
@@ -1938,7 +2180,7 @@ def read_command(command, cwd, depth, seen, typed, prompts):
         runs_script_string(command, scripts, commands)
     else:
         walk_script(command, scripts, commands)
-    reason = signal_verdict(commands)
+    reason = signal_verdict(commands) or interpreter_verdict(command, commands, cwd, seen)
     if reason:
         return reason
     for path, kind in scripts:
@@ -1986,6 +2228,8 @@ def answer(payload, options, budget=HOOK_BUDGET_SECONDS):
             raise TooSlow
 
     def read():
+        global GUARD_CHECKOUT
+        GUARD_CHECKOUT = options.get("--nix-config")
         if isinstance(tool_name, str) and tool_name in EDIT_TOOLS:
             return edit_verdict(tool_input, cwd, options.get("--nix-config"))
         command = tool_input.get("command")

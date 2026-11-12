@@ -1,0 +1,47 @@
+#!/bin/bash
+# `kill`, `pkill` and `killall` for a program that runs them by name without a
+# shell: `xargs kill`, make running a simple recipe line itself,
+# `subprocess.run([...])`, Node's `execFile`. The kill guard puts this
+# directory first on PATH in every shell an agent client starts (see
+# ../kill-guard.sh); a shell's own `kill` is the guard's function and never
+# reaches this file.
+#
+# The guard's verdict decides, with ownership measured from the process that
+# ran this one, and what it allows runs the system's program by full path, so
+# this file never finds itself on PATH again.
+set -u
+name="${0##*/}"
+here="${BASH_SOURCE[0]%/*}"
+AGENT_KILL_GUARD=1
+. "$here/../kill-guard.sh" || exit 1
+__agent_kill_guard_self() {
+  printf '%s' "$PPID"
+}
+# The system's program: macOS keeps it in /bin or /usr/bin, NixOS in the
+# system profile. Never this directory, so the call cannot come back here.
+program=''
+for candidate in "/bin/$name" "/usr/bin/$name" "/run/current-system/sw/bin/$name"; do
+  if [ -x "$candidate" ]; then
+    program="$candidate"
+    break
+  fi
+done
+case "$name" in
+  kill) verdict=__agent_kill_guard_verdict ;;
+  killall) verdict=__agent_kill_guard_killall_verdict ;;
+  *)
+    # The pattern-based terminator: the guard's function refuses it.
+    if [ "$(type -t "$name")" = function ] && [ "${name#__}" = "$name" ]; then
+      "$name" "$@"
+    else
+      printf 'kill guard: refused: %s is not a program this guard provides.\n' "$name" >&2
+    fi
+    exit 1
+    ;;
+esac
+"$verdict" "$@" || exit 1
+if [ -z "$program" ]; then
+  printf 'kill guard: no system %s program found.\n' "$name" >&2
+  exit 1
+fi
+exec "$program" "$@"

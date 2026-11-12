@@ -1,8 +1,10 @@
 # Tests for kill-guard.sh. Run as:
-#   <shell> kill-guard-test.sh <absolute path to kill-guard.sh> [NAMES]
-# where <shell> is each shell the guard must work in (bash 5, bash 3.2, zsh)
-# and NAMES, when given, is the command guard's list of interface agents,
-# sorted and joined by single spaces, which the guard's own list must equal.
+#   <shell> kill-guard-test.sh <absolute path to kill-guard.sh> [NAMES [LOADER...]]
+# where <shell> is each shell the guard must work in (bash 5, bash 3.2, zsh),
+# NAMES, when given, is the command guard's list of interface agents, sorted
+# and joined by single spaces, which the guard's own list must equal, and
+# the LOADERs are the values the clients give `BASH_FUNC_kill%%`,
+# `BASH_FUNC_pkill%%` and `BASH_FUNC_killall%%` (../default.nix).
 #
 # Safety of the test itself. A real signal goes only to a process this test
 # started, even if the guard under test is broken:
@@ -17,6 +19,10 @@
 
 guard="$1"
 expected_ui_agents="${2-}"
+loader="${3-}"
+pattern_loader="${4-}"
+name_loader="${5-}"
+bin="${guard%/*}/bin"
 failures=0
 
 fail() {
@@ -337,9 +343,150 @@ if [ -n "${BASH_VERSION-}" ]; then
     AGENT_KILL_GUARD=1 BASH_ENV="$guard" "$BASH" -s; then
     fail "bash did not load the guard through BASH_ENV"
   fi
-  if printf 'typeset -f kill >/dev/null\n' | env -u AGENT_KILL_GUARD BASH_ENV="$guard" "$BASH" -s; then
+  # Without what this shell exports (13) or a client's loader.
+  if (
+    export -n -f kill
+    printf 'typeset -f kill >/dev/null\n' |
+      env -u AGENT_KILL_GUARD -u 'BASH_FUNC_kill%%' BASH_ENV="$guard" "$BASH" -s
+  ); then
     fail "bash loaded the guard through BASH_ENV without the marker"
   fi
+  # 13. ... and exports it, so an `sh` below it (make, npm scripts, Python's
+  # `shell=True`), which reads no BASH_ENV, has it too.
+  if ! printf '/bin/sh -s <<"EOS"\ntypeset -f kill >/dev/null && typeset -f __agent_kill_guard_verdict >/dev/null\nEOS\n' |
+    AGENT_KILL_GUARD=1 BASH_ENV="$guard" "$BASH" -s; then
+    fail "an sh below a guarded bash did not inherit the guard"
+  fi
+fi
+
+# 14. A single process id: one this shell started passes; an application this
+# shell did not start is refused. Verdicts only.
+/bin/sleep 60 &
+child=$!
+allowed -TERM "$child"
+builtin kill "$child" 2>/dev/null
+wait "$child" 2>/dev/null
+# The application is this test's own: sleep, run with the program path of a
+# bundle as its argv[0], which is what ps reports. Once orphaned (foreign),
+# once as a tool inside a bundle, once as this shell's child.
+start_as() {
+  /usr/bin/perl -e 'my $p = fork; die "fork failed" unless defined $p; if ($p) { print "$p\n"; exit 0 } close STDOUT; exec { "/bin/sleep" } $ARGV[0], "60"' "$1"
+}
+application="$(start_as /Applications/Probe.app/Contents/MacOS/Probe)"
+tool="$(start_as /Applications/Probe.app/Contents/Resources/probe-cli)"
+developer_tool="$(start_as /Applications/Probe.app/Contents/Developer/usr/bin/probe-tool)"
+helper="$(start_as "/Applications/Probe.app/Contents/Frameworks/Probe Helper.app/Contents/MacOS/Probe Helper")"
+service="$(start_as /Applications/Probe.app/Contents/XPCServices/Probe.xpc/Contents/MacOS/Probe)"
+bundled_app="$(start_as /Applications/Probe.app/Contents/Developer/Applications/Viewer.app/Contents/MacOS/Viewer)"
+/usr/bin/perl -e 'exec { "/bin/sleep" } $ARGV[0], "60"' /Applications/Probe.app/Contents/MacOS/Probe &
+child=$!
+tries=0
+while [ "$tries" -lt 50 ] && { [ "$(field ppid "$application")" != 1 ] || [ "$(field ppid "$tool")" != 1 ] ||
+  [ "$(field ppid "$developer_tool")" != 1 ] || [ "$(field ppid "$helper")" != 1 ] || [ "$(field ppid "$service")" != 1 ] ||
+  [ "$(field ppid "$bundled_app")" != 1 ] ||
+  [ -z "$(__agent_kill_guard_ps -o comm= -p "$child")" ]; }; do
+  tries=$((tries + 1))
+  /bin/sleep 0.1
+done
+case "$(__agent_kill_guard_ps -o comm= -p "$application")" in
+  /Applications/Probe.app/Contents/MacOS/Probe) ;;
+  *) fail "the test application did not start as one" ;;
+esac
+refused -TERM "$application"
+refused -9 12345 "$application"
+allowed -0 "$application"
+# Its helpers and services are the application too.
+refused -TERM "$helper"
+refused -TERM "$service"
+# An application shipped inside another's developer tree (Simulator in Xcode).
+refused -TERM "$bundled_app"
+# A command line tool shipped inside a bundle is not.
+allowed -TERM "$tool"
+allowed -TERM "$developer_tool"
+# The application this shell started itself is its to stop.
+allowed -TERM "$child"
+builtin kill "$application" "$tool" "$developer_tool" "$helper" "$service" "$bundled_app" "$child" 2>/dev/null
+wait "$child" 2>/dev/null
+
+# 16. The guard puts AGENT_KILL_GUARD_BIN first on PATH, once.
+path_after="$(
+  AGENT_KILL_GUARD_BIN="$bin"
+  PATH=/usr/bin:/bin
+  . "$guard"
+  . "$guard"
+  printf '%s' "$PATH"
+)"
+if [ "$path_after" != "$bin:/usr/bin:/bin" ]; then fail "the guard set PATH to $path_after"; fi
+
+# 17. What the other routes refuse and allow, against a group this test
+# started and orphaned (foreign to every shell, see 9) and its own children.
+orphan="$(/usr/bin/perl -e 'my $p = fork; die "fork failed" unless defined $p; if ($p) { print "$p\n"; exit 0 } setpgrp(0, 0); close STDOUT; exec "/bin/sleep", "60"')"
+case "$orphan" in
+  '' | *[!0-9]*) fail "could not start the orphaned test group" ;;
+  *)
+    if ! leads_own_group "$orphan" 1; then
+      fail "the orphaned test process did not become a group leader under process 1"
+    else
+      # The programs in ./bin, run by a program rather than a shell. Each
+      # refusal must be the guard's, not a missing program's.
+      message="$(echo "-$orphan" | /usr/bin/xargs "$bin/kill" -TERM -- 2>&1)" &&
+        fail "the kill program accepted a group nothing here started"
+      case "$message" in "kill guard: refused"*) ;; *) fail "the kill program did not refuse: $message" ;; esac
+      message="$("$bin/killall" 2>&1)" && fail "the killall program was not refused"
+      case "$message" in "kill guard: refused"*) ;; *) fail "the killall program did not refuse: $message" ;; esac
+      message="$("$bin/pkill" 2>&1)" && fail "the pkill program was not refused"
+      case "$message" in "kill guard: refused"*) ;; *) fail "the pkill program did not refuse: $message" ;; esac
+      # An `sh` whose only guard is the clients' loader in its environment.
+      if [ -n "$loader" ]; then
+        printf 'kill -TERM -- -%s\n' "$orphan" >"${TMPDIR:-/tmp}/kill-guard-loader.$$"
+        if env -u BASH_ENV AGENT_KILL_GUARD=1 "BASH_FUNC_kill%%=$loader" \
+          /bin/sh "${TMPDIR:-/tmp}/kill-guard-loader.$$" 2>/dev/null; then
+          fail "an sh with the loader accepted a group it did not start"
+        fi
+        rm "${TMPDIR:-/tmp}/kill-guard-loader.$$"
+      fi
+      if ! alive "$orphan"; then fail "a refused route still signalled the foreign group"; fi
+    fi
+    builtin kill "$orphan" 2>/dev/null
+    ;;
+esac
+/bin/sleep 60 &
+child=$!
+"$bin/kill" -TERM "$child" || fail "the kill program refused this shell's own child"
+wait "$child" 2>/dev/null
+ended=$?
+if [ "$ended" != 143 ]; then fail "our own child ended with status $ended, not by the kill program's signal"; fi
+# The other two loaders, called with no argument: refused before anything
+# runs.
+if [ -n "$pattern_loader" ] && [ -n "$name_loader" ]; then
+  printf 'pkill\nkillall\n' >"${TMPDIR:-/tmp}/kill-guard-loader.$$"
+  message="$(env -u BASH_ENV AGENT_KILL_GUARD=1 "BASH_FUNC_pkill%%=$pattern_loader" "BASH_FUNC_killall%%=$name_loader" \
+    /bin/sh "${TMPDIR:-/tmp}/kill-guard-loader.$$" 2>&1)"
+  rm "${TMPDIR:-/tmp}/kill-guard-loader.$$"
+  case "$message" in
+    "kill guard: refused \`pkill \`"*"kill guard: refused \`killall \`"*) ;;
+    *) fail "the pkill and killall loaders did not refuse: $message" ;;
+  esac
+fi
+# A loader whose guard is gone refuses rather than ending the shell.
+if [ -n "$loader" ]; then
+  # The probe of one process id still answers; anything else is refused,
+  # and were it not, it would reach a process id nothing can hold.
+  printf 'kill -0 $$\necho "probe $?"\nkill -TERM 999999999\necho "still running $?"\n' >"${TMPDIR:-/tmp}/kill-guard-loader.$$"
+  missing="$(printf '%s' "$loader" | sed "s|$guard|$guard.gone|g")"
+  message="$(env -u BASH_ENV AGENT_KILL_GUARD=1 "BASH_FUNC_kill%%=$missing" /bin/sh "${TMPDIR:-/tmp}/kill-guard-loader.$$" 2>&1)"
+  rm "${TMPDIR:-/tmp}/kill-guard-loader.$$"
+  case "$message" in
+    "probe 0"*"is gone"*"still running 1") ;;
+    *) fail "a loader without its guard did not refuse and carry on: $message" ;;
+  esac
+fi
+if [ -n "$loader" ]; then
+  printf '/bin/sleep 60 &\nchild=$!\nkill -TERM "$child"\nwait "$child"\n' >"${TMPDIR:-/tmp}/kill-guard-loader.$$"
+  env -u BASH_ENV AGENT_KILL_GUARD=1 "BASH_FUNC_kill%%=$loader" /bin/sh "${TMPDIR:-/tmp}/kill-guard-loader.$$" 2>/dev/null
+  ended=$?
+  rm "${TMPDIR:-/tmp}/kill-guard-loader.$$"
+  if [ "$ended" != 143 ]; then fail "an sh with the loader did not signal its own child (status $ended)"; fi
 fi
 
 if [ "$failures" -gt 0 ]; then

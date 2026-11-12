@@ -348,7 +348,10 @@
                 export __NIX_DARWIN_SET_ENVIRONMENT_DONE=1
                 for shell in ${pkgs.bash}/bin/bash ${pkgs.zsh}/bin/zsh /bin/bash /bin/zsh; do
                   echo "kill-guard tests in $shell"
-                  "$shell" ${ai.shellGuard.killGuardTest} ${ai.shellGuard.killGuard} "$names"
+                  "$shell" ${ai.shellGuard.killGuardTest} ${ai.shellGuard.killGuard} "$names" \
+                    ${nixpkgs.lib.escapeShellArg ai.shellGuard.environment."BASH_FUNC_kill%%"} \
+                    ${nixpkgs.lib.escapeShellArg ai.shellGuard.environment."BASH_FUNC_pkill%%"} \
+                    ${nixpkgs.lib.escapeShellArg ai.shellGuard.environment."BASH_FUNC_killall%%"}
                 done
                 touch "$out"
               '';

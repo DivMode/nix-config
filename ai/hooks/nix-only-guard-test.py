@@ -652,6 +652,46 @@ CASES = [
      f"/usr/bin/{KILL} >$(printf /dev/null) SomeApplication Dock", "DENY"),
     ("a process search nested twice", "kill $(echo $(pgrep -f vite))", "DENY"),
     ("a process search feeding a subshell", "pgrep -f vite | (xargs kill)", "DENY"),
+    # ---- Follow-up review of #270 (2026-11-12): process ids from any search
+    # of the process table, and loops a search feeds. ----
+    ("targets from ps, substituted", "kill -TERM $(ps -A -o pid=)", "DENY"),
+    ("targets from lsof, substituted", "kill $(lsof -ti :3000)", "DENY"),
+    ("targets from fuser, substituted", "kill $(fuser 3000/tcp)", "DENY"),
+    ("a while loop a search feeds", 'ps -A -o pid= | while read p; do kill -TERM "$p"; done', "DENY"),
+    ("a while loop a search feeds, over lines",
+     'pgrep -f vite | while read p\ndo\n  kill "$p"\ndone', "DENY"),
+    ("a for loop over a search", 'for p in $(pgrep -f vite); do kill "$p"; done', "DENY"),
+    ("a for loop over a search, nested in an if",
+     'for p in $(lsof -ti :3000); do if [ -n "$p" ]; then kill "$p"; fi; done', "DENY"),
+    # ---- ...and another language's group signal, typed. ----
+    ("python's killpg, inline", "python3 -c 'import os; os.killpg(1234, 15)'", "DENY"),
+    ("python's kill of every process, inline", "python3 -c 'import os; os.kill(-1, 15)'", "DENY"),
+    ("node's kill of a group, inline", "node -e 'process.kill(-1234)'", "DENY"),
+    ("python's killpg behind uv run", "uv run python3 -c 'import os; os.killpg(1234, 15)'", "DENY"),
+    ("fuser's own termination of what it finds", "fuser -k 3000/tcp", "DENY"),
+    ("python's killpg in a heredoc behind sudo",
+     "sudo python3 - <<'PY'\nimport os\nos.killpg(1234, 15)\nPY", "DENY"),
+    ("python's killpg in a heredoc behind the memory queue",
+     "membrake exec --label x -- python3 - <<'PY'\nimport os\nos.killpg(1234, 15)\nPY", "DENY"),
+    ("python's killpg in a heredoc piped to python",
+     "cat <<'PY' | python3 -\nimport os\nos.killpg(1234, 15)\nPY", "DENY"),
+    ("python's killpg in a cluster of options", "python3 -Bc 'import os; os.killpg(1234, 15)'", "DENY"),
+    ("python's killpg attached to -c", "python3 -c'import os; os.killpg(1234, 15)'", "DENY"),
+    ("node's group kill after -pe", "node -pe 'process.kill(-1234)'", "DENY"),
+    ("node's group kill in --eval=", "node --eval='process.kill(-1234)'", "DENY"),
+    ("php's posix_kill of every process", "php -r 'posix_kill(-1, 15);'", "DENY"),
+    ("tsx's group kill inline", "npx tsx -e 'process.kill(-1234)'", "DENY"),
+    ("python's killpg behind mise exec", "mise exec -- python3 -c 'import os; os.killpg(1234, 15)'", "DENY"),
+    ("python's killpg after -I", "python3 -I -c 'import os; os.killpg(1234, 15)'", "DENY"),
+    ("python's killpg behind a flake's dev shell",
+     "nix develop .#default -c python3 -c 'import os; os.killpg(1234, 15)'", "DENY"),
+    ("python's killpg run from a flake reference",
+     "nix run nixpkgs#python3 -- -c 'import os; os.killpg(1234, 15)'", "DENY"),
+    ("python's killpg behind a versioned mise tool",
+     "mise exec python@3.12 -- python -c 'import os; os.killpg(1234, 15)'", "DENY"),
+    ("python's killpg in a heredoc",
+     "python3 - <<'PY'\nimport os, subprocess\nfor g in subprocess.check_output(['ps', '-A', '-o', 'pgid=']).split():\n"
+     "    os.killpg(int(g), 15)\nPY", "DENY"),
     ("an unquoted heredoc that runs a group signal", "cat <<EOF\n$(/bin/kill -- -1)\nEOF", "DENY"),
     # Found by the re-review. In bash 3.2 `-s` and `-n` do not mark the signal
     # as given, so the number after them is a second signal.
@@ -711,6 +751,21 @@ CASES = [
     ("resetting a trap", "trap - EXIT", "ALLOW"),
     ("listing signals", "kill -l", "ALLOW"),
     ("a process search on its own", "pgrep -fl vite", "ALLOW"),
+    ("a process listing on its own", "ps -axo pid,command | grep vite", "ALLOW"),
+    ("a loop over a process listing that signals nothing, then a recorded id",
+     'ps -A -o pid= | while read p; do echo "$p"; done; kill "$pid"', "ALLOW"),
+    ("a liveness check before a recorded id", 'ps -p "$pid" >/dev/null && kill "$pid"', "ALLOW"),
+    ("a for loop over recorded ids", 'for p in "$a" "$b"; do kill "$p"; done', "ALLOW"),
+    ("python stopping its own child", "python3 -c 'import subprocess; p = subprocess.Popen([\"sleep\", \"9\"]); p.kill()'", "ALLOW"),
+    ("python signalling one process id", "python3 -c 'import os; os.kill(pid, 15)'", "ALLOW"),
+    ("a word that names a group signal, handed to a test runner", "python3 -m pytest -k killpg", "ALLOW"),
+    ("fuser only asking", "fuser 3000/tcp", "ALLOW"),
+    ("a pull request body that names a group signal, titled after an interpreter",
+     "gh pr create --title 'node: stop' --body-file - <<'EOF'\nnever os.killpg(pgid, 15)\nEOF", "ALLOW"),
+    ("a commit message that names a group signal",
+     "git commit -m 'python3 fix' -F - <<'EOF'\nnever os.killpg(pgid, 15)\nEOF", "ALLOW"),
+    ("a note whose example heredoc holds a group signal",
+     "cat > notes.md <<'EOF'\npython3 - <<'PY'\nos.killpg(1, 15)\nPY\nEOF", "ALLOW"),
     ("a process search, then an unrelated recorded id", "pgrep -f vite; kill $pid", "ALLOW"),
     ("a process search guarding a recorded id", "pgrep -f vite || kill $pid", "ALLOW"),
     ("naming the forbidden form in a message", 'echo "kill -- -1 is refused"', "ALLOW"),
@@ -770,6 +825,14 @@ SCRIPT_FILES = {
     "string-plain.sh": "#!/bin/bash\nsh -c 'echo hi'\neval echo hi\n",
     "string-dashdash.sh": "#!/bin/bash\nbash -c -- '/bin/kill -- -1'\n",
     "eval-dashdash.sh": "#!/bin/bash\neval -- '/bin/kill -- -1'\n",
+    # Another language's script, run by an interpreter or by its shebang.
+    "cleanup.py": "import os\nfor g in range(2, 99999):\n    os.killpg(g, 15)\n",
+    "cleanup-exec": "#!/usr/bin/env python3\nimport os\nos.kill(-1, 15)\n",
+    "names.js": "require('child_process').execFileSync('" + "p" + "kill', ['-f', 'vite'])\n",
+    "own.py": "import subprocess\np = subprocess.Popen(['sleep', '9'])\np.terminate()\np.wait()\n",
+    "runs-python.sh": "#!/bin/bash\npython3 cleanup.py\n",
+    # A bundle too large to be a script someone wrote, as node_modules/.bin holds.
+    "bundle.js": "#!/usr/bin/env node\n" + "var x = 1;\n" * 120000,
 }
 SCRIPT_CASES = [
     ("the incident: a probe script whose writes go through $DST", "bash {d}/probe.sh", "DENY"),
@@ -812,6 +875,34 @@ SCRIPT_CASES = [
     ("a script whose script strings are harmless", "bash {d}/string-plain.sh", "ALLOW"),
     ("a script string after --", "bash {d}/string-dashdash.sh", "DENY"),
     ("an eval string after --", "bash {d}/eval-dashdash.sh", "DENY"),
+    ("a python script that signals groups", "python3 {d}/cleanup.py", "DENY"),
+    ("a python script by its shebang that signals every process", "{d}/cleanup-exec", "DENY"),
+    ("a node script that runs a pattern-based terminator", "node {d}/names.js", "DENY"),
+    ("a python script that stops its own child", "python3 {d}/own.py", "ALLOW"),
+    ("a shell script that runs a python script that signals groups", "bash {d}/runs-python.sh", "DENY"),
+    ("a python script behind uv run", "uv run {d}/cleanup.py", "DENY"),
+    ("a python script after interpreter options", "python3 -X dev {d}/cleanup.py", "DENY"),
+    ("a python script after -I", "python3 -I {d}/cleanup.py", "DENY"),
+    ("a python script after -E", "python3 -E {d}/cleanup.py", "DENY"),
+    ("a script behind bun run", "bun run {d}/names.js", "DENY"),
+    ("a python script behind uv tool run", "uv tool run python {d}/cleanup.py", "DENY"),
+    ("an existing script overwritten and run in one command",
+     "cat > {d}/own.py <<'EOF'\nimport os\nos.killpg(4242, 15)\nEOF\npython3 {d}/own.py", "DENY"),
+    ("a python script behind env", "env PYTHONUNBUFFERED=1 python3 {d}/cleanup.py", "DENY"),
+    ("an argument that names a group signal, after a harmless script", "python3 {d}/own.py --note killpg", "ALLOW"),
+    ("a bundle over a megabyte, run by path", "{d}/bundle.js", "ALLOW"),
+    ("a bundle over a megabyte, run by node", "node {d}/bundle.js", "ALLOW"),
+    ("a script written and run in one command",
+     "cat > {d}/fresh.py <<'EOF'\nimport os\nos.killpg(4242, 15)\nEOF\npython3 {d}/fresh.py", "DENY"),
+    # A file a formatter, linter or test runner is given is not run.
+    ("a formatter given a script that signals groups", "npx prettier --write {d}/cleanup.py", "ALLOW"),
+    ("a module given a script that signals groups", "python3 -m black {d}/cleanup.py", "ALLOW"),
+    ("a linter behind uv run given a script that signals groups", "uv run ruff check {d}/cleanup.py", "ALLOW"),
+    ("a package script given a script that signals groups", "pnpm lint {d}/cleanup.py", "ALLOW"),
+    ("a missing script, and a commit message that names a group signal",
+     "npx tsx {d}/nothere.ts; git commit -F - <<'EOF'\nnever os.killpg(1, 15)\nEOF", "ALLOW"),
+    ("a harmless script written and run in one command",
+     "cat > {d}/fresh.py <<'EOF'\nprint('hi')\nEOF\npython3 {d}/fresh.py", "ALLOW"),
 ]
 
 # ---- File edits that introduce signalling code (issue #270). Claude Code's
@@ -926,8 +1017,28 @@ EDIT_CASES = [
      {"file_path": "{d}/stop.js", "content": '-- remaining; execSync("' + "p" + 'kill -f worker");\n'}, "DENY"),
     ("a statement that starts with a dereference is not a comment",
      {"file_path": "{d}/stop.go", "content": '* result = exec.Command("' + "p" + 'kill", "worker").Run()\n'}, "DENY"),
-    ("a group signal by system call is not judged",
-     {"file_path": "{d}/stop.py", "content": "os.killpg(process.pid, signal.SIGTERM)\n"}, "ALLOW"),
+    # Follow-up review of #270 (2026-11-12): a group signal by system call
+    # is refused in any language; `membrake exec --reap` stops a job's group.
+    ("python's killpg",
+     {"file_path": "{d}/stop.py", "content": "os.killpg(process.pid, signal.SIGTERM)\n"}, "DENY"),
+    ("python's kill of a negative id",
+     {"file_path": "{d}/stop.py", "content": "os.kill(-pgid, signal.SIGTERM)\n"}, "DENY"),
+    ("node's kill of a negative id",
+     {"file_path": "{d}/stop.ts", "content": "process.kill(-child.pid!, 'SIGTERM');\n"}, "DENY"),
+    ("go's Kill of a negative id",
+     {"file_path": "{d}/stop.go", "content": "syscall.Kill(-pgid, syscall.SIGTERM)\n"}, "DENY"),
+    ("ruby's kill of a negative id",
+     {"file_path": "{d}/stop.rb", "content": "Process.kill('TERM', -pgid)\n"}, "DENY"),
+    ("a group signal named in a comment",
+     {"file_path": "{d}/stop.py", "content": "# never os.killpg(pgid, 15) here\n"}, "ALLOW"),
+    ("python signalling one process id",
+     {"file_path": "{d}/stop.py", "content": "os.kill(proc.pid, signal.SIGTERM)\nproc.kill()\n"}, "ALLOW"),
+    ("node stopping its own child",
+     {"file_path": "{d}/stop.ts", "content": "child.kill('SIGTERM');\n"}, "ALLOW"),
+    # #272, case 2: carriage returns alone end lines as well.
+    ("a terminator after a comment, lines ended by carriage returns",
+     {"file_path": "{d}/stop.py", "content": "# helper\rimport subprocess\rsubprocess.run(['" + "p" + "kill', 'x'])\r"},
+     "DENY"),
     # Codex patches.
     ("a patch that adds a shell script signalling a group",
      {"command": f"*** Begin Patch\n*** Add File: {{d}}/patched.sh\n+#!/bin/bash\n+{GROUP_SIGNAL}\n*** End Patch\n"}, "DENY"),
@@ -1066,6 +1177,27 @@ def main():
             if got != expected:
                 failures += 1
                 print(f"FAIL  expected {expected:<5} got {got:<5}  {name}", file=sys.stderr)
+
+    # The guard's own sources hold what they refuse; in the machine's
+    # nix-config checkout (`--nix-config`) they may still be run when edited,
+    # and the same files anywhere else are judged.
+    with tempfile.TemporaryDirectory() as d:
+        sources = {"ai/hooks/nix-only-guard-test.py": "CASE = '/usr/bin/" + "p" + "kill -f worker'\n",
+                   "ai/shell-guard/kill-guard-test.sh": f"#!/bin/bash\n{GROUP_SIGNAL}\n"}
+        for file, text in sources.items():
+            os.makedirs(os.path.dirname(os.path.join(d, file)), exist_ok=True)
+            with open(os.path.join(d, file), "w") as handle:
+                handle.write(text)
+        for name, checkout, expected in [("the guard's sources outside the checkout are judged", None, "DENY"),
+                                         ("the guard's sources in the checkout may be run", d, "ALLOW")]:
+            guard.GUARD_CHECKOUT = checkout
+            for command in (f"python3 {d}/ai/hooks/nix-only-guard-test.py",
+                            f"bash {d}/ai/shell-guard/kill-guard-test.sh"):
+                got = verdict(command, cwd=d)
+                if got != expected:
+                    failures += 1
+                    print(f"FAIL  expected {expected:<5} got {got:<5}  {name}: {command}", file=sys.stderr)
+        guard.GUARD_CHECKOUT = None
 
     # A script git tracks unchanged is the repository's own mechanism (another
     # repository's Connect loader clears OP_* before loading its own); once

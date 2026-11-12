@@ -145,10 +145,14 @@ machine-change, credential and heavy-command rules):
   `eval` (nested more than eight deep, the command is refused rather than
   read in part). A repository's own script, committed and unchanged since,
   is not judged, but the scripts it runs are; a staged change earns no trust.
-  A script it knows it runs but cannot read whole (over 1 MB, or more than
-  eight scripts deep) is refused rather than passed, unless it is committed
-  and unchanged; such a committed script is then not read at all, so the
-  scripts it runs are not followed from it.
+  Every script is read once and whole, however deep, with every script it
+  runs followed in turn; a `.sh` file run by path counts as shell even
+  without a shebang. A command that reaches more than 64 different scripts,
+  or more than 4 MB of script text in all (read in about a second per MB,
+  against the hook's ten), is refused rather than read in part, and so is
+  a script over 1 MB, unless
+  it is committed and unchanged; such a committed script is then not read at
+  all, so the scripts it runs are not followed from it.
 - A file edit (Claude Code's Edit, MultiEdit and Write, Codex's
   `apply_patch`) is refused when the text it writes holds such a command that
   the text it replaces did not (for a whole-file write, the file as it is).

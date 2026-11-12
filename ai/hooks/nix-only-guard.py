@@ -1089,6 +1089,31 @@ def edit_changes(tool_input):
     return files
 
 
+def call_words(line, match):
+    """The words the name-based terminator matched on `line` would be given,
+    for the interface-agent exception: the rest of the string it stands in,
+    then every string literal after it on the line; with no quote at hand
+    (a replacement's bare text), every word after it. None, and so no
+    exception, when the rest of the line is longer than 200 characters: the
+    look-ahead is bounded so a line of many matches stays linear (a
+    ninth-pass finding: 16,000 on one line took 15 seconds), and it reads to
+    the line's end, because a bracket inside the call (`*["Dock"]`) is not
+    its end (a tenth-pass finding)."""
+    rest = line[match.end():]
+    if len(rest) > 200:
+        return None
+    start = match.start()
+    quote = line[start] if line[start] in "\"'`" else (
+        line[start - 1] if start and line[start - 1] in "\"'`" else None)
+    if quote is None:
+        return re.findall(r"-?[A-Za-z0-9_.$-]+", rest)
+    close = rest.find(quote)
+    words = (rest if close == -1 else rest[:close]).split()
+    for literal in re.findall(r"\"([^\"]*)\"|'([^']*)'|`([^`]*)`", "" if close == -1 else rest[close + 1:]):
+        words += "".join(literal).split()
+    return words
+
+
 def terminator_literals(text, path, fragment=False):
     """Each string literal in another language's source that shells out to a
     pattern-based terminator. A heuristic, not a parser: it reads one line at
@@ -1102,14 +1127,8 @@ def terminator_literals(text, path, fragment=False):
             continue
         for match in (TERMINATOR_WORD_RE if fragment else TERMINATOR_LITERAL_RE).finditer(line):
             if match.group("by_name") is not None:
-                # The interface-agent exception reads the call's arguments up
-                # to its closing bracket, which must come within 200
-                # characters, so a line of many matches stays linear (a
-                # ninth-pass finding: 16,000 on one line took 15 seconds). A
-                # call that runs longer gets no exception.
-                ahead = line[match.end():match.end() + 200]
-                close = re.search(r"[)\]]", ahead)
-                if close and restarts_only_ui_agents(re.findall(r"-?[A-Za-z0-9_.$-]+", ahead[:close.start()])):
+                words = call_words(line, match)
+                if words is not None and restarts_only_ui_agents(words):
                     continue
             found.append(line.strip())
     return found
@@ -1774,9 +1793,16 @@ def check(segment, typed=True, heavy=True, others=True):
 SHEBANG_MAX_BYTES = 4096
 SHELL_SHEBANG_RE = re.compile(rb"#![ \t]*/\S*/(?:env[ \t]+(?:-\S+[ \t]+)*)?(?:ba|z|da|k)?sh\b")
 SCRIPT_MAX_BYTES = 1 << 20
-SCRIPT_MAX_DEPTH = 8
-UNREAD_SCRIPT = ("Blocked: the script {name} is {why} for the command guard to read, so what it "
-                 "runs cannot be judged. Run a smaller script, or one fewer levels deep.")
+# Every script a command runs is read once and whole, however deep, and so is
+# every script those run. A command that reaches more different scripts than
+# this is refused rather than read in part.
+SCRIPT_MAX_FILES = 64
+# And no more text than this in all, so the answer comes within the hook's
+# ten seconds (about a second per megabyte, measured 2026-11-11): 64 files of
+# 1 MB each would take a minute, and a late refusal is dropped.
+SCRIPT_MAX_TOTAL_BYTES = 4 << 20
+UNREAD_SCRIPT = ("Blocked: {what} for the command guard to read, so what it runs cannot be "
+                 "judged. Run a smaller script, or fewer scripts at once.")
 ASSIGNMENT_LINE_RE = re.compile(
     r"^\s*(?:(?:export|local|readonly|declare|typeset)\s+(?:-\S+\s+)*)?"
     r"([A-Za-z_][A-Za-z0-9_]*)=(.*)$")
@@ -1835,11 +1861,16 @@ def repository_script(full):
 
 
 def script_verdict(path, kind, cwd, depth, seen):
-    """The denial reason for a file a command runs as shell, or None. A file
-    the hook knows it runs but cannot read whole (too large, or more than
-    SCRIPT_MAX_DEPTH scripts deep) is refused, unless it is the repository's
-    own and unchanged: the edit check leaves some changes to this reader, so
-    passing what it cannot read would be a hole."""
+    """The denial reason for a file a command runs as shell, or None.
+
+    Each file is read once, whole, with every script it runs followed in
+    turn; `seen` holds the files read so far in this command, so a file is
+    never read twice and a cycle ends. A file the hook knows it runs but
+    cannot read (over SCRIPT_MAX_BYTES, or past SCRIPT_MAX_FILES in one
+    command) is refused, except a committed, unchanged script over the size,
+    which is not read: the edit check leaves some changes to this reader, so
+    passing what it cannot read would be a hole. `depth` only counts the
+    nesting for the caller."""
     if "$" in path or "`" in path:
         return None
     full = os.path.expanduser(path)
@@ -1853,14 +1884,16 @@ def script_verdict(path, kind, cwd, depth, seen):
     try:
         with open(full, "rb") as handle:
             data = handle.read(SHEBANG_MAX_BYTES)
-            if kind == "program" and not SHELL_SHEBANG_RE.match(data):
+            # A program run by path is shell when its shebang says so, or its
+            # name does: a `.sh` file with no shebang still runs as shell.
+            if kind == "program" and not (SHELL_SHEBANG_RE.match(data) or SHELL_FILE_RE.search(full)):
                 return None  # a binary or another language's script
-            if depth > SCRIPT_MAX_DEPTH:
-                # Not marked seen: the same file reached again at a shallower
-                # depth must still be read (a ninth-pass finding).
-                if repository_script(full):
-                    return None
-                return UNREAD_SCRIPT.format(name=os.path.basename(path), why="nested too deeply")
+            if len(seen) >= SCRIPT_MAX_FILES:
+                return UNREAD_SCRIPT.format(what=f"this command runs more than {SCRIPT_MAX_FILES} scripts, "
+                                                 "too many")
+            if sum(os.path.getsize(other) for other in seen) + os.path.getsize(full) > SCRIPT_MAX_TOTAL_BYTES:
+                return UNREAD_SCRIPT.format(what=f"the scripts this command runs hold more than "
+                                                 f"{SCRIPT_MAX_TOTAL_BYTES >> 20} MB, too much")
             seen.add(full)
             data += handle.read(SCRIPT_MAX_BYTES + 1 - len(data))
     except OSError:
@@ -1868,8 +1901,8 @@ def script_verdict(path, kind, cwd, depth, seen):
     if len(data) > SCRIPT_MAX_BYTES:
         if repository_script(full):
             return None
-        return UNREAD_SCRIPT.format(name=os.path.basename(path),
-                                    why=f"larger than {SCRIPT_MAX_BYTES >> 20} MB")
+        return UNREAD_SCRIPT.format(what=f"the script {os.path.basename(path)} is larger than "
+                                         f"{SCRIPT_MAX_BYTES >> 20} MB, too large")
     text = expand_assignments(data.decode("utf-8", "replace"))
     if repository_script(full):
         # Its own lines pass, but not the files it runs: on 2026-11-11 the

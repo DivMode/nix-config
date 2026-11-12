@@ -758,6 +758,14 @@ SCRIPT_FILES = {
     "huge.sh": "#!/bin/bash\n" + "# filler\n" * 150000 + "echo done\n",
     **{f"deep{n}.sh": f"#!/bin/bash\nbash deep{n + 1}.sh\n" for n in range(1, 10)},
     "deep10.sh": "#!/bin/bash\n/bin/echo bottom\n",
+    **{f"sig{n}.sh": f"#!/bin/bash\nbash sig{n + 1}.sh\n" for n in range(1, 10)},
+    "sig10.sh": "#!/bin/bash\nkill -- -1\n",
+    **{f"many{n}.sh": f"#!/bin/bash\nbash many{n + 1}.sh\n" for n in range(70)},
+    "many70.sh": "#!/bin/bash\necho bottom\n",
+    # Five scripts of almost 1 MB each: each may be read, all may not.
+    **{f"bulk{n}.sh": f"#!/bin/bash\nbash bulk{n + 1}.sh\n" + "# filler\n" * 110000 for n in range(5)},
+    "bulk5.sh": "#!/bin/bash\necho bottom\n",
+    "direct.sh": "/usr/bin/" + "p" + "kill -f worker\n",
     "string-plain.sh": "#!/bin/bash\nsh -c 'echo hi'\neval echo hi\n",
     "string-dashdash.sh": "#!/bin/bash\nbash -c -- '/bin/kill -- -1'\n",
     "eval-dashdash.sh": "#!/bin/bash\neval -- '/bin/kill -- -1'\n",
@@ -783,11 +791,16 @@ SCRIPT_CASES = [
     ("the incident: group signals two scripts below the typed command", "bash {d}/interrupt.sh", "DENY"),
     ("a script that stops the process id it recorded", "bash {d}/own-child.sh", "ALLOW"),
     ("an argument changed into a group, then run", "bash {d}/pid-edited.sh", "DENY"),
-    # Found by the eighth review pass: a known script the reader cannot read
-    # whole is refused, not passed.
+    # A known script the reader cannot read whole is refused, not passed.
     ("a script too large to read", "bash {d}/huge.sh", "DENY"),
-    ("a script nine levels deep", "bash {d}/deep1.sh", "DENY"),
-    ("a script eight levels deep", "bash {d}/deep2.sh", "ALLOW"),
+    # Every script is followed however deep; only the number of different
+    # scripts in one command is bounded.
+    ("a chain of ten scripts, read to its end", "bash {d}/deep1.sh", "ALLOW"),
+    ("a chain of ten scripts whose last signals a group", "bash {d}/sig1.sh", "DENY"),
+    ("a command that runs more different scripts than are read", "bash {d}/many0.sh", "DENY"),
+    ("scripts that hold more text in all than is read in time", "bash {d}/bulk0.sh", "DENY"),
+    # A program run by path with a shell name and no shebang runs as shell.
+    ("a .sh file with no shebang, run by path", "{d}/direct.sh", "DENY"),
     ("a script whose unquoted heredoc runs a group signal", "bash {d}/heredoc.sh", "DENY"),
     ("a script whose heredocs hold it as data, or substitute something else",
      "bash {d}/heredoc-data.sh", "ALLOW"),
@@ -864,6 +877,11 @@ EDIT_CASES = [
       "content": f'run(["{KILL}", "Dock"]); run(["' + "p" + 'kill", "worker"])\n'}, "DENY"),
     ("an application beside a comment that mentions the Dock",
      {"file_path": "{d}/stop.py", "content": f'run(["{KILL}", "SomeApplication"])  # not Dock\n'}, "DENY"),
+    ("a short replacement from one interface agent to another",
+     {"file_path": "{d}/ui.py", "old_string": f"{KILL} Finder", "new_string": f"{KILL} Dock"}, "ALLOW"),
+    ("an application after an inner bracket of the call",
+     {"file_path": "{d}/agents.py",
+      "content": f'subprocess.run(["/usr/bin/{KILL}", *["Dock"], ' + " " * 220 + '"SomeApplication"])\n'}, "DENY"),
     ("a name-based call whose arguments run past what is read gets no exception",
      {"file_path": "{d}/dock.py",
       "content": f'subprocess.run(["{KILL}", ' + '"Dock", ' * 40 + '"SomeApplication"])\n'}, "DENY"),
@@ -1084,23 +1102,33 @@ def main():
             print(f"FAIL  expected DENY  got {got:<5}  an edited script run from an unchanged script's heredoc",
                   file=sys.stderr)
 
-        # A committed script first reached too deep to read is still read when
-        # the same command reaches it again at a shallower depth.
-        # w0 to w8 are read at depths 0 to 8; bridge.sh comes at depth 9.
+        # Rounds 9 and 10 found a committed script below a long chain, or a
+        # script the chain had already passed through, hidden from a later
+        # part of the same command. Every script is now read once and whole,
+        # so where the command reaches it does not matter.
         chain = {f"w{n}.sh": f"#!/bin/bash\nbash w{n + 1}.sh\n" for n in range(8)}
         chain["w8.sh"] = "#!/bin/bash\nbash bridge.sh\n"
         chain["bridge.sh"] = "#!/bin/bash\nbash leaf.sh\n"
         chain["leaf.sh"] = "#!/bin/bash\n/bin/kill -- -1\n"
+        # 800 references to one committed script, nine scripts down, must not
+        # mean 800 checks of it: each is a pair of git commands, and a late
+        # denial is dropped (13 s in the tenth pass).
+        chain.update({f"f{n}.sh": f"#!/bin/bash\nbash f{n + 1}.sh\n" for n in range(8)})
+        chain["f8.sh"] = "#!/bin/bash\n" + "bash bridge.sh\n" * 800
         for file, text in chain.items():
             with open(os.path.join(d, file), "w") as handle:
                 handle.write(text)
         commit(d, "bridge.sh")
-        repository_cases += 1
-        got = verdict("bash w0.sh; bash bridge.sh", cwd=d)
-        if got != "DENY":
-            failures += 1
-            print(f"FAIL  expected DENY  got {got:<5}  a committed script reached too deep, then again shallow",
-                  file=sys.stderr)
+        for name, command in [("a committed script below a long chain, then run again", "bash w0.sh; bash bridge.sh"),
+                              ("a script the chain already passed through, run again", "bash w0.sh; bash w8.sh"),
+                              ("one committed script referenced 800 times, nine down", "bash f0.sh")]:
+            repository_cases += 1
+            started = time.monotonic()
+            got = verdict(command, cwd=d)
+            elapsed = time.monotonic() - started
+            if got != "DENY" or elapsed > 5:
+                failures += 1
+                print(f"FAIL  expected DENY  got {got:<5} in {elapsed:.1f} s  {name}", file=sys.stderr)
 
         # The signal guard's own sources are exempt from the edit rule only in
         # the checkout the hook is told about, or a linked worktree of it.
@@ -1138,6 +1166,7 @@ def main():
             "tool": "#!/usr/bin/env python3\nprint(1)\n",
             "stop.txt": "notes\n",
             "becomes.md": "# old\n/bin/echo done\n",
+            "ui.py": f'import os\nos.system("{KILL} Finder")\n',
             "longbang": "#!/" + "\u00e9" * 60 + "/bin/bash\nprintf safe\n",
             "bigrun": "#!/bin/bash\n#" + "x" * 4_194_304 + "\nprintf safe\n",
             "was-shell.py": "#!/bin/bash\necho old\n",

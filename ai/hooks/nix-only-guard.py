@@ -995,12 +995,18 @@ SHELL_STARTUP_FILES = {".zshenv", ".zshrc", ".zprofile", ".zlogin", ".bashrc", "
                        ".profile", ".envrc"}
 SOURCE_FILE_RE = re.compile(r"\.(?:py|js|mjs|cjs|ts|mts|cts|tsx|jsx|rb|pl|php|lua|go|rs|swift|java|kt)$"
                             r"|(?:^|/)package\.json$")
-TERMINATOR_LITERAL_RE = re.compile(
-    r"""["'`](?:/usr/bin/)?(?:pkill|(?P<by_name>killall))(?=["'`\s])""")
+TERMINATOR_LITERAL_RE = re.compile(r"""["'`](?:/usr/bin/)?(?:pkill|killall)(?=["'`\s])""")
+# The two shapes in which another language may restart one interface agent:
+# an argument list `["/usr/bin/killall", "Dock"]` (or a tuple) that ends right
+# after the agent, and a command string `"killall Dock"`.
+_UI_AGENT = "(?:" + "|".join(sorted(SELF_RESTARTING_UI_AGENTS)) + ")"
+UI_AGENT_CALL_RE = re.compile(
+    r"""(["'`])(?:/usr/bin/)?killall\1\s*,\s*(["'`])""" + _UI_AGENT + r"""\2\s*,?\s*[\])]"""
+    r"""|(["'`])(?:/usr/bin/)?killall\s+""" + _UI_AGENT + r"""\3""")
 # In a replacement the quotes may lie outside the text it writes (changing
 # `printf` into `pkill` in `run(["/usr/bin/printf", …])`), and no run-time
 # layer reads another language. So there the word itself counts.
-TERMINATOR_WORD_RE = re.compile(r"(?<![\w-])(?:/usr/bin/)?(?:pkill|(?P<by_name>killall))(?![\w-])")
+TERMINATOR_WORD_RE = re.compile(r"(?<![\w-])(?:/usr/bin/)?(?:pkill|killall)(?![\w-])")
 # A whole-line comment, by the file's language: `#` in Python, Ruby and Perl,
 # `//` in the C family, either in PHP. Nothing else is skipped (a block
 # comment's ` * ` line, Lua's `--`), because the same start is code elsewhere
@@ -1089,48 +1095,26 @@ def edit_changes(tool_input):
     return files
 
 
-def call_words(line, match):
-    """The words the name-based terminator matched on `line` would be given,
-    for the interface-agent exception: the rest of the string it stands in,
-    then every string literal after it on the line; with no quote at hand
-    (a replacement's bare text), every word after it. None, and so no
-    exception, when the rest of the line is longer than 200 characters: the
-    look-ahead is bounded so a line of many matches stays linear (a
-    ninth-pass finding: 16,000 on one line took 15 seconds), and it reads to
-    the line's end, because a bracket inside the call (`*["Dock"]`) is not
-    its end (a tenth-pass finding)."""
-    rest = line[match.end():]
-    if len(rest) > 200:
-        return None
-    start = match.start()
-    quote = line[start] if line[start] in "\"'`" else (
-        line[start - 1] if start and line[start - 1] in "\"'`" else None)
-    if quote is None:
-        return re.findall(r"-?[A-Za-z0-9_.$-]+", rest)
-    close = rest.find(quote)
-    words = (rest if close == -1 else rest[:close]).split()
-    for literal in re.findall(r"\"([^\"]*)\"|'([^']*)'|`([^`]*)`", "" if close == -1 else rest[close + 1:]):
-        words += "".join(literal).split()
-    return words
-
-
 def terminator_literals(text, path, fragment=False):
     """Each string literal in another language's source that shells out to a
     pattern-based terminator. A heuristic, not a parser: it reads one line at
-    a time, skips whole-line comments, and lets the name-based one through
-    only when the rest of its call, on that line, names interface agents
-    alone. It errs towards refusing: a string that merely holds such a
-    command as data is refused too, and can be assembled from two parts."""
+    a time and skips whole-line comments. It errs towards refusing: a string
+    that merely holds such a command as data is refused too.
+
+    The name-based one passes only in the two exact shapes UI_AGENT_CALL_RE
+    describes, naming one interface agent and ending there. Rounds 9 to 11
+    of the review of #271 each found a way to read other call arguments
+    wrongly (an inner bracket, a computed target, an option taken for a
+    target, and a quadratic look-ahead); an exact shape cannot be extended
+    without leaving it."""
     found, comment = [], comment_line_re(path)
     for line in text.split("\n"):
         if comment.match(line):
             continue
+        allowed = [match.span() for match in UI_AGENT_CALL_RE.finditer(line)]
         for match in (TERMINATOR_WORD_RE if fragment else TERMINATOR_LITERAL_RE).finditer(line):
-            if match.group("by_name") is not None:
-                words = call_words(line, match)
-                if words is not None and restarts_only_ui_agents(words):
-                    continue
-            found.append(line.strip())
+            if not any(start <= match.start() < end for start, end in allowed):
+                found.append(line.strip())
     return found
 
 
@@ -1886,16 +1870,19 @@ def script_verdict(path, kind, cwd, depth, seen):
             data = handle.read(SHEBANG_MAX_BYTES)
             # A program run by path is shell when its shebang says so, or its
             # name does: a `.sh` file with no shebang still runs as shell.
-            if kind == "program" and not (SHELL_SHEBANG_RE.match(data) or SHELL_FILE_RE.search(full)):
+            if kind == "program" and not (SHELL_SHEBANG_RE.match(data) or SHELL_FILE_RE.search(path)
+                                          or SHELL_FILE_RE.search(full)):
                 return None  # a binary or another language's script
             if len(seen) >= SCRIPT_MAX_FILES:
                 return UNREAD_SCRIPT.format(what=f"this command runs more than {SCRIPT_MAX_FILES} scripts, "
                                                  "too many")
-            if sum(os.path.getsize(other) for other in seen) + os.path.getsize(full) > SCRIPT_MAX_TOTAL_BYTES:
+            # The bytes already read, recorded as they were read: a file
+            # read earlier may be gone by now (an eleventh-pass finding).
+            if sum(seen.values()) + os.path.getsize(full) > SCRIPT_MAX_TOTAL_BYTES:
                 return UNREAD_SCRIPT.format(what=f"the scripts this command runs hold more than "
                                                  f"{SCRIPT_MAX_TOTAL_BYTES >> 20} MB, too much")
-            seen.add(full)
             data += handle.read(SCRIPT_MAX_BYTES + 1 - len(data))
+            seen[full] = len(data)
     except OSError:
         return None
     if len(data) > SCRIPT_MAX_BYTES:
@@ -1936,7 +1923,8 @@ def read_command(command, cwd, depth, seen, typed, prompts):
     ask the owner about a script string; Codex asks nothing, so its hook
     passes False. The unquoted-heredoc rule stays for both: it is what keeps
     a command inside a heredoc's substitution from running unread."""
-    seen = set() if seen is None else seen
+    # The scripts read so far in this command, with the bytes read from each.
+    seen = {} if seen is None else seen
     reason = check_command(command, typed, prompts)
     if reason:
         return reason

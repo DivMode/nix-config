@@ -170,7 +170,9 @@ machine-change, credential and heavy-command rules):
   terminator, and in a replacement for the bare word, because the quotes may
   lie outside it and no run-time layer reads another language; it errs
   towards refusing, so a string or name that only holds such a word is
-  refused too. An edit that writes more than 4 MB into a
+  refused too. There the name-based one restarts an interface agent only in
+  two exact shapes, `["/usr/bin/killall", "Dock"]` ending after the agent,
+  or the string `"killall Dock"`. An edit that writes more than 4 MB into a
   shell or source file is refused rather than judged in part. Prose and Nix
   modules are not judged.
 - If the hook itself fails on an input, it refuses the call and names the

@@ -801,6 +801,7 @@ SCRIPT_CASES = [
     ("scripts that hold more text in all than is read in time", "bash {d}/bulk0.sh", "DENY"),
     # A program run by path with a shell name and no shebang runs as shell.
     ("a .sh file with no shebang, run by path", "{d}/direct.sh", "DENY"),
+    ("a .sh link to a file with no shebang and no shell name, run by path", "{d}/launch.sh", "DENY"),
     ("a script whose unquoted heredoc runs a group signal", "bash {d}/heredoc.sh", "DENY"),
     ("a script whose heredocs hold it as data, or substitute something else",
      "bash {d}/heredoc-data.sh", "ALLOW"),
@@ -870,15 +871,28 @@ EDIT_CASES = [
      {"file_path": "{d}/stop.ts", "content": f'execSync("{PATTERN_CALL}");\n'}, "DENY"),
     ("an argument list starting with the name terminator",
      {"file_path": "{d}/stop.py", "content": f'subprocess.run(["{KILL}", name])\n'}, "DENY"),
+    # Another language may restart one interface agent only in two exact
+    # shapes: rounds 9 to 11 each found a way to read looser call arguments
+    # wrongly.
     ("restarting an interface agent from code",
      {"file_path": "{d}/dock.py", "content": f'subprocess.run(["/usr/bin/{KILL}", "Dock"])\n'}, "ALLOW"),
+    ("restarting an interface agent from code, with an option after the list",
+     {"file_path": "{d}/dock.py", "content": f'subprocess.run(["/usr/bin/{KILL}", "Dock"], cwd="/tmp")\n'}, "ALLOW"),
+    ("restarting an interface agent through a command string",
+     {"file_path": "{d}/dock.js", "content": f'execSync("{KILL} Dock");\n'}, "ALLOW"),
+    ("two interface agents in one list are not one of the exact shapes",
+     {"file_path": "{d}/dock.py", "content": f'subprocess.run(["/usr/bin/{KILL}", "Dock", "Finder"])\n'}, "DENY"),
+    ("a computed target beside an interface agent",
+     {"file_path": "{d}/dock.py", "content": f'subprocess.run(["/usr/bin/{KILL}", "Dock", chr(88)])\n'}, "DENY"),
+    ("rewriting a file that already restarts an interface agent",
+     {"file_path": "{d}/ui.py", "content": f'import os\nos.system("{KILL} Finder")\nprint(1)\n'}, "ALLOW"),
     ("two calls on one line, the second a pattern terminator",
      {"file_path": "{d}/stop.py",
       "content": f'run(["{KILL}", "Dock"]); run(["' + "p" + 'kill", "worker"])\n'}, "DENY"),
     ("an application beside a comment that mentions the Dock",
      {"file_path": "{d}/stop.py", "content": f'run(["{KILL}", "SomeApplication"])  # not Dock\n'}, "DENY"),
     ("a short replacement from one interface agent to another",
-     {"file_path": "{d}/ui.py", "old_string": f"{KILL} Finder", "new_string": f"{KILL} Dock"}, "ALLOW"),
+     {"file_path": "{d}/ui.py", "old_string": f"{KILL} Finder", "new_string": f"{KILL} Dock"}, "DENY"),
     ("an application after an inner bracket of the call",
      {"file_path": "{d}/agents.py",
       "content": f'subprocess.run(["/usr/bin/{KILL}", *["Dock"], ' + " " * 220 + '"SomeApplication"])\n'}, "DENY"),
@@ -1017,6 +1031,9 @@ def main():
         for file, text in SCRIPT_FILES.items():
             with open(os.path.join(d, file), "w") as handle:
                 handle.write(text)
+        with open(os.path.join(d, "payload"), "w") as handle:
+            handle.write("/usr/bin/" + "p" + "kill -f worker\n")
+        os.symlink(os.path.join(d, "payload"), os.path.join(d, "launch.sh"))
         for name, command, expected in SCRIPT_CASES:
             got = verdict(command.format(d=d), cwd=d)
             if got != expected:
@@ -1185,6 +1202,31 @@ def main():
             failures += 1
             print(f"FAIL  expected {expected:<5} got {got:<5}  {name}", file=sys.stderr)
 
+    # A script read earlier in the command and gone by the time a later one is
+    # read must not stop the later one being judged.
+    with tempfile.TemporaryDirectory() as d:
+        first, second = os.path.join(d, "first.sh"), os.path.join(d, "second.sh")
+        with open(first, "w") as handle:
+            handle.write("#!/bin/bash\necho hello\n")
+        with open(second, "w") as handle:
+            handle.write("#!/bin/bash\n/bin/kill -- -1\n")
+        reader = guard.script_verdict
+
+        def vanishing(path, kind, cwd, depth, seen):
+            reason = reader(path, kind, cwd, depth, seen)
+            if os.path.exists(first) and path.endswith("first.sh"):
+                os.unlink(first)
+            return reason
+
+        guard.script_verdict = vanishing
+        try:
+            got = verdict(f"bash {first}; bash {second}", cwd=d)
+        finally:
+            guard.script_verdict = reader
+        if got != "DENY":
+            failures += 1
+            print(f"FAIL  expected DENY  got {got:<5}  a later script after an earlier one vanished", file=sys.stderr)
+
     # The hook has ten seconds, and a denial that arrives late is dropped. A
     # line of 16,000 matches took 15 seconds when each looked ahead to the
     # line's end.
@@ -1196,7 +1238,17 @@ def main():
         failures += 1
         print(f"FAIL  a source replacement with 16,000 matches took {elapsed:.1f} s", file=sys.stderr)
 
-    total = len(CASES) + len(SCRIPT_CASES) + repository_cases + len(EDIT_CASES) + len(HOOK_CASES) + 1
+    # Four million characters of the name-based word in one replacement: the
+    # source rule must stay linear (13 s in the eleventh pass).
+    many = "killall = None\nnames = [" + ", ".join(["kill" + "all"] * 450000) + "]\n"
+    started = time.monotonic()
+    guard.edit_verdict({"file_path": "/nonexistent/run.py", "old_string": "pass", "new_string": many})
+    elapsed = time.monotonic() - started
+    if elapsed > 5:
+        failures += 1
+        print(f"FAIL  a source replacement of four million characters took {elapsed:.1f} s", file=sys.stderr)
+
+    total = len(CASES) + len(SCRIPT_CASES) + repository_cases + len(EDIT_CASES) + len(HOOK_CASES) + 3
     if failures:
         print(
             f"\n{failures} of {total} nix-only-guard tests failed.\n"

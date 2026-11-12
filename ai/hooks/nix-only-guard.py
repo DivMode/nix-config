@@ -750,7 +750,10 @@ def runs_script_string(command, scripts=None, commands=None, nesting=0):
             continue
         if c == "\\":
             if command[i + 1:i + 2] != "\n":
+                # An escaped character quotes the word, as `'…'` does: `\esac`
+                # and `\{` are not reserved words.
                 word.append(command[i + 1:i + 2])
+                started = True
             i += 2
             continue
         if c == "'":
@@ -1020,15 +1023,17 @@ def apply_edit(before, after, old, new, everywhere=False, start=0):
     one. `end` is where the replacement ends. An `old` the text does not hold
     is added to `before` and `new` to `after`, so the comparison still sees
     what the edit adds."""
-    if len(after) + 1 + len(new) > EDIT_MAX_BYTES or len(before) + 1 + len(old) > EDIT_MAX_BYTES:
-        raise Uncheckable
     if not old:
+        if len(after) + 1 + len(new) > EDIT_MAX_BYTES:
+            raise Uncheckable
         joined = f"{after}\n{new}" if after else new
         return before, joined, len(joined)
     at = after.find(old, start)
     if at == -1:
         at = after.find(old)
     if at == -1:
+        if len(after) + 1 + len(new) > EDIT_MAX_BYTES or len(before) + 1 + len(old) > EDIT_MAX_BYTES:
+            raise Uncheckable
         return f"{before}\n{old}", f"{after}\n{new}", len(after) + 1 + len(new)
     count = after.count(old) if everywhere else 1
     if len(after) + count * (len(new) - len(old)) > EDIT_MAX_BYTES:
@@ -1085,9 +1090,12 @@ def edit_files(tool_input):
     return files
 
 
-def edit_texts(before, steps):
+def edit_texts(before, steps, crlf=False):
     """(text before, text after) for one file: the whole file, so a command
-    is read in its real context."""
+    is read in its real context. With `crlf`, line ends are read as
+    apply_patch reads them: `\r\n` is one line end."""
+    if crlf:
+        before = before.replace("\r\n", "\n")
     after, position = before, 0
     for anchor, old, new, everywhere in steps:
         if old is None:
@@ -1098,7 +1106,7 @@ def edit_texts(before, steps):
         if anchor:
             # apply_patch places a hunk after the LINE equal to its anchor
             # (blanks around it aside), not after any text containing it.
-            line = re.compile(r"(?m)^[ \t]*" + re.escape(anchor) + r"[ \t]*$").search(after, position)
+            line = re.compile(r"(?m)^[ \t]*" + re.escape(anchor) + r"[ \t\r]*$").search(after, position)
             position = position if line is None else line.end()
         before, after, position = apply_edit(before, after, old, new, everywhere, position)
     return before, after
@@ -1176,25 +1184,30 @@ def read_edit(tool_input, cwd, checkout):
         return bool(SHELL_FILE_RE.search(path) or os.path.basename(path) in SHELL_STARTUP_FILES
                     or SHELL_SHEBANG_RE.match(head[:128].encode("utf-8")))
 
+    # apply_patch reads a file as lines, whatever ends them; Edit and Write
+    # match the bytes as they are.
+    crlf = not isinstance(tool_input.get("file_path"), str)
     for path, destination, steps in edit_files(tool_input):
         if guard_source(full_path(destination), checkout):
             continue
         try:
-            before, after = edit_texts(read_text(full_path(path)) or "", steps)
+            before, after = edit_texts(read_text(full_path(path)) or "", steps, crlf)
         except Uncheckable:
+            # Not judged in part: the text an edit carries is not the file it
+            # makes. Prose is not judged at all, so only files the rule reads
+            # are refused: a shell or source name, or a shell shebang in the
+            # file now or in anything the edit writes.
             try:
                 with open(full_path(path), "rb") as handle:
                     head = handle.read(128).decode("utf-8", "replace")
             except OSError:
                 head = ""
-            if shell_file(destination, head):
+            if (shell_file(destination, head) or SOURCE_FILE_RE.search(destination)
+                    or any(shell_file("", new) for _a, _o, new, _e in steps)):
                 return (f"Blocked: {os.path.basename(destination)} is, or would become, too large "
-                        "for the signalling check to read whole, so this edit to a shell file "
-                        "cannot be judged. Make the change in a smaller file.")
-            # Another language's source is read a line at a time, so the
-            # text the edit carries is enough.
-            before = "\n".join(old or "" for _a, old, _n, _e in steps)
-            after = "\n".join(new for _a, _o, new, _e in steps)
+                        f"({EDIT_MAX_BYTES >> 20} MB) for the signalling check to read whole, so "
+                        "this edit cannot be judged. Make the change in a smaller file.")
+            continue
         shell = shell_file(destination, after)
         if not shell and not SOURCE_FILE_RE.search(destination):
             continue
@@ -1942,7 +1955,8 @@ def main():
     options = dict(zip(sys.argv[1::2], sys.argv[2::2]))
     cwd = payload.get("cwd")
     cwd = cwd if isinstance(cwd, str) else None
-    if payload.get("tool_name") in EDIT_TOOLS:
+    tool_name = payload.get("tool_name")
+    if isinstance(tool_name, str) and tool_name in EDIT_TOOLS:
         reason = edit_verdict(tool_input, cwd, options.get("--nix-config"))
     else:
         command = tool_input.get("command")

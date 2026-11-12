@@ -665,6 +665,9 @@ CASES = [
     ("a trap handler that signals a group", "trap 'kill -- -$$' INT TERM", "DENY"),
     # Found by the third review pass.
     ("script strings nested past what is read", "eval " * 600 + "; /bin/kill -- -1", "DENY"),
+    # Found by the fourth review pass: an escaped word is not a keyword.
+    ("an escaped esac is a case pattern, not the end of the case",
+     'echo "$(case esac in a) echo safe;; \\esac) /bin/kill -- -1;; esac)"', "DENY"),
     ("a case closed inside a substitution, then a command",
      'echo "$(case x in x) echo safe;; esac)"; /bin/kill -- -1', "DENY"),
     ("a case closed inside a substitution, then a pattern terminator",
@@ -868,6 +871,18 @@ EDIT_CASES = [
     ("a statement that starts with a spaced dereference",
      {"file_path": "{d}/stop.go",
       "content": '* result = exec.Command("' + "p" + 'kill", "worker").Run()\n'}, "DENY"),
+    ("a patch anchor on a line that ends in CR LF",
+     {"command": ("*** Begin Patch\n*** Update File: {d}/anchored-crlf.sh\n@@ echo anchor\n"
+                  "-kill -- 12345\n+kill -- -1\n*** End Patch\n")}, "DENY"),
+    ("a large file rewritten as a shell script, with an argument changed",
+     {"file_path": "{d}/big-tool.py",
+      # The first edit replaces two megabytes with two megabytes: the result
+      # stays well under the limit, which must be measured on it.
+      "edits": [{"old_string": "#!/usr/bin/env python3\n#" + "x" * 2_200_000 + "\n",
+                 "new_string": "#!/bin/bash\n#" + "x" * 2_200_000 + "\n"},
+                {"old_string": "12345", "new_string": "-1"}]}, "DENY"),
+    ("an edit to a shell file exactly at the size limit that keeps its size",
+     {"file_path": "{d}/at-limit.sh", "old_string": "# old", "new_string": "# new"}, "ALLOW"),
     ("a slash comment in a C-family file",
      {"file_path": "{d}/stop.ts", "content": '// never execSync("' + "p" + 'kill -f worker")\n'}, "ALLOW"),
     ("an insertion past what can be read",
@@ -927,6 +942,8 @@ HOOK_CASES = [
      {"tool_name": "Bash", "tool_input": {"command": "brew install " + "\u00e9" * 400}}, [], "DENY"),
     ("a denial for a group signal with non-ASCII text still fits one pipe write",
      {"tool_name": "Bash", "tool_input": {"command": "kill -- -1 " + "界" * 150}}, [], "DENY"),
+    ("a tool name that is not a string",
+     {"tool_name": [], "tool_input": {"command": "kill -- -1"}}, [], "DENY"),
     ("script strings nested past what is read, under Codex",
      {"tool_name": "Bash", "tool_input": {"command": "eval " * 600 + "; /bin/kill -- -1"}},
      ["--client", "codex"], "DENY"),
@@ -1070,6 +1087,9 @@ def main():
             "anchored.sh": "#!/bin/bash\ncat <<'EOF'\nkill -- 12345\nEOF\necho anchor\nkill -- 12345\n",
             "large.sh": "#!/bin/bash\n" + "# filler\n" * 600000 + "kill -- 12345\n",
             "large.md": "filler\n" * 800000 + "kill -- 12345\n",
+            "anchored-crlf.sh": "cat <<'EOF'\nkill -- 12345\nEOF\necho anchor\r\nkill -- 12345\n",
+            "big-tool.py": "#!/usr/bin/env python3\n#" + "x" * 2_200_000 + "\nkill=0\nkill -- 12345\n",
+            "at-limit.sh": ("#!/bin/bash\n# old\n" + "#" * (4 * 1024 * 1024 - 19) + "\n"),
             "anchored-line.sh": ("#!/bin/bash\ncat <<'EOF'\nprefix echo anchor\nkill -- 12345\nEOF\n"
                                  "echo anchor\nkill -- 12345\n"),
         }.items():

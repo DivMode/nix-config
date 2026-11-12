@@ -407,8 +407,18 @@ let
     # every bash Claude Code starts; the zsh half is `programs.zsh.envExtra`
     # below. On 2026-11-11 a script three levels below a tool call signalled
     # every process group on this Mac (issue #270).
+    #
+    # The Bash tool runs in Home Manager's zsh, not /bin/zsh: Apple's zsh
+    # drops every environment variable whose name is not an identifier from
+    # what it hands its children (measured 2026-11-12; Nix's zsh 5.9 passes
+    # them), and the guard's loaders for `sh` are such variables
+    # (`BASH_FUNC_kill%%`, ../../../ai/default.nix). Both read the same
+    # ZDOTDIR configuration.
     env = {
       OP_BIOMETRIC_UNLOCK_ENABLED = "false";
+      # The profile's link, not a store path: it outlives a garbage
+      # collection under a long-running session.
+      CLAUDE_CODE_SHELL = "${config.home.profileDirectory}/bin/zsh";
     }
     // ai.shellGuard.environment;
 
@@ -531,7 +541,8 @@ in
     };
 
     # The zsh half of the signal guard. Both clients run their commands in zsh
-    # (Claude Code's Bash tool; Codex as `/bin/zsh -lc`), and zsh reads no
+    # (Claude Code's Bash tool in Home Manager's zsh, see `env` above; Codex
+    # as `/bin/zsh -lc`, its login shell), and zsh reads no
     # BASH_ENV, so the guard is sourced here, only when a client set the
     # marker: the owner's own shells never load it. ZDOTDIR's .zshenv, not
     # ~/.zshenv, because a zsh started from another one skips the latter (see

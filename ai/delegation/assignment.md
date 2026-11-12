@@ -66,8 +66,10 @@ before you changed anything, in your handoff.
   `membrake exec --reap -- <command>`, which stops what that job left in its own process group;
   never write cleanup of your own. Never test process-termination code on this machine: on
   2026-11-11 a worker's cleanup script terminated every application the owner had open. The
-  machine's guards read shell code only; you run as the owner, so a signal sent any other way is
-  delivered, and this rule is all that stops it.
+  machine's guards cover the shell's `kill`, the `kill`/`pkill`/`killall` programs found on PATH,
+  and group signals written in other languages' source; you run as the owner, so a signal sent
+  any other way (`/bin/kill` by path, a system call a program builds at run time) is delivered,
+  and this rule is all that stops it.
 - When a required decision is missing, stop and report it rather than expanding the work.
 - Stop when the acceptance criteria are met.
 

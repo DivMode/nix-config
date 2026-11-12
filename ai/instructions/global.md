@@ -347,12 +347,17 @@ it was written for was not needed.
   must not be signalled goes only to a function that returns a verdict and
   sends nothing; a real signal goes only to a process the test itself started.
 
-Where this is enforced: every shell Claude Code and Codex start refuses a
-process group it did not start and the pattern-based terminators, and both
-clients' hooks refuse such code when it is typed, run from a script, or
-written into a shell file. Agents and the owner's applications run as one
-user, so the system delivers any signal that is sent: a program that makes
-the system call itself is stopped by this rule and by nothing else.
+Where this is enforced: every shell Claude Code and Codex start, and every
+`sh` below a bash they start, refuses a process group it did not start, an
+application it did not start, and the pattern-based terminators; so do the
+`kill`, `pkill` and `killall` programs first on those shells' PATH. Both
+clients' hooks refuse such code, and process ids taken from `ps`, `lsof`,
+`pgrep` or `fuser`, when it is typed, run from a script, or written into a
+file, and a group signal written in another language (`os.killpg`,
+`process.kill(-pid)`). Agents and the owner's applications run as one user,
+so the system delivers any signal that is sent: `/bin/kill` by full path and
+a program that makes the system call itself are stopped by this rule and by
+nothing else.
 
 ## Credentials
 

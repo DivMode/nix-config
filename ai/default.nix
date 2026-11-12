@@ -73,13 +73,42 @@
   # and BASH_ENV, which every non-interactive bash sources. zsh has no such
   # variable, so modules/home/ai sources `killGuard` from ZDOTDIR's .zshenv
   # when the marker is set.
+  #
+  # The rest reaches what neither startup file does (issue #270, follow-up):
+  #   - AGENT_KILL_GUARD_BIN is ./shell-guard/bin, which the guard puts first
+  #     on PATH: `kill`, `pkill` and `killall` as programs, for `xargs`, make
+  #     and other programs that run them without a shell.
+  #   - The BASH_FUNC_ variables are exported bash functions, which every bash
+  #     imports, `sh` included (on macOS /bin/sh is bash in POSIX mode, which
+  #     reads no BASH_ENV). Each loads the guard and runs its function of the
+  #     same name: an `sh` started below a zsh (make, npm scripts, Python's
+  #     `shell=True`) otherwise has no guard, because zsh cannot export a
+  #     function. A bash exports the full functions itself.
   shellGuard = rec {
-    killGuard = ./shell-guard/kill-guard.sh;
-    killGuardTest = ./shell-guard/kill-guard-test.sh;
+    directory = ./shell-guard;
+    killGuard = "${directory}/kill-guard.sh";
+    killGuardTest = "${directory}/kill-guard-test.sh";
     environment = {
       AGENT_KILL_GUARD = "1";
-      BASH_ENV = "${killGuard}";
-    };
+      AGENT_KILL_GUARD_BIN = "${directory}/bin";
+      BASH_ENV = killGuard;
+    }
+    // builtins.listToAttrs (
+      map (name: {
+        name = "BASH_FUNC_${name}%%";
+        # A loader whose guard is gone (a store path collected under a session
+        # older than the garbage collector's window) refuses and says so: a
+        # failed `.` would end the whole `sh`. Only the probe of one process
+        # id still runs, so a script that waits on its child does not hang.
+        value = "() { if [ -r ${killGuard} ]; then AGENT_KILL_GUARD=1; . ${killGuard} && ${name} \"$@\"; elif [ ${name} = kill ] && [ $# = 2 ] && [ \"$1\" = -0 ] && [ -n \"\${2##*[!0-9]*}\" ]; then builtin kill -0 \"$2\"; else echo \"kill guard: ${killGuard} is gone; start a new session\" >&2; return 1; fi; }";
+      }) loaded
+    );
+    # The names each loader is for.
+    loaded = [
+      "kill"
+      "pkill"
+      "killall"
+    ];
   };
 
   # Machine-only hook declarations and their build contract. Neither client

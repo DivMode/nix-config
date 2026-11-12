@@ -22,6 +22,7 @@ previous machine's assistant configuration; everything here is restored by
 | `codex/default.nix` | narrowly merged into mutable `~/.codex/config.toml` |
 | `mcp/servers.nix` | `~/.config/nix-config/ai/` review artifacts |
 | `shell-guard/kill-guard.sh` | sourced by every bash and zsh either client starts (`BASH_ENV`, ZDOTDIR's `.zshenv`) |
+| `shell-guard/bin/` | first on PATH in those shells: `kill`, `pkill`, `killall` for programs that run them without a shell |
 
 Instructions here are global, so they apply to every project. Repository facts
 belong in that repository's own instructions file; duplicating them here makes
@@ -124,10 +125,41 @@ shell:
   is refused, including a few legitimate oddities. A group is probed as
   `kill -0 -- -GROUP`: before `--`, old bash may read a negative number as a
   second signal.
-- `kill` aimed at single process ids, at jobs, or with the probe signal 0
-  passes unchanged.
+- `kill` aimed at jobs or with the probe signal 0 passes unchanged, and so
+  does `kill` aimed at a single process id, unless the shell did not start it
+  and it is an application: its program is the one an `.app`, `.xpc` or
+  `.appex` bundle runs (`…/Contents/MacOS/…`, helpers nested in an
+  application included), and its path does not pass through a bundle's
+  `Contents/Resources` or `Contents/Developer/usr`, where command line tools
+  shipped with an application live (the Codex CLI, Xcode's tools). The
+  owner's applications are what the 2026-11-11
+  script terminated. A program an earlier command started is no descendant of
+  a later command's shell, so it is stopped through what started it: the
+  background task, or the `membrake exec` process whose id was recorded.
 - `pkill` is refused. `killall` is refused except for the interface agents the
   command hook also allows (Dock, Finder and the menu bar agents).
+
+The guard reaches past the shells that load it (follow-up review of #270,
+2026-11-12):
+
+- **`sh`.** On macOS `/bin/sh` is bash in POSIX mode, which reads no
+  `BASH_ENV` but imports exported functions. A guarded bash exports the
+  guard's functions, so every `sh` below it has them: the `sh -c` that make,
+  just, npm scripts, Python's `shell=True` and Node's `exec` start. zsh cannot
+  export a function, so the clients also set `BASH_FUNC_kill%%`,
+  `BASH_FUNC_pkill%%` and `BASH_FUNC_killall%%` to loaders that source the
+  guard and run its function. Apple's `/bin/zsh` drops such variables from
+  what it hands its children (measured 2026-11-12), so Claude Code's Bash
+  tool runs in Home Manager's zsh (`CLAUDE_CODE_SHELL`), which passes them.
+  Codex runs `/bin/zsh -lc`, its login shell, so an `sh` that a program
+  starts directly below a Codex command's zsh, with no bash in between, has
+  no guard.
+- **Programs named `kill`, `pkill`, `killall`.** `shell-guard/bin` holds
+  programs of those names, which the guard puts first on PATH
+  (`AGENT_KILL_GUARD_BIN`). They apply the same verdict, with ownership
+  measured from the process that ran them, and run the system's program only
+  when it allows: `xargs kill`, make running a simple recipe line without a
+  shell, `subprocess.run(["pkill", …])`.
 
 Both clients' PreToolUse hooks carry the same rule earlier, when the code is
 typed or written (`hooks/nix-only-guard.py`, declared for Claude Code and,
@@ -136,7 +168,9 @@ machine-change, credential and heavy-command rules):
 
 - A typed command, or a script it runs, is refused when it signals a process
   group or `-1`, uses `pkill` or `killall` (beyond the interface agents),
-  feeds `kill` from `pgrep` or `pidof`, or reaches `kill` any way but as the
+  feeds `kill` from a search of the process table (`pgrep`, `pidof`, `ps`,
+  `lsof`, `fuser`: in a substitution, a pipeline, or a `while` or `for` loop
+  the search feeds), or reaches `kill` any way but as the
   bare word (`/bin/kill`, or behind `xargs`, `command`, `builtin`, `env`):
   those forms skip the shell guard. The program is read in the positions a
   shell walker can see: after `do`, `then` or a `case` label, in a function
@@ -172,29 +206,63 @@ machine-change, credential and heavy-command rules):
   file already had may stay. So a variable or a comment that uses the word is
   refused too, and a new interface-agent restart belongs in a Nix activation
   entry or is typed. Rounds 9 to 16 of the review found a way past each finer
-  rule tried. An edit that writes more than 4 MB into a
-  shell or source file is refused rather than judged in part. Prose and Nix
-  modules are not judged.
+  rule tried. The same goes for a line that signals a process group or `-1`
+  by system call (`os.killpg`, `os.kill(-pgid, …)`, `process.kill(-pid)`,
+  Go's `syscall.Kill(-pgid, …)`): nothing else sees one, and a job whose
+  group must be stopped runs under `membrake exec --reap`. Every line end
+  counts, a carriage return alone included (#272, case 2). An edit that
+  writes more than 4 MB into a shell or source file is refused rather than
+  judged in part. Prose and Nix modules are not judged.
+- Another language's code a command runs is read too. The program text an
+  interpreter is handed (`python3 -c`, `-Bc`, `node -pe`, `--eval=`,
+  `perl -lne`, `php -r`, `deno eval`) and a heredoc read by a command that
+  runs an interpreter, however it is reached (`sudo`, `membrake exec … --`,
+  `cat <<'PY' | python3 -`), are searched for a group signal; such a heredoc
+  is judged without knowing whether it is a program or data it writes
+  somewhere, so prose that names a group signal is written with the edit
+  tools instead. Every source file among an interpreter's arguments, up to
+  `-m` (`python3 -I cleanup.py`, `bun run x.ts`), also behind a launcher
+  (`uv run cleanup.py`, `npx tsx stop.ts`, `nix develop .#default -c python3
+  …`, `mise exec python@3.12 -- …`) or run by its own shebang
+  (`./cleanup.py`), is judged as the edit check judges one, unless it is
+  committed and unchanged or is one of the guard's own sources; a file over
+  1 MB, a bundle such as `node_modules/.bin` holds, is read in its first
+  megabyte. A file a formatter, linter or test runner is only given
+  (`npx prettier --write x.ts`, `python3 -m black x.py`) is not run and not
+  judged. A heredoc whose command names a script the same command runs is
+  searched, for a script written, or rewritten, and run in one command.
+  `fuser -k`, which signals what its own search finds, is refused.
 - If the hook itself fails on an input, or takes more than seven seconds to
   read it, it refuses the call and says so: a hook that crashes, or answers
   after the client's ten seconds, would let the call run.
 - Not read by the hooks: a command built from a variable (`$cmd …`,
   `eval "$cmd"`), a script whose path is computed at run time, a shell file
-  with neither a known name nor a shebang, and any signal another language
-  sends by system call. Where the bare `kill` is what finally runs, the shell
-  guard still refuses a foreign group at the moment of the call. An external
-  `/bin/kill` or a pattern-based terminator reached in one of those ways is
-  covered by nothing but the written rule.
+  with neither a known name nor a shebang, a process id that reaches `kill`
+  through a variable assigned from a search or from a process substitution
+  (`done < <(ps …)`), program text piped or redirected into an interpreter
+  (`echo … | python3 -`), a module (`python3 -m pkg.stop`), a script without
+  a source extension given to an interpreter (`node cleanup`), a script
+  written by `printf`, `echo` or `tee` and run in the same command, a
+  relative path after a `cd` in the same command,
+  recipes in a Makefile, justfile or `package.json`, `launchctl kill`, and a
+  system call another language builds at run time (`process.kill(g)` with
+  `g` negative).
+  Where `kill`, `pkill` or `killall` is what finally runs, by name, the shell
+  guard or its program of that name still refuses at the moment of the call.
+  `/bin/kill` or `/usr/bin/pkill` by full path, reached in one of those ways,
+  is covered by nothing but the written rule.
 
 **The limit.** Agents and the owner's applications run as one user, so the
 system delivers any signal an agent process does send. The shell guard covers
-the shell builtin, which is what scripts use. It does not cover a program that
-makes the system call itself (Python's `os.kill`, a compiled binary),
-`/bin/kill`, `builtin kill`, `command kill`, or `sh`; the hooks catch the
-shell spellings of those when they are typed or written, and read no other
-language's signalling. For a program that makes the system call itself, the
-written rule in `instructions/global.md` ("Stopping processes") and review are
-all there is. These layers stop a mistake at the moment it is made; they are
+the shell's `kill` in bash, zsh and `sh`, and the programs of that name found
+on PATH. It does not cover a program that makes the system call itself
+(Python's `os.kill`, a compiled binary), `/bin/kill` or `/usr/bin/pkill` by
+full path, `builtin kill`, `command kill`, a process whose environment was
+cleared, or an `sh` below Codex's `/bin/zsh` with no bash in between; the
+hooks catch the shell spellings of those and other languages' group signals
+when they are typed or written. For a program that builds its signal at run
+time, the written rule in `instructions/global.md` ("Stopping processes") and
+review are all there is. These layers stop a mistake at the moment it is made; they are
 not a boundary against intent.
 
 `checks.<system>.agent-kill-guard` (macOS) runs `kill-guard-test.sh` in Nix's

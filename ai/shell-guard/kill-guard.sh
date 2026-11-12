@@ -39,13 +39,35 @@
 # surviving subshell, could mislead it. It narrows a mistake; it does not
 # prove ownership.
 #
-# What it does not do. It covers the shell builtin, which is what scripts use.
-# A program that calls the system call itself (Python's os.kill, a compiled
-# binary), `/bin/kill`, `builtin kill`, `command kill` and `sh` (bash in POSIX
-# mode reads no BASH_ENV) are not intercepted. Agents and the owner's
-# applications run as one user, so the system delivers any signal an agent
-# process does send. This stops a mistake at the moment it is made; it is not
-# a boundary against intent.
+# A single process id passes, unless this shell did not start it and it is
+# an application: its program is the one an `.app`, `.xpc` or `.appex` bundle
+# runs (`…/Contents/MacOS/…`), its own or a helper nested inside another
+# application, and its path does not pass through a bundle's
+# `Contents/Resources` or `Contents/Developer/usr`, where command line tools
+# shipped with an application live (the Codex CLI, Xcode's tools). The
+# owner's applications, which the 2026-11-11 script terminated, are never an
+# agent's to signal, and a process an agent started itself descends from its
+# shell.
+#
+# Where it reaches. A bash exports these functions, so every bash below it
+# has them, and so does every `sh` (on macOS /bin/sh is bash, which reads no
+# BASH_ENV but imports exported functions): the `sh -c` that make, just,
+# npm scripts, Python's `shell=True` and Node's `exec` start. The clients
+# also put `kill`, `pkill` and `killall` loaders in the environment
+# (`shellGuard` in ../default.nix), for an `sh` whose nearest shell is a zsh,
+# which cannot export a function. And ./bin, put first on PATH below, holds
+# programs of those three names that apply the same verdict, for a program
+# that runs `kill` by name without a shell: `xargs kill`, make's direct
+# execution of a simple recipe line, `subprocess.run(["pkill", …])`.
+#
+# What it does not do. `/bin/kill` or `/usr/bin/pkill` by full path, `builtin
+# kill`, `command kill`, a program that calls the system call itself (Python's
+# os.kill, a compiled binary), an `sh` below Apple's /bin/zsh with no bash in
+# between (that zsh drops exported functions from the environment, measured
+# 2026-11-12), and a process whose environment was cleared (`env -i`) are not
+# intercepted. Agents and the owner's applications run as one user, so the
+# system delivers any signal an agent process does send. This stops a mistake
+# at the moment it is made; it is not a boundary against intent.
 
 if [ -z "${AGENT_KILL_GUARD-}" ]; then
   return 0 2>/dev/null || true
@@ -55,6 +77,8 @@ fi
 # SELF_RESTARTING_UI_AGENTS in ../hooks/nix-only-guard.py; the flake check
 # `agent-kill-guard` compares the two.
 __agent_kill_guard_ui_agents='ControlCenter Dock Finder SystemUIServer TextInputMenuAgent'
+export __agent_kill_guard_ui_agents
+
 
 # The process table, from the system's own ps. The Nix build that runs this
 # file's test cannot execute /bin/ps ("Operation not permitted", observed
@@ -65,18 +89,34 @@ __agent_kill_guard_ps() {
   /bin/ps "$@" 2>/dev/null || command ps "$@" 2>/dev/null
 }
 
+# The process ownership is measured from: this shell. A program in ./bin
+# redefines it as the process that ran that program.
+__agent_kill_guard_self() {
+  printf '%s' "$$"
+}
+
 # 0 when process group $1 belongs to this shell: its own group, or a group
 # whose leader descends from this shell. A leader that has already exited
 # cannot be verified and is treated as foreign. `$$` is the main shell's id
 # even inside a subshell, so a subshell may signal what its script started.
 __agent_kill_guard_owned() {
-  local __akg_pid="$1" __akg_found __akg_hops=0
-  __akg_found="$(__agent_kill_guard_ps -o pgid= -p "$$")" || __akg_found=''
+  local __akg_found
+  __akg_found="$(__agent_kill_guard_ps -o pgid= -p "$(__agent_kill_guard_self)")" || __akg_found=''
   if [ "$1" = "${__akg_found//[^0-9]/}" ]; then
     return 0
   fi
+  __agent_kill_guard_descends "$1"
+}
+
+# 0 when process $1 is this shell or descends from it.
+__agent_kill_guard_descends() {
+  local __akg_pid="$1" __akg_self __akg_found __akg_hops=0
+  __akg_self="$(__agent_kill_guard_self)"
+  case "$__akg_self" in
+    '' | 0 | 1 | *[!0-9]*) return 1 ;;
+  esac
   while [ "$__akg_hops" -lt 64 ]; do
-    if [ "$__akg_pid" = "$$" ]; then
+    if [ "$__akg_pid" = "$__akg_self" ]; then
       return 0
     fi
     __akg_found="$(__agent_kill_guard_ps -o ppid= -p "$__akg_pid")" || __akg_found=''
@@ -93,7 +133,7 @@ __agent_kill_guard_owned() {
 # reason on stderr and returns 1. It sends no signal, so tests can call it
 # with targets that must never be signalled.
 __agent_kill_guard_verdict() {
-  local __akg_arg __akg_target __akg_number __akg_phase=signal __akg_take=0 __akg_probe=0 __akg_ended=0
+  local __akg_arg __akg_target __akg_number __akg_found __akg_phase=signal __akg_take=0 __akg_probe=0 __akg_ended=0
   for __akg_arg in "$@"; do
     if [ "$__akg_take" = 1 ]; then
       __akg_take=0
@@ -160,6 +200,19 @@ __agent_kill_guard_verdict() {
           return 1
         fi
         ;;
+      *)
+        if [ "$__akg_probe" = 1 ] || [ "$__akg_number" = 0 ]; then continue; fi
+        if __agent_kill_guard_descends "$__akg_number"; then continue; fi
+        __akg_found="$(__agent_kill_guard_ps -o comm= -p "$__akg_number")" || __akg_found=''
+        case "$__akg_found" in
+          */Contents/Resources/* | */Contents/Developer/usr/*) ;;
+          *.app/Contents/MacOS/* | *.xpc/Contents/MacOS/* | *.appex/Contents/MacOS/*)
+            printf 'kill guard: refused `kill %s`: process %s is an application (%s) this shell did not start. A program an earlier command started is stopped through what started it: the background task, or the `membrake exec` process whose id it recorded.\n' \
+              "$*" "$__akg_number" "$__akg_found" >&2
+            return 1
+            ;;
+        esac
+        ;;
     esac
   done
   return 0
@@ -214,3 +267,24 @@ killall() {
   __agent_kill_guard_killall_verdict "$@" || return 1
   command killall "$@"
 }
+
+# Every bash below this one, and every `sh` (bash again), inherits the guard.
+# zsh cannot export a function; see the loaders in ../default.nix.
+if [ -n "${BASH_VERSION-}" ]; then
+  export -f kill pkill killall __agent_kill_guard_ps __agent_kill_guard_self \
+    __agent_kill_guard_owned __agent_kill_guard_descends \
+    __agent_kill_guard_verdict __agent_kill_guard_killall_verdict
+fi
+
+# The programs of the same names (./bin), first on PATH, for a program that
+# runs `kill`, `pkill` or `killall` without a shell. The clients name the
+# directory in AGENT_KILL_GUARD_BIN.
+if [ -n "${AGENT_KILL_GUARD_BIN-}" ] && [ -d "$AGENT_KILL_GUARD_BIN" ]; then
+  case ":${PATH-}:" in
+    *":$AGENT_KILL_GUARD_BIN:"*) ;;
+    *)
+      PATH="$AGENT_KILL_GUARD_BIN${PATH:+:$PATH}"
+      export PATH
+      ;;
+  esac
+fi

@@ -15,10 +15,12 @@ Run directly, or via scripts/hooks/pre-commit.
 """
 
 import importlib.util
+import json
 import os
 import subprocess
 import sys
 import tempfile
+import time
 
 GUARD = os.path.join(os.path.dirname(os.path.abspath(__file__)), "nix-only-guard.py")
 
@@ -602,6 +604,122 @@ CASES = [
     ("pnpm dlx -c=", "pnpm dlx -c=tsc", "DENY"),
     ("npx -c= with a light call string", "npx -c='echo hi'", "ALLOW"),
     ("npx -c= queued", "membrake exec --label x -- npm exec -c=tsc", "ALLOW"),
+    # ---- No command signals what it did not start (issue #270, 2026-11-11:
+    # a script ran `kill -TERM -- -<group>` over every group it had looked
+    # up). A process group, every process, or targets chosen by name or
+    # pattern are denied wherever the command stands... ----
+    ("a process group by number", "kill -TERM -- -12345", "DENY"),
+    ("a process group from a variable", 'kill -TERM "-$pgid"', "DENY"),
+    ("a process group with no signal named", "kill -- -$pgid", "DENY"),
+    ("every process the user owns", "kill -9 -1", "DENY"),
+    ("every process, with blanks around the number", "kill -TERM ' -1'", "DENY"),
+    ("the incident's loop", 'for g in $groups; do kill -TERM -- "-$g" 2>/dev/null || true; done', "DENY"),
+    ("after if", "if kill -KILL -$g; then echo gone; fi", "DENY"),
+    ("inside a substitution", 'echo "$(kill -- -$g)"', "DENY"),
+    ("behind command", "command kill -TERM -- -$g", "DENY"),
+    ("behind builtin", "builtin kill -TERM -- -$g", "DENY"),
+    ("the external program", "/bin/kill -TERM -- -$g", "DENY"),
+    ("a group built from a substitution", "kill -TERM -- -$(cat group.txt)", "DENY"),
+    ("groups through xargs", "ps -o pgid= -p 1 | xargs -I{} kill -- -{}", "DENY"),
+    ("targets from a process search, piped", "pgrep -f vite | xargs kill", "DENY"),
+    ("targets from a process search, piped with stderr", "pgrep -f vite |& xargs kill -9", "DENY"),
+    ("targets from a process search, substituted", "kill $(pgrep -f vite)", "DENY"),
+    ("targets from a process search, in backticks", "kill -9 `pgrep node`", "DENY"),
+    ("the pattern terminator after do", "while true; do " + "p" + "kill -f vite; done", "DENY"),
+    ("the name terminator in a subshell", f"( {KILL} LinearMouse )", "DENY"),
+    ("the name terminator behind xargs", f"echo LinearMouse | xargs {KILL}", "DENY"),
+    ("after a case label", 'case "$1" in stop) kill -TERM -- "-$g" ;; esac', "DENY"),
+    ("on the line that opens a function", 'stop() { kill -TERM -- "-$g"; }', "DENY"),
+    ("on the line that opens a function, keyword form",
+     "function stop { " + "p" + "kill -f vite; }", "DENY"),
+    # Reached any way but as the bare word, `kill` skips the shell guard's
+    # function, and a target in a variable or on a pipe cannot be read here.
+    ("by path, with a target the guard cannot read", "/bin/kill $target", "DENY"),
+    ("behind command, with a target the guard cannot read", "command kill $target", "DENY"),
+    ("behind builtin, with a target the guard cannot read", "builtin kill $target", "DENY"),
+    ("behind env", "env kill 12345", "DENY"),
+    ("behind the memory queue", "membrake exec --label x -- kill 12345", "DENY"),
+    ("targets arriving on a pipe", "cat server.pid | xargs kill", "DENY"),
+    ("computed groups arriving on a pipe", "ps -axo pgid= | sed 's/^/-/' | xargs kill -TERM --", "DENY"),
+    # Found by the independent review of #271.
+    # bash keeps reading options after the first signal (builtins/kill.def).
+    ("a probe followed by a real signal", "kill -s 0 -s TERM -- -1", "DENY"),
+    ("the short probe followed by a real signal", "kill -0 -s TERM -- -$g", "DENY"),
+    ("builtin with its own --", "builtin -- kill -- -1", "DENY"),
+    # The operand was a substitution, which left no word, so the name after it
+    # was taken for the operand and the command read as restarting the Dock.
+    ("a redirection whose operand is a substitution",
+     f"/usr/bin/{KILL} >$(printf /dev/null) SomeApplication Dock", "DENY"),
+    ("a process search nested twice", "kill $(echo $(pgrep -f vite))", "DENY"),
+    ("a process search feeding a subshell", "pgrep -f vite | (xargs kill)", "DENY"),
+    ("an unquoted heredoc that runs a group signal", "cat <<EOF\n$(/bin/kill -- -1)\nEOF", "DENY"),
+    # Found by the re-review. In bash 3.2 `-s` and `-n` do not mark the signal
+    # as given, so the number after them is a second signal.
+    ("a probe, then a numeric signal", "kill -s 0 -15 -- -1", "DENY"),
+    ("a numbered probe, then a numeric signal", "kill -n 0 -15 -- -1", "DENY"),
+    ("a group probed without --", "kill -0 -$pgid", "DENY"),
+    ("a case label in parentheses", "case x in (x) /bin/kill -- -1;; esac", "DENY"),
+    ("a case inside a substitution", 'echo "$(case x in x) /bin/kill -- -1;; esac)"', "DENY"),
+    ("the second arm of a case inside a substitution",
+     "r=$(case $x in a) echo a;; b) kill -- -$g;; esac)", "DENY"),
+    ("a trap handler", "trap '/bin/kill -- -1' EXIT", "DENY"),
+    ("a trap handler that signals a group", "trap 'kill -- -$$' INT TERM", "DENY"),
+    # Found by the third review pass.
+    ("script strings nested past what is read", "eval " * 600 + "; /bin/kill -- -1", "DENY"),
+    # Found by the fourth review pass: an escaped word is not a keyword.
+    ("an escaped esac is a case pattern, not the end of the case",
+     'echo "$(case esac in a) echo safe;; \\esac) /bin/kill -- -1;; esac)"', "DENY"),
+    # Found by the fifth review pass: a quoted esac, ended by a blank.
+    ("an escaped esac pattern followed by a blank",
+     'echo "$(case esac in a) echo safe;; \\esac ) /bin/kill -- -1;; esac)"', "DENY"),
+    ("a single-quoted esac pattern",
+     "echo \"$(case esac in a) echo safe;; 'esac' ) /bin/kill -- -1;; esac)\"", "DENY"),
+    ("a case closed inside a substitution, then a command",
+     'echo "$(case x in x) echo safe;; esac)"; /bin/kill -- -1', "DENY"),
+    ("a substitution in an argument inside a case arm",
+     "case x in x) kill -$(printf TERM) -- -1;; esac", "DENY"),
+    ("a case closed inside a substitution, then a pattern terminator",
+     'echo "$(case x in x) echo safe;; esac)"; ' + "p" + "kill worker", "DENY"),
+    # ---- ...and what delivers nothing, or reaches only what the command
+    # started, passes. ----
+    ("a search-fed probe", "kill -0 $(pgrep -f vite)", "ALLOW"),
+    ("a search-fed probe behind xargs", "pgrep -f vite | xargs kill -0", "ALLOW"),
+    ("asking what a name is", "command -v " + "p" + "kill", "ALLOW"),
+    ("a word that starts with a terminator's name, inside a case arm",
+     "case x in x) echo \"" + "p" + "kill$(printf '')\" worker;; esac", "ALLOW"),
+    ("a case closed inside a substitution, then an ordinary command",
+     'echo "$(case x in x) echo safe;; esac)"; echo done', "ALLOW"),
+    ("a recorded id inside a function", 'stop() { kill "$pid"; }', "ALLOW"),
+    ("a recorded id after a case label", 'case "$1" in stop) kill "$pid" ;; esac', "ALLOW"),
+    ("a recorded id with an assignment in front", 'LC_ALL=C kill "$pid"', "ALLOW"),
+    ("the probe by path", "/bin/kill -0 $pid", "ALLOW"),
+    ("listing behind command", "command kill -l", "ALLOW"),
+    ("braces that are data", "find . -name x -exec echo {} +", "ALLOW"),
+    ("one recorded process id", 'kill "$pid"', "ALLOW"),
+    ("one process id with a signal", "kill -TERM $pid", "ALLOW"),
+    ("a signal held in a variable", "kill -$SIG $pid", "ALLOW"),
+    ("several process ids", "kill -9 123 456", "ALLOW"),
+    ("a job", "kill %1", "ALLOW"),
+    ("the caller's own group", "kill 0", "ALLOW"),
+    ("the probe signal on a group", "kill -0 -- -$pgid", "ALLOW"),
+    ("the probe signal by name", "kill -s 0 -- -$pgid", "ALLOW"),
+    ("a recorded id in a substitution beside a search", 'pgrep -f x | echo "$(kill $pid)"', "ALLOW"),
+    ("a quoted brace is data", "printf '%s\\n' '{' " + "p" + "kill -f worker", "ALLOW"),
+    ("a quoted brace before words that only name a script string",
+     "printf '%s\\n' '{' bash -c 'echo hi'", "ALLOW"),
+    ("a trap handler that stops a recorded id", "trap 'kill \"$pid\"' EXIT", "ALLOW"),
+    ("resetting a trap", "trap - EXIT", "ALLOW"),
+    ("listing signals", "kill -l", "ALLOW"),
+    ("a process search on its own", "pgrep -fl vite", "ALLOW"),
+    ("a process search, then an unrelated recorded id", "pgrep -f vite; kill $pid", "ALLOW"),
+    ("a process search guarding a recorded id", "pgrep -f vite || kill $pid", "ALLOW"),
+    ("naming the forbidden form in a message", 'echo "kill -- -1 is refused"', "ALLOW"),
+    ("searching a script for the forbidden form", "grep -n 'kill -TERM -- -' cleanup.sh", "ALLOW"),
+    (
+        "a commit message that explains the rule",
+        "git commit -F - <<'MSG'\nagents: never kill -- -$group or " + "p" + "kill -f\nMSG",
+        "ALLOW",
+    ),
 ]
 
 # ---- Files a command runs as shell. The guard never opened them, so a script
@@ -621,6 +739,37 @@ SCRIPT_FILES = {
     "benign.sh": ("#!/bin/bash\nOUT=/tmp/out\nls ~/Library/Caches\nmkdir -p \"$OUT\"\n"
                   "cat > notes.md <<'EOF'\nnever mkdir -p ~/Library/Caches/x\nEOF\n"
                   "node cli.js install chromium\nbash -c 'echo hi'\n"),
+    # The 2026-11-11 incident's shape: groups looked up, then signalled, in a
+    # file two scripts below the typed command.
+    "interrupt.sh": "#!/bin/bash\nbash stop.sh\n",
+    "stop.sh": "#!/bin/bash\n. ./tree.sh\nstop_tree\n",
+    "tree.sh": ("stop_tree() {\n  for group in $(ps -axo pgid= | sort -u); do\n"
+                "    kill -TERM -- \"-$group\" 2>/dev/null || true\n  done\n}\n"),
+    "own-child.sh": "#!/bin/bash\nsleep 60 &\npid=$!\nkill \"$pid\"\nwait \"$pid\"\n",
+    # A script's unquoted heredoc runs its substitutions.
+    "heredoc.sh": "#!/bin/bash\ncat <<EOF\n$(/bin/kill -- -1)\nEOF\n",
+    "heredoc-data.sh": "#!/bin/bash\ncat <<'EOF'\n$(/bin/kill -- -1)\nEOF\ncat <<EOF\ntoday is $(date)\nEOF\n",
+    # Shell text handed to a shell or to eval inside a script (and, under
+    # Codex, when typed) is read too.
+    "string.sh": "#!/bin/bash\nsh -c '/bin/kill -- -1'\n",
+    "eval.sh": "#!/bin/bash\neval kill -- -1\n",
+    # What an argument-only edit to a script leaves behind (see EDIT_CASES).
+    "pid-edited.sh": "#!/bin/bash\nkill -- -1\n",
+    "huge.sh": "#!/bin/bash\n" + "# filler\n" * 150000 + "echo done\n",
+    **{f"deep{n}.sh": f"#!/bin/bash\nbash deep{n + 1}.sh\n" for n in range(1, 10)},
+    "deep10.sh": "#!/bin/bash\n/bin/echo bottom\n",
+    **{f"sig{n}.sh": f"#!/bin/bash\nbash sig{n + 1}.sh\n" for n in range(1, 10)},
+    "sig10.sh": "#!/bin/bash\nkill -- -1\n",
+    **{f"many{n}.sh": f"#!/bin/bash\nbash many{n + 1}.sh\n" for n in range(70)},
+    "many70.sh": "#!/bin/bash\necho bottom\n",
+    # Five scripts of almost 1 MB each: each may be read, all may not.
+    **{f"bulk{n}.sh": f"#!/bin/bash\nbash bulk{n + 1}.sh\n" + "# filler\n" * 110000 for n in range(5)},
+    "bulk5.sh": "#!/bin/bash\necho bottom\n",
+    ".envrc": "/usr/bin/" + "p" + "kill -f worker\n",
+    "direct.sh": "/usr/bin/" + "p" + "kill -f worker\n",
+    "string-plain.sh": "#!/bin/bash\nsh -c 'echo hi'\neval echo hi\n",
+    "string-dashdash.sh": "#!/bin/bash\nbash -c -- '/bin/kill -- -1'\n",
+    "eval-dashdash.sh": "#!/bin/bash\neval -- '/bin/kill -- -1'\n",
 }
 SCRIPT_CASES = [
     ("the incident: a probe script whose writes go through $DST", "bash {d}/probe.sh", "DENY"),
@@ -640,6 +789,260 @@ SCRIPT_CASES = [
     ("a script that does not exist", "bash {d}/missing.sh", "ALLOW"),
     ("a script path the guard cannot resolve", "bash \"$S/plain.sh\"", "ALLOW"),
     ("a script only shown, not run", "cat {d}/plain.sh", "ALLOW"),
+    ("the incident: group signals two scripts below the typed command", "bash {d}/interrupt.sh", "DENY"),
+    ("a script that stops the process id it recorded", "bash {d}/own-child.sh", "ALLOW"),
+    ("an argument changed into a group, then run", "bash {d}/pid-edited.sh", "DENY"),
+    # A known script the reader cannot read whole is refused, not passed.
+    ("a script too large to read", "bash {d}/huge.sh", "DENY"),
+    # Every script is followed however deep; only the number of different
+    # scripts in one command is bounded.
+    ("a chain of ten scripts, read to its end", "bash {d}/deep1.sh", "ALLOW"),
+    ("a chain of ten scripts whose last signals a group", "bash {d}/sig1.sh", "DENY"),
+    ("a command that runs more different scripts than are read", "bash {d}/many0.sh", "DENY"),
+    ("scripts that hold more text in all than is read in time", "bash {d}/bulk0.sh", "DENY"),
+    # A program run by path with a shell name and no shebang runs as shell.
+    ("a .sh file with no shebang, run by path", "{d}/direct.sh", "DENY"),
+    ("a .sh link to a file with no shebang and no shell name, run by path", "{d}/launch.sh", "DENY"),
+    ("a shell startup file with no shebang, run by path", "{d}/.envrc", "DENY"),
+    ("a script whose unquoted heredoc runs a group signal", "bash {d}/heredoc.sh", "DENY"),
+    ("a script whose heredocs hold it as data, or substitute something else",
+     "bash {d}/heredoc-data.sh", "ALLOW"),
+    ("a script that hands a group signal to sh -c", "bash {d}/string.sh", "DENY"),
+    ("a script that evals a group signal", "bash {d}/eval.sh", "DENY"),
+    ("a script whose script strings are harmless", "bash {d}/string-plain.sh", "ALLOW"),
+    ("a script string after --", "bash {d}/string-dashdash.sh", "DENY"),
+    ("an eval string after --", "bash {d}/eval-dashdash.sh", "DENY"),
+]
+
+# ---- File edits that introduce signalling code (issue #270). Claude Code's
+# Edit and Write tools and Codex's apply_patch; {d} is a temporary directory
+# holding existing.sh, which already contains a group signal. ----
+GROUP_SIGNAL = 'kill -TERM -- "-$group"'
+PATTERN_CALL = "p" + 'kill -f vite'
+EDIT_CASES = [
+    # Whole files.
+    ("writing a shell script that signals a group",
+     {"file_path": "{d}/new.sh", "content": f"#!/bin/bash\n{GROUP_SIGNAL}\n"}, "DENY"),
+    ("writing a shell script that stops a recorded id",
+     {"file_path": "{d}/new.sh", "content": "#!/bin/bash\nsleep 60 &\npid=$!\nkill \"$pid\"\n"}, "ALLOW"),
+    ("a shell script by shebang alone",
+     {"file_path": "{d}/run", "content": f"#!/usr/bin/env bash\n{GROUP_SIGNAL}\n"}, "DENY"),
+    ("a shell startup file with no shebang",
+     {"file_path": "{d}/.zshenv", "content": f"{GROUP_SIGNAL}\n"}, "DENY"),
+    ("the pattern terminator in a shell script",
+     {"file_path": "{d}/new.zsh", "content": f"{PATTERN_CALL}\n"}, "DENY"),
+    ("a shell script whose unquoted heredoc runs a group signal",
+     {"file_path": "{d}/new.sh", "content": "cat <<EOF\n$(/bin/kill -- -1)\nEOF\n"}, "DENY"),
+    ("rewriting a file with the group signal it already had",
+     {"file_path": "{d}/existing.sh", "content": f"#!/bin/bash\n{GROUP_SIGNAL}\necho finished\n"}, "ALLOW"),
+    ("rewriting a file of another language as a shell script",
+     {"file_path": "{d}/tool", "content": f"#!/bin/bash\n{GROUP_SIGNAL}\n"}, "DENY"),
+    ("prose that names the forbidden form",
+     {"file_path": "{d}/notes.md", "content": f"Never write `{GROUP_SIGNAL}` or `{PATTERN_CALL}`.\n"}, "ALLOW"),
+    ("a Nix module declaring an application restart",
+     {"file_path": "{d}/mouse.nix", "content": f"run /usr/bin/{PATTERN_CALL} || true\n"}, "ALLOW"),
+    ("a shell file too large to read",
+     {"file_path": "{d}/big.sh", "content": "# filler\n" * 600000}, "DENY"),
+    ("prose too large to read",
+     {"file_path": "{d}/big.md", "content": "filler\n" * 800000}, "ALLOW"),
+    # Replacements: each is judged against the text it replaces.
+    ("an edit that adds a group signal",
+     {"file_path": "{d}/existing.sh", "old_string": "echo done", "new_string": f"{GROUP_SIGNAL}\necho done"}, "DENY"),
+    ("an edit that keeps a group signal the file already had",
+     {"file_path": "{d}/existing.sh", "old_string": f"{GROUP_SIGNAL}\n", "new_string": f"{GROUP_SIGNAL}  # stop\n"}, "ALLOW"),
+    ("an edit that adds a second copy",
+     {"file_path": "{d}/existing.sh", "old_string": f"{GROUP_SIGNAL}\n",
+      "new_string": f"{GROUP_SIGNAL}\n{GROUP_SIGNAL}\n"}, "DENY"),
+    ("several edits, one adding a group signal",
+     {"file_path": "{d}/existing.sh", "edits": [{"old_string": "a", "new_string": "b"},
+                                                {"old_string": "echo done", "new_string": "kill -- -1"}]}, "DENY"),
+    # The deliberate refusal: the text is judged without knowing where it lands.
+    ("writing the form into a quoted message of a shell script",
+     {"file_path": "{d}/message.sh", "old_string": "old", "new_string": "kill -- -1"}, "DENY"),
+    # Two replacements are judged apart: their texts do not join into one.
+    ("two harmless replacements that would read as one command if joined",
+     {"file_path": "{d}/assign.sh", "edits": [{"old_string": "old-a", "new_string": "p\\"},
+                                              {"old_string": "old-b", "new_string": "kill worker"}]}, "ALLOW"),
+    # The stated limit: a change whose meaning depends on the text around it is
+    # not seen here; the command hook reads the edited script when it runs
+    # (see "an argument changed into a group, then run" below).
+    ("changing only an argument into a group",
+     {"file_path": "{d}/pid.sh", "old_string": "12345", "new_string": "-1"}, "ALLOW"),
+    # Another language.
+    ("another language shelling out to the pattern terminator",
+     {"file_path": "{d}/stop.ts", "content": f'execSync("{PATTERN_CALL}");\n'}, "DENY"),
+    ("an argument list starting with the name terminator",
+     {"file_path": "{d}/stop.py", "content": f'subprocess.run(["{KILL}", name])\n'}, "DENY"),
+    # Another language gets no interface-agent exception: rounds 9 to 12 each
+    # found a way past one (an argument reader, then exact shapes that a
+    # literal `+ [...]` or an adjacent string extends). A restart the code
+    # already makes may stay; a new one belongs in a Nix activation entry.
+    ("restarting an interface agent from code",
+     {"file_path": "{d}/dock.py", "content": f'subprocess.run(["/usr/bin/{KILL}", "Dock"])\n'}, "DENY"),
+    ("an interface agent list extended by another",
+     {"file_path": "{d}/dock.py",
+      "content": f'subprocess.run(["/usr/bin/{KILL}", "Dock"] + ["SomeApplication"])\n'}, "DENY"),
+    ("an interface agent string extended by an adjacent one",
+     {"file_path": "{d}/dock.py", "content": f'os.system("{KILL} Dock" " SomeApplication")\n'}, "DENY"),
+    ("two interface agents in one list are not one of the exact shapes",
+     {"file_path": "{d}/dock.py", "content": f'subprocess.run(["/usr/bin/{KILL}", "Dock", "Finder"])\n'}, "DENY"),
+    # Deliberately refused: the line, comment included, is the call's identity;
+    # reading where a comment starts let a changed target pass (round 14).
+    ("a rewrite that changes only the comment on an existing restart",
+     {"file_path": "{d}/commented.py",
+      "content": f'subprocess.run(["/usr/bin/{KILL}", "Dock"])  # new comment\n'}, "DENY"),
+    ("a changed target written after a hash inside a string",
+     {"file_path": "{d}/hashed.py",
+      "content": f'subprocess.run(["/usr/bin/{KILL}", """#SomeApplication\n""".lstrip("#").strip()])\n'}, "DENY"),
+    ("a word in front of the terminator in a command string",
+     {"file_path": "{d}/wrapped.py", "content": f'os.system("command {KILL} SomeApplication")\n'}, "DENY"),
+    ("a path to the terminator that is not the usual one",
+     {"file_path": "{d}/alias.py", "content": f'subprocess.run(["/usr/bin/./{KILL}", "SomeApplication"])\n'}, "DENY"),
+    ("a rewrite that changes the target of an existing restart",
+     {"file_path": "{d}/commented.py",
+      "content": f'subprocess.run(["/usr/bin/{KILL}", "SomeApplication"])  # old comment\n'}, "DENY"),
+    ("a computed target beside an interface agent",
+     {"file_path": "{d}/dock.py", "content": f'subprocess.run(["/usr/bin/{KILL}", "Dock", chr(88)])\n'}, "DENY"),
+    ("rewriting a file that already restarts an interface agent",
+     {"file_path": "{d}/ui.py", "content": f'import os\nos.system("{KILL} Finder")\nprint(1)\n'}, "ALLOW"),
+    ("two calls on one line, the second a pattern terminator",
+     {"file_path": "{d}/stop.py",
+      "content": f'run(["{KILL}", "Dock"]); run(["' + "p" + 'kill", "worker"])\n'}, "DENY"),
+    ("an application beside a comment that mentions the Dock",
+     {"file_path": "{d}/stop.py", "content": f'run(["{KILL}", "SomeApplication"])  # not Dock\n'}, "DENY"),
+    ("a short replacement from one interface agent to another",
+     {"file_path": "{d}/ui.py", "old_string": f"{KILL} Finder", "new_string": f"{KILL} Dock"}, "DENY"),
+    ("an application after an inner bracket of the call",
+     {"file_path": "{d}/agents.py",
+      "content": f'subprocess.run(["/usr/bin/{KILL}", *["Dock"], ' + " " * 220 + '"SomeApplication"])\n'}, "DENY"),
+    ("a name-based call whose arguments run past what is read gets no exception",
+     {"file_path": "{d}/dock.py",
+      "content": f'subprocess.run(["{KILL}", ' + '"Dock", ' * 40 + '"SomeApplication"])\n'}, "DENY"),
+    ("a comment line that quotes the terminator",
+     {"file_path": "{d}/stop.py", "content": '# Never run "' + "p" + 'kill -f worker" here\n'}, "ALLOW"),
+    ("a slash comment in a C-family file",
+     {"file_path": "{d}/stop.ts", "content": '// never execSync("' + "p" + 'kill -f worker")\n'}, "ALLOW"),
+    ("a statement that starts with a decrement is not a comment",
+     {"file_path": "{d}/stop.js", "content": '-- remaining; execSync("' + "p" + 'kill -f worker");\n'}, "DENY"),
+    ("a statement that starts with a dereference is not a comment",
+     {"file_path": "{d}/stop.go", "content": '* result = exec.Command("' + "p" + 'kill", "worker").Run()\n'}, "DENY"),
+    ("a group signal by system call is not judged",
+     {"file_path": "{d}/stop.py", "content": "os.killpg(process.pid, signal.SIGTERM)\n"}, "ALLOW"),
+    # Codex patches.
+    ("a patch that adds a shell script signalling a group",
+     {"command": f"*** Begin Patch\n*** Add File: {{d}}/patched.sh\n+#!/bin/bash\n+{GROUP_SIGNAL}\n*** End Patch\n"}, "DENY"),
+    ("a patch that moves a group signal the file already had",
+     {"command": f"*** Begin Patch\n*** Update File: {{d}}/existing.sh\n@@\n-{GROUP_SIGNAL}\n+  {GROUP_SIGNAL}\n*** End Patch\n"}, "ALLOW"),
+    ("a patch whose second file adds the pattern terminator",
+     {"command": ("*** Begin Patch\n*** Update File: {d}/notes.md\n+hello\n"
+                  f"*** Add File: {{d}}/two.sh\n+{PATTERN_CALL}\n*** End Patch\n")}, "DENY"),
+    ("a patch to prose",
+     {"command": f"*** Begin Patch\n*** Add File: {{d}}/notes.md\n+{GROUP_SIGNAL}\n*** End Patch\n"}, "ALLOW"),
+    ("a patch that moves a text file to a shell script and adds a group signal",
+     {"command": ("*** Begin Patch\n*** Update File: {d}/stop.txt\n*** Move to: {d}/moved.sh\n"
+                  f"@@\n notes\n+{GROUP_SIGNAL}\n*** End Patch\n")}, "DENY"),
+    ("a patch that makes a prose file a shell script with a group signal",
+     {"command": ("*** Begin Patch\n*** Update File: {d}/becomes.md\n@@\n-# old\n+#!/bin/bash\n"
+                  "@@\n-/bin/echo done\n+/bin/kill -- -1\n*** End Patch\n")}, "DENY"),
+    ("a patch hunk that changes data in a heredoc to other data",
+     {"command": ("*** Begin Patch\n*** Update File: {d}/existing.sh\n@@\n-echo done\n+echo finished\n"
+                  "*** End Patch\n")}, "ALLOW"),
+    # Found by the eighth review pass.
+    ("a complete command written into a script whose interpreter line is long",
+     {"file_path": "{d}/longbang", "old_string": "printf safe", "new_string": "/bin/kill -- -1"}, "DENY"),
+    ("a complete command written into a large extensionless shell script",
+     {"file_path": "{d}/bigrun", "old_string": "printf safe", "new_string": "/bin/kill -- -1"}, "DENY"),
+    # In another language a new line that names the tool as a word is refused,
+    # wherever the word stands: rounds 9 to 16 found a way past each finer rule.
+    ("a shell script rewritten as Python with a variable of the tool's name",
+     {"file_path": "{d}/was-shell.py", "content": "#!/usr/bin/env python3\n" + "p" + "kill = 1\nprint(1)\n"}, "DENY"),
+    ("the tool's name after a separator in a command string",
+     {"file_path": "{d}/sep.py", "content": f'os.system("true;{KILL} SomeApplication")\n'}, "DENY"),
+    ("a call duplicated after its indentation changed",
+     {"file_path": "{d}/indented.rb",
+      "content": "def " + "p" + 'kill(pattern)\n  system("/usr/bin/' + "p" + 'kill", "-f", pattern)\nend\n'
+                 + ("p" + 'kill "' + KILL + '"\n') * 2}, "DENY"),
+    ("a source replacement that turns a quoted program into the pattern terminator",
+     {"file_path": "{d}/run.py", "old_string": "printf", "new_string": "p" + "kill"}, "DENY"),
+    ("the signal guard's own path, with no checkout named",
+     {"file_path": "{d}/ai/shell-guard/kill-guard-test.sh", "content": f"{GROUP_SIGNAL}\n"}, "DENY"),
+]
+
+
+def in_directory(value, d):
+    """`value` with {d} replaced in every string it holds."""
+    if isinstance(value, str):
+        return value.replace("{d}", d)
+    if isinstance(value, list):
+        return [in_directory(item, d) for item in value]
+    if isinstance(value, dict):
+        return {key: in_directory(item, d) for key, item in value.items()}
+    return value
+
+
+def hook(payload, *arguments):
+    """The hook program's decision for a payload, run as the clients run it.
+
+    A denial longer than one atomic pipe write (512 bytes) is dropped by the
+    supervisor and the command runs, so such an output counts as ALLOW."""
+    result = subprocess.run([sys.executable, GUARD, *arguments], input=json.dumps(payload),
+                            capture_output=True, text=True, check=True)
+    denied = '"permissionDecision":"deny"' in result.stdout and len(result.stdout.encode()) <= 512
+    return "DENY" if denied else "ALLOW"
+
+
+# ---- The program itself: it picks the rule from the tool's name, and Codex's
+# hook (`--client codex`) drops the two rules that exist only because Claude
+# Code stops to ask the owner. ----
+HOOK_CASES = [
+    ("a typed group signal", {"tool_name": "Bash", "tool_input": {"command": "kill -- -$g"}}, [], "DENY"),
+    ("a typed group signal under Codex", {"tool_name": "Bash", "tool_input": {"command": "kill -- -$g"}},
+     ["--client", "codex"], "DENY"),
+    ("a script string under Claude Code", {"tool_name": "Bash", "tool_input": {"command": "bash -c 'echo hi'"}},
+     [], "DENY"),
+    ("a script string under Codex", {"tool_name": "Bash", "tool_input": {"command": "bash -c 'echo hi'"}},
+     ["--client", "codex"], "ALLOW"),
+    ("a machine change under Codex", {"tool_name": "Bash", "tool_input": {"command": "brew install some-cask"}},
+     ["--client", "codex"], "DENY"),
+    ("a Write that signals a group",
+     {"tool_name": "Write", "cwd": "/nonexistent",
+      "tool_input": {"file_path": "x.sh", "content": f"{GROUP_SIGNAL}\n"}}, [], "DENY"),
+    ("a Codex patch that signals a group",
+     {"tool_name": "apply_patch", "cwd": "/nonexistent",
+      "tool_input": {"command": f"*** Begin Patch\n*** Add File: x.sh\n+{GROUP_SIGNAL}\n*** End Patch\n"}},
+     ["--client", "codex"], "DENY"),
+    ("a denial for a very long command still fits one pipe write",
+     {"tool_name": "Bash", "tool_input": {"command": "brew install " + "some-cask " * 200}}, [], "DENY"),
+    ("a denial for a very long group signal still fits one pipe write",
+     {"tool_name": "Bash", "tool_input": {"command": "kill -TERM -- " + '"-$group" ' * 200}}, [], "DENY"),
+    ("a denial whose text is not ASCII still fits one pipe write",
+     {"tool_name": "Bash", "tool_input": {"command": "brew install " + "\u00e9" * 400}}, [], "DENY"),
+    ("a denial for a group signal with non-ASCII text still fits one pipe write",
+     {"tool_name": "Bash", "tool_input": {"command": "kill -- -1 " + "界" * 150}}, [], "DENY"),
+    ("a lone surrogate in an edit to a large file is answered, not a crash",
+     {"tool_name": "Write", "cwd": "/nonexistent",
+      "tool_input": {"file_path": "big.md", "content": "\ud800" + "x" * (5 << 20)}}, [], "ALLOW"),
+    ("a tool name that is not a string",
+     {"tool_name": [], "tool_input": {"command": "kill -- -1"}}, [], "DENY"),
+    ("script strings nested past what is read, under Codex",
+     {"tool_name": "Bash", "tool_input": {"command": "eval " * 600 + "; /bin/kill -- -1"}},
+     ["--client", "codex"], "DENY"),
+    ("script strings nested a little, under Codex",
+     {"tool_name": "Bash", "tool_input": {"command": "eval eval eval echo hi"}},
+     ["--client", "codex"], "ALLOW"),
+    ("a script string after --, under Codex",
+     {"tool_name": "Bash", "tool_input": {"command": "eval -- '/bin/kill -- -1'"}},
+     ["--client", "codex"], "DENY"),
+    ("a script string that runs the pattern terminator, under Codex",
+     {"tool_name": "Bash", "tool_input": {"command": "sh -c '" + "p" + "kill -f vite'"}},
+     ["--client", "codex"], "DENY"),
+    ("an unquoted heredoc that runs a group signal, under Codex",
+     {"tool_name": "Bash", "tool_input": {"command": "cat <<EOF\n$(/bin/kill -- -1)\nEOF"}},
+     ["--client", "codex"], "DENY"),
+    ("a patch is not read as a typed command",
+     {"tool_name": "apply_patch", "cwd": "/nonexistent",
+      "tool_input": {"command": "*** Begin Patch\n*** Add File: notes.md\n+brew install some-cask\n*** End Patch\n"}},
+     ["--client", "codex"], "ALLOW"),
 ]
 
 
@@ -655,6 +1058,9 @@ def main():
         for file, text in SCRIPT_FILES.items():
             with open(os.path.join(d, file), "w") as handle:
                 handle.write(text)
+        with open(os.path.join(d, "payload"), "w") as handle:
+            handle.write("/usr/bin/" + "p" + "kill -f worker\n")
+        os.symlink(os.path.join(d, "payload"), os.path.join(d, "launch.sh"))
         for name, command, expected in SCRIPT_CASES:
             got = verdict(command.format(d=d), cwd=d)
             if got != expected:
@@ -669,6 +1075,15 @@ def main():
     # repository's; without clearing them the scratch repository's `git add`
     # stages into this one (it did, 2026-10-31).
     git_env = {key: value for key, value in os.environ.items() if not key.startswith("GIT_")}
+
+    def commit(directory, *files):
+        # A scratch repository's commit: no signing key belongs to a fixture.
+        if files:
+            subprocess.run(["git", "-C", directory, "add", *files], check=True, env=git_env)
+        subprocess.run(["git", "-C", directory, "-c", "user.name=Example", "-c",
+                        "user.email=example@example.invalid", "-c", "commit.gpgsign=false",
+                        "commit", "-q", "--allow-empty", "-m", "fixture"], check=True, env=git_env)
+
     with tempfile.TemporaryDirectory() as d:
         subprocess.run(["git", "init", "-q", d], check=True, env=git_env)
         loader = os.path.join(d, "loader.sh")
@@ -676,21 +1091,262 @@ def main():
             handle.write("unset OP_CONNECT_TOKEN\nmkdir -p ~/Library/Caches/x\n")
         for name, expected, step in [
             ("an untracked script is read", "DENY", None),
-            ("a script git tracks unchanged is the repository's own", "ALLOW", ["add", "loader.sh"]),
-            ("a tracked script edited after it was added is read", "DENY", "edit"),
+            # Staging is a step any agent takes, so it earns no trust.
+            ("a staged script is read", "DENY", "stage"),
+            ("a committed script unchanged since is the repository's own", "ALLOW", "commit"),
+            ("a committed script edited since is read", "DENY", "edit"),
+            ("a committed script edited and staged since is read", "DENY", "stage"),
         ]:
             if step == "edit":
                 with open(loader, "a") as handle:
                     handle.write("echo edited\n")
-            elif step:
-                subprocess.run(["git", "-C", d, *step], check=True, env=git_env)
+            elif step == "stage":
+                subprocess.run(["git", "-C", d, "add", "loader.sh"], check=True, env=git_env)
+            elif step == "commit":
+                commit(d, "loader.sh")
             repository_cases += 1
             got = verdict("bash loader.sh", cwd=d)
             if got != expected:
                 failures += 1
                 print(f"FAIL  expected {expected:<5} got {got:<5}  {name}", file=sys.stderr)
 
-    total = len(CASES) + len(SCRIPT_CASES) + repository_cases
+        # The 2026-11-11 arrangement: the typed script and the one below it
+        # are the repository's own and unchanged; the file they source is not.
+        for file, text in {"interrupt.sh": "#!/bin/bash\nbash stop.sh\n",
+                           "stop.sh": "#!/bin/bash\n. ./tree.sh\nstop_tree\n",
+                           "tree.sh": "stop_tree() {\n  echo nothing to stop\n}\n"}.items():
+            with open(os.path.join(d, file), "w") as handle:
+                handle.write(text)
+        commit(d, "interrupt.sh", "stop.sh", "tree.sh")
+        for name, expected, leaf in [
+            ("unchanged scripts that run unchanged scripts", "ALLOW", None),
+            ("an edited script below two unchanged ones", "DENY",
+             f"stop_tree() {{\n  for group in $(ps -axo pgid=); do {GROUP_SIGNAL}; done\n}}\n"),
+        ]:
+            if leaf:
+                with open(os.path.join(d, "tree.sh"), "w") as handle:
+                    handle.write(leaf)
+            repository_cases += 1
+            got = verdict("bash interrupt.sh", cwd=d)
+            if got != expected:
+                failures += 1
+                print(f"FAIL  expected {expected:<5} got {got:<5}  {name}", file=sys.stderr)
+
+        # An unchanged script that runs its edited child from inside an
+        # unquoted heredoc's substitution.
+        for file, text in {"report.sh": "#!/bin/bash\ncat <<EOF\n$(bash child.sh)\nEOF\n",
+                           "child.sh": f"#!/bin/bash\n{GROUP_SIGNAL}\n"}.items():
+            with open(os.path.join(d, file), "w") as handle:
+                handle.write(text)
+        commit(d, "report.sh")
+        repository_cases += 1
+        got = verdict("bash report.sh", cwd=d)
+        if got != "DENY":
+            failures += 1
+            print(f"FAIL  expected DENY  got {got:<5}  an edited script run from an unchanged script's heredoc",
+                  file=sys.stderr)
+
+        # Rounds 9 and 10 found a committed script below a long chain, or a
+        # script the chain had already passed through, hidden from a later
+        # part of the same command. Every script is now read once and whole,
+        # so where the command reaches it does not matter.
+        chain = {f"w{n}.sh": f"#!/bin/bash\nbash w{n + 1}.sh\n" for n in range(8)}
+        chain["w8.sh"] = "#!/bin/bash\nbash bridge.sh\n"
+        chain["bridge.sh"] = "#!/bin/bash\nbash leaf.sh\n"
+        chain["leaf.sh"] = "#!/bin/bash\n/bin/kill -- -1\n"
+        # 800 references to one committed script, nine scripts down, must not
+        # mean 800 checks of it: each is a pair of git commands, and a late
+        # denial is dropped (13 s in the tenth pass).
+        chain.update({f"f{n}.sh": f"#!/bin/bash\nbash f{n + 1}.sh\n" for n in range(8)})
+        chain["f8.sh"] = "#!/bin/bash\n" + "bash bridge.sh\n" * 800
+        for file, text in chain.items():
+            with open(os.path.join(d, file), "w") as handle:
+                handle.write(text)
+        commit(d, "bridge.sh")
+        for name, command in [("a committed script below a long chain, then run again", "bash w0.sh; bash bridge.sh"),
+                              ("a script the chain already passed through, run again", "bash w0.sh; bash w8.sh"),
+                              ("one committed script referenced 800 times, nine down", "bash f0.sh")]:
+            repository_cases += 1
+            started = time.monotonic()
+            got = verdict(command, cwd=d)
+            elapsed = time.monotonic() - started
+            if got != "DENY" or elapsed > 5:
+                failures += 1
+                print(f"FAIL  expected DENY  got {got:<5} in {elapsed:.1f} s  {name}", file=sys.stderr)
+
+        # The signal guard's own sources are exempt from the edit rule only in
+        # the checkout the hook is told about, or a linked worktree of it.
+        source = {"file_path": "ai/shell-guard/kill-guard-test.sh", "content": f"{GROUP_SIGNAL}\n"}
+        linked = os.path.join(d, "linked")
+        commit(d)
+        subprocess.run(["git", "-C", d, "worktree", "add", "-q", linked], check=True, env=git_env)
+        with tempfile.TemporaryDirectory() as elsewhere:
+            for name, expected, cwd, checkout in [
+                ("the guard's own test in the named checkout", "ALLOW", d, d),
+                ("the guard's own test in a linked worktree of it", "ALLOW", linked, d),
+                ("the same path in an unrelated directory", "DENY", elsewhere, d),
+                ("the same path when another checkout is named", "DENY", d, elsewhere),
+                ("the guard's own path, linked to a file outside the checkout", "DENY", "link", d),
+            ]:
+                if cwd == "link":
+                    # ai/shell-guard/kill-guard-test.sh in the checkout is a
+                    # link to a script elsewhere, which is what would be written.
+                    os.makedirs(os.path.join(d, "ai", "shell-guard"))
+                    os.symlink(os.path.join(elsewhere, "outside.sh"),
+                               os.path.join(d, "ai", "shell-guard", "kill-guard-test.sh"))
+                    cwd = d
+                repository_cases += 1
+                got = "DENY" if guard.edit_verdict(source, cwd, checkout) else "ALLOW"
+                if got != expected:
+                    failures += 1
+                    print(f"FAIL  expected {expected:<5} got {got:<5}  {name}", file=sys.stderr)
+
+    with tempfile.TemporaryDirectory() as d:
+        for file, text in {
+            "existing.sh": f"#!/bin/bash\n{GROUP_SIGNAL}\necho done\n",
+            "pid.sh": "#!/bin/bash\nkill -- 12345\n",
+            "message.sh": '#!/bin/bash\necho "old"\n',
+            "assign.sh": "#!/bin/bash\na='old-a'\nb='old-b'\n",
+            "tool": "#!/usr/bin/env python3\nprint(1)\n",
+            "stop.txt": "notes\n",
+            "becomes.md": "# old\n/bin/echo done\n",
+            "hashed.py": f'subprocess.run(["/usr/bin/{KILL}", """#Dock\n""".lstrip("#").strip()])\n',
+            "indented.rb": ("def " + "p" + 'kill(pattern)\n  system("/usr/bin/' + "p" + 'kill", "-f", pattern)\nend\n'
+                            "if false\n  " + "p" + 'kill "' + KILL + '"\nend\n'),
+            "commented.py": f'subprocess.run(["/usr/bin/{KILL}", "Dock"])  # old comment\n',
+            "ui.py": f'import os\nos.system("{KILL} Finder")\n',
+            "longbang": "#!/" + "\u00e9" * 60 + "/bin/bash\nprintf safe\n",
+            "bigrun": "#!/bin/bash\n#" + "x" * 4_194_304 + "\nprintf safe\n",
+            "was-shell.py": "#!/bin/bash\necho old\n",
+            "run.py": 'import subprocess\nsubprocess.run(["/usr/bin/printf", "worker"])\n',
+        }.items():
+            with open(os.path.join(d, file), "w") as handle:
+                handle.write(text)
+        for name, tool_input, expected in EDIT_CASES:
+            got = "DENY" if guard.edit_verdict(in_directory(tool_input, d), d) else "ALLOW"
+            if got != expected:
+                failures += 1
+                print(f"FAIL  expected {expected:<5} got {got:<5}  {name}", file=sys.stderr)
+    for name, payload, arguments, expected in HOOK_CASES:
+        got = hook(payload, *arguments)
+        if got != expected:
+            failures += 1
+            print(f"FAIL  expected {expected:<5} got {got:<5}  {name}", file=sys.stderr)
+
+    # A script read earlier in the command and gone by the time a later one is
+    # read must not stop the later one being judged.
+    with tempfile.TemporaryDirectory() as d:
+        first, second = os.path.join(d, "first.sh"), os.path.join(d, "second.sh")
+        with open(first, "w") as handle:
+            handle.write("#!/bin/bash\necho hello\n")
+        with open(second, "w") as handle:
+            handle.write("#!/bin/bash\n/bin/kill -- -1\n")
+        reader = guard.script_verdict
+
+        def vanishing(path, kind, cwd, depth, seen):
+            reason = reader(path, kind, cwd, depth, seen)
+            if os.path.exists(first) and path.endswith("first.sh"):
+                os.unlink(first)
+            return reason
+
+        guard.script_verdict = vanishing
+        try:
+            got = verdict(f"bash {first}; bash {second}", cwd=d)
+        finally:
+            guard.script_verdict = reader
+        if got != "DENY":
+            failures += 1
+            print(f"FAIL  expected DENY  got {got:<5}  a later script after an earlier one vanished", file=sys.stderr)
+
+    # The hook has ten seconds, and a denial that arrives late is dropped. A
+    # line of 16,000 matches took 15 seconds when each looked ahead to the
+    # line's end.
+    many = "pkill = None\nnames = [" + ", ".join(["p" + "kill"] * 16000) + "]\n"
+    started = time.monotonic()
+    guard.edit_verdict({"file_path": "/nonexistent/run.py", "old_string": "pass", "new_string": many})
+    elapsed = time.monotonic() - started
+    if elapsed > 5:
+        failures += 1
+        print(f"FAIL  a source replacement with 16,000 matches took {elapsed:.1f} s", file=sys.stderr)
+
+    # The two inputs round 12 found slow: many allowed calls before a refused
+    # one, and a long run of blanks inside a call. Each must be answered in
+    # time now that no allowed shape is searched for.
+    for name, content in [
+        ("32,000 interface-agent calls, then another", "commands = [" + ", ".join(
+            [f'["/usr/bin/{KILL}", "Dock"]'] * 32000) + f']\nsubprocess.run(["/usr/bin/{KILL}", "SomeApplication"])\n'),
+        ("60,000 blanks inside a name-based call", f'subprocess.run(["/usr/bin/{KILL}", "Dock"' + " " * 60000
+         + ', "SomeApplication"])\n'),
+    ]:
+        started = time.monotonic()
+        got = "DENY" if guard.edit_verdict({"file_path": "/nonexistent/run.py", "content": content}) else "ALLOW"
+        elapsed = time.monotonic() - started
+        if got != "DENY" or elapsed > 5:
+            failures += 1
+            print(f"FAIL  expected DENY  got {got:<5} in {elapsed:.1f} s  {name}", file=sys.stderr)
+
+    # The whole answer, the denial's formatting included, must arrive in time:
+    # a 960 KB refused line took 27 s to format in the thirteenth pass.
+    long_line = "commands = [" + ", ".join([f'["/usr/bin/{KILL}", "Dock"]'] * 32000) + "]"
+    started = time.monotonic()
+    got = hook({"tool_name": "Write", "cwd": "/nonexistent",
+                "tool_input": {"file_path": "run.py", "content": long_line + "\n"}})
+    elapsed = time.monotonic() - started
+    if got != "DENY" or elapsed > 5:
+        failures += 1
+        print(f"FAIL  expected DENY  got {got:<5} in {elapsed:.1f} s  a refused 960 KB line, end to end",
+              file=sys.stderr)
+
+    # An expiry that lands while the timer is being disarmed is still a
+    # refusal, and the previous handler comes back. Modelled by delivering it
+    # from the disarming call itself; no signal is sent.
+    real_setitimer = guard.signal.setitimer
+
+    def setitimer_that_expires(which, seconds, *rest):
+        # The real timer is disarmed first, then the expiry that was already
+        # pending is delivered, as the kernel would.
+        result = real_setitimer(which, seconds, *rest)
+        if seconds == 0:
+            guard.signal.getsignal(guard.signal.SIGALRM)(guard.signal.SIGALRM, None)
+        return result
+
+    before = guard.signal.getsignal(guard.signal.SIGALRM)
+    guard.signal.setitimer = setitimer_that_expires
+    try:
+        got = guard.answer({"tool_name": "Bash", "tool_input": {"command": "echo hi"}}, {})
+    except BaseException as error:
+        got = f"raised {type(error).__name__}"
+    finally:
+        guard.signal.setitimer = real_setitimer
+    if (got != guard.TOO_SLOW or guard.signal.getsignal(guard.signal.SIGALRM) is not before
+            or real_setitimer(guard.signal.ITIMER_REAL, 0) != (0.0, 0.0)):
+        failures += 1
+        print(f"FAIL  an expiry while disarming gave {got!r}", file=sys.stderr)
+
+    # Whatever is slow, the answer is a refusal on time, not a late one.
+    reader = guard.command_verdict
+    guard.command_verdict = lambda *args, **kwargs: time.sleep(3)
+    try:
+        started = time.monotonic()
+        got = guard.answer({"tool_name": "Bash", "tool_input": {"command": "echo hi"}}, {}, budget=0.5)
+        elapsed = time.monotonic() - started
+    finally:
+        guard.command_verdict = reader
+    if got != guard.TOO_SLOW or elapsed > 1.5:
+        failures += 1
+        print(f"FAIL  a reading past the budget gave {got!r} after {elapsed:.1f} s", file=sys.stderr)
+
+    # Four million characters of the name-based word in one replacement: the
+    # source rule must stay linear (13 s in the eleventh pass).
+    many = "killall = None\nnames = [" + ", ".join(["kill" + "all"] * 450000) + "]\n"
+    started = time.monotonic()
+    guard.edit_verdict({"file_path": "/nonexistent/run.py", "old_string": "pass", "new_string": many})
+    elapsed = time.monotonic() - started
+    if elapsed > 5:
+        failures += 1
+        print(f"FAIL  a source replacement of four million characters took {elapsed:.1f} s", file=sys.stderr)
+
+    total = len(CASES) + len(SCRIPT_CASES) + repository_cases + len(EDIT_CASES) + len(HOOK_CASES) + 8
     if failures:
         print(
             f"\n{failures} of {total} nix-only-guard tests failed.\n"

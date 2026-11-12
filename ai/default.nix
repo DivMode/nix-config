@@ -66,6 +66,22 @@
     journalTest = ./codex-orchestrator/codex-journal-test.sh;
   };
 
+  # The signal guard for every shell an agent client starts (issue #270): in
+  # those shells `kill` refuses a process group the shell did not start, and
+  # the pattern-based terminators are refused. `environment` is what each
+  # client sets for the commands it runs: the marker that turns the guard on,
+  # and BASH_ENV, which every non-interactive bash sources. zsh has no such
+  # variable, so modules/home/ai sources `killGuard` from ZDOTDIR's .zshenv
+  # when the marker is set.
+  shellGuard = rec {
+    killGuard = ./shell-guard/kill-guard.sh;
+    killGuardTest = ./shell-guard/kill-guard-test.sh;
+    environment = {
+      AGENT_KILL_GUARD = "1";
+      BASH_ENV = "${killGuard}";
+    };
+  };
+
   # Machine-only hook declarations and their build contract. Neither client
   # loads hooks from user settings, repositories, or delegation command lines.
   hooks = ./hooks;

@@ -323,6 +323,35 @@
                 ${python}/bin/python3 cli-proxy-state-test.py
                 touch "$out"
               '';
+            # The signal guard agent shells load (ai/shell-guard), run in every
+            # shell it must work in: Nix's bash and zsh, and the system's own
+            # (scripts with a /bin/bash shebang get bash 3.2; both clients run
+            # commands in /bin/zsh). macOS only (a null attribute name is
+            # omitted): the test starts its processes with the system's
+            # /usr/bin/perl and /bin/sleep. The build cannot execute /bin/ps,
+            # so the guard's fallback finds this ps on PATH. The test signals
+            # only processes it started itself.
+            ${if nixpkgs.lib.hasSuffix "-darwin" system then "agent-kill-guard" else null} =
+              let
+                pkgs = nixpkgs.legacyPackages.${system};
+              in
+              pkgs.runCommand "agent-kill-guard-tests" { nativeBuildInputs = [ pkgs.ps ]; } ''
+                names="$(${pkgs.python3}/bin/python3 -c '
+                import importlib.util, sys
+                spec = importlib.util.spec_from_file_location("nix_only_guard", sys.argv[1])
+                guard = importlib.util.module_from_spec(spec)
+                spec.loader.exec_module(guard)
+                print(" ".join(sorted(guard.SELF_RESTARTING_UI_AGENTS)))
+                ' ${./ai/hooks/nix-only-guard.py})"
+                # nix-darwin's /etc/zshenv replaces PATH unless this is set,
+                # and the zsh runs would then find /bin/ps again.
+                export __NIX_DARWIN_SET_ENVIRONMENT_DONE=1
+                for shell in ${pkgs.bash}/bin/bash ${pkgs.zsh}/bin/zsh /bin/bash /bin/zsh; do
+                  echo "kill-guard tests in $shell"
+                  "$shell" ${ai.shellGuard.killGuardTest} ${ai.shellGuard.killGuard} "$names"
+                done
+                touch "$out"
+              '';
           });
 
       # `nixfmt-tree`, not bare `nixfmt`. `nix fmt` invokes the formatter with

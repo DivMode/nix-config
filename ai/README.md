@@ -21,6 +21,7 @@ previous machine's assistant configuration; everything here is restored by
 | `hooks/default.nix` | Claude managed settings and `/etc/codex/requirements.toml`, through the build-time hook contract |
 | `codex/default.nix` | narrowly merged into mutable `~/.codex/config.toml` |
 | `mcp/servers.nix` | `~/.config/nix-config/ai/` review artifacts |
+| `shell-guard/kill-guard.sh` | sourced by every bash and zsh either client starts (`BASH_ENV`, ZDOTDIR's `.zshenv`) |
 
 Instructions here are global, so they apply to every project. Repository facts
 belong in that repository's own instructions file; duplicating them here makes
@@ -97,6 +98,112 @@ derivation, so passing one takes the `.text` branch and is rejected there by
 measured against the pinned home-manager rather than assumed.
 `~/.config/nix-config/ai/agent-instructions.md` links the same document for
 review.
+
+## Agent shells refuse to signal what they did not start
+
+On 2026-11-11 a script written by a delegated worker sent a terminate signal
+to every process group on this Mac, and every application the owner had open
+was terminated (issue #270). The command hooks read the text of a tool call;
+that call ran a script, and the signal sat three scripts deeper.
+
+`shell-guard/kill-guard.sh` is loaded into every shell Claude Code and Codex
+start. Each client sets `AGENT_KILL_GUARD=1` and `BASH_ENV` for the commands
+it runs (`shellGuard.environment` in `default.nix`), so every non-interactive
+bash sources the file, however deep; zsh sources it from ZDOTDIR's `.zshenv`
+when the marker is set. The owner's own shells never load it. In a guarded
+shell:
+
+- `kill` aimed at a process group passes only when the group is the shell's
+  own or its leader was started by that shell. `-1` (every process the user
+  owns) and any group the shell merely looked up are refused, and nothing is
+  sent. Ownership is read from `ps` at that moment; it is not a held
+  identity, so a process id reused between two lookups could mislead it.
+- The arguments are read more strictly than the builtins read them, because
+  bash and zsh disagree: one signal option, then targets that are a job, a
+  process id of at most nine digits, or `-` and such a number. Anything else
+  is refused, including a few legitimate oddities. A group is probed as
+  `kill -0 -- -GROUP`: before `--`, old bash may read a negative number as a
+  second signal.
+- `kill` aimed at single process ids, at jobs, or with the probe signal 0
+  passes unchanged.
+- `pkill` is refused. `killall` is refused except for the interface agents the
+  command hook also allows (Dock, Finder and the menu bar agents).
+
+Both clients' PreToolUse hooks carry the same rule earlier, when the code is
+typed or written (`hooks/nix-only-guard.py`, declared for Claude Code and,
+with `--client codex`, for Codex, which therefore also gets the
+machine-change, credential and heavy-command rules):
+
+- A typed command, or a script it runs, is refused when it signals a process
+  group or `-1`, uses `pkill` or `killall` (beyond the interface agents),
+  feeds `kill` from `pgrep` or `pidof`, or reaches `kill` any way but as the
+  bare word (`/bin/kill`, or behind `xargs`, `command`, `builtin`, `env`):
+  those forms skip the shell guard. The program is read in the positions a
+  shell walker can see: after `do`, `then` or a `case` label, in a function
+  body, inside `$(...)` and backticks, inside the substitutions of an
+  unquoted heredoc, in a `trap` handler, and in the text handed to `sh -c` or
+  `eval` (nested more than eight deep, the command is refused rather than
+  read in part). A repository's own script, committed and unchanged since,
+  is not judged, but the scripts it runs are; a staged change earns no trust.
+  Every script is read once and whole, however deep, with every script it
+  runs followed in turn; a `.sh` file run by path counts as shell even
+  without a shebang, and so does a shell startup file (`.envrc`, `.zshrc` and
+  the like). A command that reaches more than 64 different scripts,
+  or more than 4 MB of script text in all (read in about a second per MB,
+  against the hook's ten), is refused rather than read in part, and so is
+  a script over 1 MB, unless
+  it is committed and unchanged; such a committed script is then not read at
+  all, so the scripts it runs are not followed from it.
+- A file edit (Claude Code's Edit, MultiEdit and Write, Codex's
+  `apply_patch`) is refused when the text it writes holds such a command that
+  the text it replaces did not (for a whole-file write, the file as it is).
+  This applies to a shell file: by extension, startup-file name, or a shell
+  shebang in the file or in what the edit writes. The text is judged without
+  knowing where it lands, so writing such a command into a string or a
+  heredoc of a shell file is refused too. An edit whose meaning depends on
+  the text around it (changing `12345` into `-1` inside `kill -- 12345`) is
+  not seen at this point; the command hook reads the edited script when it
+  is run, and the shell guard refuses at the call. The edit check does not
+  rebuild the edited file: seven review rounds showed that matching every
+  rule of apply_patch and the edit tools is a parser of its own that keeps
+  being wrong. For a source file in another language the rule is blunt on
+  purpose: an edit that adds a line naming a pattern-based terminator as a
+  word, in code, in a string or in a trailing comment, is refused; a line the
+  file already had may stay. So a variable or a comment that uses the word is
+  refused too, and a new interface-agent restart belongs in a Nix activation
+  entry or is typed. Rounds 9 to 16 of the review found a way past each finer
+  rule tried. An edit that writes more than 4 MB into a
+  shell or source file is refused rather than judged in part. Prose and Nix
+  modules are not judged.
+- If the hook itself fails on an input, or takes more than seven seconds to
+  read it, it refuses the call and says so: a hook that crashes, or answers
+  after the client's ten seconds, would let the call run.
+- Not read by the hooks: a command built from a variable (`$cmd …`,
+  `eval "$cmd"`), a script whose path is computed at run time, a shell file
+  with neither a known name nor a shebang, and any signal another language
+  sends by system call. Where the bare `kill` is what finally runs, the shell
+  guard still refuses a foreign group at the moment of the call. An external
+  `/bin/kill` or a pattern-based terminator reached in one of those ways is
+  covered by nothing but the written rule.
+
+**The limit.** Agents and the owner's applications run as one user, so the
+system delivers any signal an agent process does send. The shell guard covers
+the shell builtin, which is what scripts use. It does not cover a program that
+makes the system call itself (Python's `os.kill`, a compiled binary),
+`/bin/kill`, `builtin kill`, `command kill`, or `sh`; the hooks catch the
+shell spellings of those when they are typed or written, and read no other
+language's signalling. For a program that makes the system call itself, the
+written rule in `instructions/global.md` ("Stopping processes") and review are
+all there is. These layers stop a mistake at the moment it is made; they are
+not a boundary against intent.
+
+`checks.<system>.agent-kill-guard` (macOS) runs `kill-guard-test.sh` in Nix's
+bash and zsh and the system's `/bin/bash` and `/bin/zsh`. The test sends a real
+signal only to processes it started; a target that must never be signalled is
+given only to the function that returns a verdict and sends nothing; and the
+guard's `pkill` and `killall` are called with no argument, and only once
+stubs of those programs are confirmed first on PATH. Keep it that way. Run the test through the check: there it
+runs as a build user, and the hook refuses a hand-run of an edited copy.
 
 ## Claude Code
 

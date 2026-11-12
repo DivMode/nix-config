@@ -46,7 +46,13 @@ let
 
     # As for Claude Code (modules/home/ai/default.nix): a 1Password CLI call
     # from any command Codex runs fails instead of raising a Touch ID prompt.
-    shell_environment_policy.set.OP_BIOMETRIC_UNLOCK_ENABLED = "false";
+    #
+    # And the signal guard (../default.nix, `shellGuard`): every shell Codex
+    # starts refuses to signal a process group it did not start.
+    shell_environment_policy.set = {
+      OP_BIOMETRIC_UNLOCK_ENABLED = "false";
+    }
+    // (import ../default.nix).shellGuard.environment;
 
     apps._default = {
       approvals_reviewer = "auto_review";

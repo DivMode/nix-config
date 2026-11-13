@@ -153,9 +153,10 @@ Run CPU-heavy work (test suites, release builds, browser e2e) in parallel;
 never wait for another session or repository. Run it as
 `membrake exec --label "<repo>: <what>" -- …` (`cpu-lock run … -- …` is an
 alias). When memory is short it waits for a turn; otherwise it starts at once.
-Either way the command runs under macOS's utility QoS clamp at `nice` 10, below
-the owner's interactive apps and below the self-hosted CI runners, which
-outrank agent work so the gate is not starved. Never run heavy work outside it.
+Either way the command runs at full speed: membrake guards memory, not the CPU,
+and adds no `nice` or QoS clamp (owner, 2026-11-12: nothing slows agent work
+down before memory runs out; the clamp put jobs on the efficiency cores and
+tripled their sleeps). Never run heavy work outside it.
 Where this is enforced: in Claude Code and Codex sessions the managed command
 guard refuses known-heavy commands (`tsc`, `vitest`, `cargo test`, `pnpm test`,
 `just verify` and the like, launched directly or through `npx`, `pnpm dlx`,
@@ -175,8 +176,8 @@ the memory it was held to save. It starts or resumes on its own.
 **Never generate synthetic load to reproduce or imitate contention.** No CPU or
 I/O work unrelated to the behavior under test — spin loops, `yes`, `openssl
 speed`, stress tools, scripts that start N busy workers — and no `taskpolicy`
-throttling of a test to imitate a slow machine. The QoS clamp cannot protect the
-desktop from hundreds of always-runnable processes: on 2026-11-03 one job's
+throttling of a test to imitate a slow machine. Nothing protects the desktop
+from hundreds of always-runnable processes: on 2026-11-03 one job's
 480-worker burner put load at 550, lagged the owner's Mac, and failed every
 other session's tests. A failure that appears only under load still gets
 investigated: find what it waits on or races with, then fix that — in the test

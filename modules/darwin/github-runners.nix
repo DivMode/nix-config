@@ -149,8 +149,10 @@ lib.mkIf (cfg != null) {
 
   # The module's PATH holds only what `actions/checkout` needs. Jobs also run
   # the system tools a macOS user has (curl, unzip, security, xcrun).
-  # Jobs run below the owner's apps but above agent work. Agent work runs
-  # under `cpu-lock`'s utility QoS clamp (scheduler priority 20); the owner's
+  # Jobs run below the owner's apps. Agent work ran under `cpu-lock`'s utility
+  # QoS clamp (scheduler priority 20) until 2026-11-12, when membrake dropped
+  # the clamp and nice: agent work under `membrake exec` now reads nice 0,
+  # priority 31 (`ps -o nice=,pri=`), level with the runners. The owner's
   # apps run at 37-47 (`ps -o pri`, 2026-11-05: Chrome 46-47). The runners
   # used the same utility clamp until 2026-11-05, when `ps` showed all 140
   # runner processes and all 356 agent processes at priority 20 under load
@@ -165,7 +167,8 @@ lib.mkIf (cfg != null) {
   #    `spawn type = daemon (3)` at priority 20 and the membrake daemon
   #    (`Interactive`) as `spawn type = interactive (4)` at 31. So the runners
   #    keep the module's `Interactive` class.
-  # That puts CI at 31: above agent work (20), below the owner's apps (37-47).
+  # That puts CI at 31, below the owner's apps (37-47); agent work joined it
+  # at 31 on 2026-11-12 (above).
   # The launchd module's own arguments follow the taskpolicy prefix
   # (`/bin/sh -c "wait4path … && exec …"`).
   launchd.daemons = lib.genAttrs (map (name: "github-runner-${name}") names) (_: {

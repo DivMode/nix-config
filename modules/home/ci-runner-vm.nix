@@ -123,6 +123,17 @@ let
     memory = cfg.memory or "24GiB";
     disk = cfg.disk or "120GiB";
     message = "CI runner VM: jobs arrive from GitHub; nothing on the host is mounted.";
+    # A NAT interface that macOS itself forwards. Lima's default network is a
+    # user-mode stack inside the host agent, and launchd starts that agent in
+    # the background: on 2026-11-15 a guest started that way reached the
+    # internet but was refused instantly by every address on the owner's LAN
+    # (`Failed to connect ... after 0 ms`), while a guest whose host agent was
+    # started from a terminal reached the same address. That is the pattern of
+    # macOS Local Network privacy applied to a background process (hypothesis:
+    # no denial was read from the system log). CI needs one LAN service, so
+    # the guest gets a second interface whose traffic does not pass through
+    # the host agent.
+    networks = [ { vzNAT = true; } ];
   };
 
   # One source for the VM's shape: the Linux gate template (./lima.nix: vz,

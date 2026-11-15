@@ -24,6 +24,13 @@ let
   runnerVersion = "2.338.2";
   runnerSha256 = "670adb2f268fe21dcbb58b3db0e0aa9d5b3bddfe2c651481336e561ff86de945";
 
+  # The GitHub CLI that CI steps call. Not the distribution's package: Ubuntu
+  # 26.04 ships gh 2.46, which lacks `gh api --slurp` (added in 2.48), and on
+  # 2026-11-15 a deploy gate that pages through the API with it failed closed
+  # on this runner (`GitHub API failed`, gh printing its usage).
+  ghVersion = "2.104.0";
+  ghSha256 = "cb34cefc6f4e77b90731374a2b737516bb8f3033c6ca46aa949e5344f68069e3";
+
   # Runs as root inside the guest on every boot (Lima `provision`, mode
   # system), after the Docker provisioning this template inherits. Idempotent:
   # each step checks for its own result.
@@ -35,7 +42,7 @@ let
     usermod --append --groups docker runner
 
     # What CI steps expect on a runner host beyond Docker, git and curl.
-    packages="jq unzip zip gh python3-pip python3-venv"
+    packages="jq unzip zip python3-pip python3-venv"
     missing=""
     for package in $packages; do
       dpkg -s "$package" >/dev/null 2>&1 || missing="$missing $package"
@@ -44,6 +51,16 @@ let
       apt-get update
       # shellcheck disable=SC2086
       DEBIAN_FRONTEND=noninteractive apt-get install -y $missing
+    fi
+
+    if [ "$(/usr/local/bin/gh --version 2>/dev/null | awk 'NR==1 {print $3}')" != "${ghVersion}" ]; then
+      archive=/tmp/gh.tar.gz
+      curl -fsSL -o "$archive" \
+        "https://github.com/cli/cli/releases/download/v${ghVersion}/gh_${ghVersion}_linux_arm64.tar.gz"
+      echo "${ghSha256}  $archive" | sha256sum -c -
+      tar -xzf "$archive" -C /tmp
+      install -m 755 "/tmp/gh_${ghVersion}_linux_arm64/bin/gh" /usr/local/bin/gh
+      rm -r "$archive" "/tmp/gh_${ghVersion}_linux_arm64"
     fi
 
     dir=/opt/actions-runner

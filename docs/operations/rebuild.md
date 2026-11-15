@@ -43,6 +43,14 @@ it waits up to five minutes for all of them to come online, empties the token
 file, and exits non-zero otherwise. A registration token expires after an
 hour; a registered runner keeps its own credential in its state directory.
 
+When `local.nix` declares `ciRunnerVm`, the script then runs
+`nix-config-ci-runner-vm-register`. launchd starts that Linux VM at login
+(`modules/home/ci-runner-vm.nix`); on its first boot the command waits up to
+thirty minutes for the guest to install Docker and the runner, registers the
+runner with a token from the owner's `gh` login (passed to the guest on
+standard input), and waits up to five minutes for GitHub to list it online.
+A runner that is already online is left alone.
+
 Do not hand-assemble the underlying command. It is recorded here only so the
 script's final step is reviewable:
 

@@ -109,6 +109,17 @@ if [[ -x "$register_bin" ]]; then
   fi
 fi
 
+# ── Register the Linux CI runner VM's runner ───────────────────────────────
+# Present only when local.nix declares ciRunnerVm. The VM itself is started by
+# launchd; on its first boot this waits for it to finish provisioning.
+vm_register_bin="/etc/profiles/per-user/$(id -un)/bin/nix-config-ci-runner-vm-register"
+if [[ -x "$vm_register_bin" ]]; then
+  if ! "$vm_register_bin"; then
+    echo "ERROR: activation succeeded, but the CI runner VM's runner is not online (see above)." >&2
+    exit 1
+  fi
+fi
+
 # Warn, never fail, about a declared kubeconfig this Mac lacks; setup-mac.sh restores them.
 "$repository/scripts/kubeconfigs.sh" --check || true
 

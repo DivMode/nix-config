@@ -140,6 +140,15 @@
     count = 4;
   };
 
+  # A Linux CI runner VM for one private repository whose jobs are Linux
+  # containers (modules/home/ci-runner-vm.nix). Omit it to configure nothing.
+  # `labels` are what that repository's workflows put in `runs-on`; cpus,
+  # memory and disk default to 16, "24GiB" and "120GiB".
+  # ciRunnerVm = {
+  #   repository = "example-owner/example-linux-repository";
+  #   labels = [ "example-label" ];
+  # };
+
   # SMB shares mounted at login by modules/home/network-shares.nix. Leave
   # `mounts` empty to disable the module entirely.
   #

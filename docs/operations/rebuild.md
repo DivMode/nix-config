@@ -43,13 +43,90 @@ it waits up to five minutes for all of them to come online, empties the token
 file, and exits non-zero otherwise. A registration token expires after an
 hour; a registered runner keeps its own credential in its state directory.
 
-When `local.nix` declares `ciRunnerVm`, the script then runs
-`nix-config-ci-runner-vm-register`. launchd starts that Linux VM at login
-(`modules/home/ci-runner-vm.nix`); on its first boot the command waits up to
-thirty minutes for the guest to install Docker and the runner, registers the
-runner with a token from the owner's `gh` login (passed to the guest on
-standard input), and waits up to five minutes for GitHub to list it online.
-A runner that is already online is left alone.
+When `local.nix` declares `ciRunnerVm` or `ciRunnerVms`, the script then runs
+`nix-config-ci-runner-vm-register`. Each Linux VM has its own launchd agent,
+which starts it at login (`modules/home/ci-runner-vm.nix`). For each VM, the
+command waits up to thirty minutes for the guest to install Docker and the
+runner, registers the runner with a token from the owner's `gh` login (passed
+to the guest on standard input), and waits up to five minutes for GitHub to
+list it online. A runner that is already online is left alone. A failure is
+reported with the instance name (and individual runner name for a multi-runner
+VM), the remaining runners and VMs are still attempted, and
+the command exits non-zero if any VM failed. A GitHub listing error stops that
+runner's attempt without replacing its registration.
+
+Declare multiple VMs by Lima instance name, for example:
+
+```nix
+ciRunnerVms = {
+  ci-repo-a = {
+    repository = "owner/repo-a";
+    labels = [ "mac-vm-a" ];
+    runners = 3;
+  };
+  ci-repo-b = {
+    repository = "owner/repo-b";
+    labels = [ "mac-vm-b" ];
+    cpus = 8;
+    memory = "16GiB";
+    disk = "80GiB";
+  };
+};
+```
+
+Each entry defaults to `name = <instance name>`, `labels = [ "mac-vm" ]`,
+`runners = 1`, `cpus = 16`, `memory = "24GiB"` and `disk = "120GiB"`.
+`runners` must be a positive integer. All expanded runner names must be
+distinct across entries. Instance names start with an alphanumeric character
+and contain only alphanumeric characters, dots, underscores or hyphens;
+`linux-gate-v1` is reserved for the gate VM. Each new entry owns
+`~/.config/lima/<instance>.yaml`, launchd label
+`org.nix-community.home.ci-runner-vm-<instance>`, and log
+`~/Library/Logs/ci-runner-vm-<instance>.log`. Guest files and credentials stay
+on that instance's disk. All VMs share the private `LIMA_HOME` directory, but
+each instance owns its own subdirectory.
+
+With `runners = 3`, the example's first VM runs `ci-repo-a`, `ci-repo-a-2`
+and `ci-repo-a-3`, all with the entry's labels. The first retains
+`/opt/actions-runner` and `github-runner.service`; subsequent runners use
+`/opt/actions-runner-2`, `github-runner-2.service`, and so on. Separate
+installations keep registration credentials, updates and work directories
+independent while all processes share the VM's rootful Docker and resource
+limits. Increasing the count leaves an online first runner registered as-is.
+
+Home Manager reconciles runner counts after setting up launchd agents. It
+waits for the guest's initial provisioning and sends the desired runner
+provisioning script over standard input. This applies count changes to an
+existing VM without replacing its Lima template or restarting runner 1.
+Guest reconciliation uses a lock so activation and registration
+cannot install additional runners concurrently. Multi-runner registration
+also reconciles before registering its runners. Count changes
+leave the original Lima template, start script and launchd plist unchanged,
+so launchd does not restart the VM for a runner-count change. Additional units
+are enabled for subsequent boots.
+
+Reducing the count stops and disables surplus runner units and prints each
+actual registered name from its guest `.runner` file, for example
+`warning: remove runner ci-repo-a-3 from owner/repo-a; it exceeds the declared runner count`.
+Remove those names from that repository's GitHub Actions runners. This
+deliberately reports removal rather than deleting GitHub registrations:
+credentials and directories are retained, and no additional deletion token
+or API permission is required. The warnings repeat while the retired guest
+registration files remain. Lowering the count stops surplus units immediately,
+so reduce it when those runners have finished their jobs. Reconciliation also
+runs when the count is explicitly one or omitted, covering reductions back
+to the default without changing the original single-runner generated files.
+
+The single `ciRunnerVm = { repository = "owner/repo-a"; };` form retains
+instance `ci-runner-v1`, default runner name `mac-vm-1`, launchd label
+`org.nix-community.home.ci-runner-vm`, and its existing files. Keep it and add
+`ciRunnerVms` entries to add repositories without changing the existing VM.
+The two forms cannot both declare `ci-runner-v1`. Omitting both forms (or an
+empty `ciRunnerVms`) declares no runner VM. Templates configure newly created
+instances; shape changes do not resize an existing Lima instance. The runner
+count is reconciled separately for `ciRunnerVms`; the legacy `ciRunnerVm`
+form remains a single runner with its original generated files and no new
+reconciliation step.
 
 Do not hand-assemble the underlying command. It is recorded here only so the
 script's final step is reviewable:

@@ -226,11 +226,15 @@ Before writing or moving any test, read those frameworks' documentation for
 the feature you need, and use it:
 
 - Anything that needs a real browser or a DOM runs in **Vitest Browser Mode**
-  (its Playwright provider, `vitest/browser`, `vi.mock` for service
-  boundaries). Never launch a browser yourself (`chromium.launch()`), never
-  start a dev server from a test to host components, never write a separate
-  Playwright runner or config, and never hand-write module fakes served by a
-  custom server.
+  (its Playwright provider and `vitest/browser`). Never launch a browser
+  yourself (`chromium.launch()`), never start a dev server from a test to host
+  components, never write a separate Playwright runner or config, and never
+  hand-write module fakes served by a custom server.
+- **Never mock modules** (`vi.mock`, `vi.doMock`, `vi.unstable_mockModule`).
+  Replace what you do not own at its declared interface: HTTP and WebSockets
+  through MSW, a narrow typed collaborator injected at the entry point, or a
+  framework seam such as router context. Run what you own for real. A module
+  mock fakes your own code, so the wiring it replaces goes untested.
 - Server behaviour runs through Alchemy's layers: Domain Stories and
   `testClient` for the model and its Api, `alchemy/Test` (Vitest integration,
   local stack mode) for Workers and deployed resources.

@@ -80,7 +80,13 @@ that the recipient received or read them.
    rather than assuming it. Raise effort, not the model, when a piece is hard.
    **Never use Fable unless
    the user explicitly asks for Fable by name.** It is opt-in only and is never
-   an automatic or default choice.
+   an automatic or default choice. **Fable and `max` effort are for absolute
+   necessity only:** use them only after the cheaper model at `high` has been
+   run on that piece and has visibly failed at it. Permission is not necessity.
+   Neither is wording such as "highest effort", "best model" or "Fable if need
+   be". Never start a fan-out on Fable or at `max`. For code audits and
+   dead-code sweeps, `high` is enough: on the same audit, `max` added only two
+   small findings over `high`, at twice the cost.
 
 8. **Implementation and review stay separate** for anything significant or
    risky, whenever that is practical. A worker's own account of its work is not

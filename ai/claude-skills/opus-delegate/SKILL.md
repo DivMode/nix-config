@@ -57,6 +57,7 @@ With an Opus coordinator:
 | Subtle logic, security guards, concurrency, tricky types, or a correction | `implementation` | `sonnet` | `xhigh` |
 | Independent review of a diff | `general-purpose` | `sonnet` | `xhigh` |
 | Plan, or research against primary sources | `Plan` / `research` | `sonnet` | `high` |
+| Code audit or dead-code sweep | `general-purpose` | `sonnet` | `high` |
 | Narrow read-only search or inspection | `Explore` | `haiku` | `low` or `medium` |
 
 With a Sonnet or Haiku coordinator, `opus` takes the substantive rows instead, and the

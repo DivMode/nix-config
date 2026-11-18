@@ -88,7 +88,8 @@ use more of the Codex allowance:
 - `high`: the default for a normal bounded implementation with clear acceptance criteria.
 - `xhigh`: subtle logic, concurrency, tricky types, a change that cuts across the piece, or the
   correction attempt after a failed execution.
-- `max`: rare; only when a wrong answer is expensive and the reasoning is genuinely hard.
+- `max`: only after `gpt-6.2-sol` at `high` has visibly failed on that same piece, never to start a
+  job or a fan-out.
 - Never `low` for implementation. Never `ultra`: it adds automatic task delegation, which starts
   Codex helper agents in the same worktree.
 

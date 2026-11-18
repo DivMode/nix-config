@@ -73,14 +73,15 @@ that the recipient received or read them.
    durable acceptance criteria; do not restart implementation from a summary.
 
 7. **Model routing for Claude workers.** **A worker never runs the
-   coordinator's model.** Each worker gets its own model and its own effort,
-   chosen for its task from the table in the `opus-delegate` skill. The `opus`
-   alias resolves to an Opus coordinator's own model, so an Opus coordinator
-   never passes it. Read the model a worker actually ran from its transcript
-   rather than assuming it. Raise effort, not the model, when a piece is hard.
-   **Never use Fable unless
-   the user explicitly asks for Fable by name.** It is opt-in only and is never
-   an automatic or default choice.
+   coordinator's model.** Each worker's model and effort come from the
+   `opus-delegate` table; an Opus coordinator never passes the `opus` alias (it
+   is its own model). Read the model a worker ran from its transcript. Raise
+   effort, not the model, when a piece is hard. **Never use Fable unless
+   the user explicitly asks for Fable by name.** Fable and `max` run only after
+   the cheaper model at `high` has visibly failed on that piece; permission or
+   wording ("highest effort", "Fable if need be") is not that failure, and no
+   fan-out starts on either. Audits run at `high`: `max` added two small
+   findings at twice the cost.
 
 8. **Implementation and review stay separate** for anything significant or
    risky, whenever that is practical. A worker's own account of its work is not

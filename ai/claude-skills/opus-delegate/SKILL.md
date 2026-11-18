@@ -57,6 +57,7 @@ With an Opus coordinator:
 | Subtle logic, security guards, concurrency, tricky types, or a correction | `implementation` | `sonnet` | `xhigh` |
 | Independent review of a diff | `general-purpose` | `sonnet` | `xhigh` |
 | Plan, or research against primary sources | `Plan` / `research` | `sonnet` | `high` |
+| Code audit or dead-code sweep | `general-purpose` | `sonnet` | `high` |
 | Narrow read-only search or inspection | `Explore` | `haiku` | `low` or `medium` |
 
 With a Sonnet or Haiku coordinator, `opus` takes the substantive rows instead, and the
@@ -67,9 +68,10 @@ coordinator's own model is still skipped.
 - Verify the routing after each first dispatch:
   `grep -o '"model":"[^"]*"' <the task's output file> | sort | uniq -c` prints the model the
   worker really ran. Say it in the dispatch report.
-- `effort` is the lowest level the piece needs. `max` is rare: a wrong answer is expensive and the
-  reasoning genuinely hard.
-- Tooling follows the type. A read-only piece goes to `Explore`, which has no edit tools; it still
+- `effort` is the lowest level the piece needs. `max`, like `fable`, runs only after the cheaper
+  model at `high` has visibly failed on that piece (global rule 7).
+- Tooling follows the type. A narrow read-only search goes to `Explore`, which has no edit tools and
+  reads excerpts, so audits that must read whole files go to `general-purpose`; `Explore` still
   has Bash, so read-only remains an instruction for anything it runs.
 - Start every worker fresh, with the assignment as its whole brief. A `fork` carries the entire
   conversation and always runs on the session's model, so never use one for delegated work.

@@ -92,7 +92,6 @@ that the recipient received or read them.
 
      | Kind of task | Effort | How it was settled |
      | --- | --- | --- |
-     | Math and hard formal reasoning | max | owner's decision, 2026-11-18 |
      | Code audit and dead-code sweep | high | measured once, 2026-11-18: the same audit on Fable at max, high and medium. High found max's main findings plus one more, at about half the tokens. Medium missed real findings. |
      | Everything else, until measured | high | default |
    - **Verify with one judge.** A fixed panel for every finding is not needed.

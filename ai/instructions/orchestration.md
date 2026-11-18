@@ -82,6 +82,24 @@ that the recipient received or read them.
    the user explicitly asks for Fable by name.** It is opt-in only and is never
    an automatic or default choice.
 
+   **Agents cost the owner real money.**
+   - **The owner's choice wins.** When the owner names a model or an effort,
+     use exactly that.
+   - **Otherwise, use the recorded setting for the kind of task.** Each kind
+     of task has one best effort, measured once and recorded below; never
+     measure the same kind twice. A kind not yet listed runs at high, is
+     measured once when it first comes up, and is added here.
+
+     | Kind of task | Effort | How it was settled |
+     | --- | --- | --- |
+     | Math and hard formal reasoning | max | owner's decision, 2026-11-18 |
+     | Code audit and dead-code sweep | high | measured once, 2026-11-18: the same audit on Fable at max, high and medium. High found max's main findings plus one more, at about half the tokens. Medium missed real findings. |
+     | Everything else, until measured | high | default |
+   - **Verify with one judge.** A fixed panel for every finding is not needed.
+   - **Cost incident.** On 2026-11-18 a nine-auditor sweep, on Fable at max
+     effort with two judges planned per finding, cost about $350 before
+     anyone had measured whether max found more than high.
+
 8. **Implementation and review stay separate** for anything significant or
    risky, whenever that is practical. A worker's own account of its work is not
    an independent review, and it must not be the only one. Give the reviewer

@@ -88,7 +88,7 @@ use more of the Codex allowance:
 - `high`: the default for a normal bounded implementation with clear acceptance criteria.
 - `xhigh`: subtle logic, concurrency, tricky types, a change that cuts across the piece, or the
   correction attempt after a failed execution.
-- `max`: rare; only when a wrong answer is expensive and the reasoning is genuinely hard.
+- `max`: only after `high` has visibly failed on that piece (global rule 7).
 - Never `low` for implementation. Never `ultra`: it adds automatic task delegation, which starts
   Codex helper agents in the same worktree.
 

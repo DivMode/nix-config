@@ -35,9 +35,10 @@ let
     # Effort is NOT independent of the model: cheaper models stop lower
     # (gpt-6-luna at max, gpt-5.5 at xhigh), and Codex rejects a stored effort
     # its model does not support. So the model is declared beside it, as the
-    # owner's stated default ("6.1 Sol, extra high"). `codex debug models`
-    # lists xhigh among gpt-6.1-sol's supported efforts.
-    model = "gpt-6.1-sol";
+    # owner's default, "Sol, extra high", moved from 6.1 to 6.2 on 2026-11-17 after a
+    # review comparison the owner delegated. `codex debug models` lists xhigh
+    # among gpt-6.2-sol's supported efforts.
+    model = "gpt-6.2-sol";
     model_reasoning_effort = "xhigh";
 
     approval_policy = "never";

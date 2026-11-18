@@ -1,6 +1,6 @@
 ---
 name: codex-delegate
-description: Codex workers — hand a coding job to a Codex CLI worker (gpt-6.1-sol at an effort Claude chooses per job; Fast tier only when the user asks for fast mode) while Claude plans, splits it into parallel pieces, supervises, and accepts. Use when the user names Codex for doing work ("use Codex", "have Codex do it", "Codex fast mode"). Delegation the user has not given to Codex goes through opus-delegate.
+description: Codex workers — hand a coding job to a Codex CLI worker (gpt-6.2-sol at an effort Claude chooses per job; Fast tier only when the user asks for fast mode) while Claude plans, splits it into parallel pieces, supervises, and accepts. Use when the user names Codex for doing work ("use Codex", "have Codex do it", "Codex fast mode"). Delegation the user has not given to Codex goes through opus-delegate.
 ---
 
 # Delegate an implementation to Codex
@@ -77,7 +77,7 @@ widens product scope, introduces architecture, or decides unrelated improvements
 
 ## Worker settings
 
-Model: always `-m gpt-6.1-sol`. If Codex rejects it, stop and report it; never substitute another.
+Model: always `-m gpt-6.2-sol` (owner-delegated decision, 2026-11-17: in a blind side-by-side review comparison it found every defect gpt-6.1-sol found plus real ones 6.1 missed, with no false positives). If Codex rejects it, stop and report it; never substitute another.
 
 Effort: Claude chooses it for each job, as `-c model_reasoning_effort="<effort>"`. The user does not
 pick it (2026-10-03). Choose the lowest level the piece needs, because higher levels are slower and
@@ -97,7 +97,7 @@ one-line announcement for each piece. Choose again for a resume rather than copy
 value. Confirm once per session that the model offers the level you chose:
 
 ```bash
-codex debug models | jq -e --arg e "<effort>" '.models[] | select(.slug=="gpt-6.1-sol") | .supported_reasoning_levels[].effort | select(.==$e)'
+codex debug models | jq -e --arg e "<effort>" '.models[] | select(.slug=="gpt-6.2-sol") | .supported_reasoning_levels[].effort | select(.==$e)'
 ```
 
 Speed: standard by default. Add `-c service_tier="fast"` to dispatch and resume only when the user
@@ -140,7 +140,7 @@ Codex login unchanged.
 
    ```bash
    "$JOURNAL" execution --run-dir "$RUN_DIR" --agent codex-impl-01 --execution execution-01 \
-     --task task-01 --role implementation --model gpt-6.1-sol --effort "<effort>" \
+     --task task-01 --role implementation --model gpt-6.2-sol --effort "<effort>" \
      --effort-reason "<one-line reason>" --worktree "$WORKTREE" --baseline-tree "$BASE_TREE" \
      --prompt "$EXECUTION_DIR/prompt.md" --events "$EXECUTION_DIR/events.jsonl" \
      --handoff "$EXECUTION_DIR/handoff.md"
@@ -161,7 +161,7 @@ gtimeout --foreground --signal=TERM --kill-after=60s 45m \
     --label codex-impl-01 --repo "$REPO" --role implementation \
     --events "$EXECUTION_DIR/events.jsonl" --prompt "$EXECUTION_DIR/prompt.md" \
   -- codex exec --json --output-last-message "$EXECUTION_DIR/handoff.md" \
-     -m gpt-6.1-sol -c model_reasoning_effort="<effort>" -c agents.max_threads=1 \
+     -m gpt-6.2-sol -c model_reasoning_effort="<effort>" -c agents.max_threads=1 \
      -s danger-full-access -c approval_policy=never \
      -C "$WORKTREE" -
 ```
@@ -192,8 +192,8 @@ by default for any job that splits cleanly; the user should not have to ask.
 
 1. **Split.** Break the job into pieces that touch disjoint files and do not need each other's
    results. A piece that needs another piece's code waits until that piece is accepted. Size each
-   piece to finish well inside Codex's context. `gpt-6.1-sol` has a 272k-token window (catalog,
-   2026-10-03), compacted at about 95%, and Codex's own instructions use part of it. A piece that
+   piece to finish well inside Codex's context. `gpt-6.2-sol` has a 500k-token window (catalog,
+   2026-11-17), compacted at about 95%, and Codex's own instructions use part of it. A piece that
    needs most of a package read, or dozens of files changed, is too big; split it again. Pieces
    that are small fixes stay with Claude, per the routing rule above.
 2. **Scale.** No fixed cap on concurrent jobs or on how many of them run heavy work (Rust builds,
@@ -244,7 +244,7 @@ by default for any job that splits cleanly; the user should not have to ask.
       --label codex-impl-01 --repo "$REPO" --role implementation \
       --events "$EXECUTION_DIR/events.jsonl" --prompt "$EXECUTION_DIR/prompt.md" \
     -- codex exec resume --json --output-last-message "$EXECUTION_DIR/handoff.md" \
-       -m gpt-6.1-sol -c model_reasoning_effort="<effort>" -c agents.max_threads=1 \
+       -m gpt-6.2-sol -c model_reasoning_effort="<effort>" -c agents.max_threads=1 \
        -c 'sandbox_mode="danger-full-access"' -c approval_policy=never \
        "$SESSION_ID" -
   ```

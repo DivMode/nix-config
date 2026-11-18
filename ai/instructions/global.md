@@ -248,7 +248,10 @@ the feature you need, and use it:
 **A finding is a defect only when something real produces it.** Before acting
 on a review finding, a failing probe or a "this input breaks it" report, name
 the production call site, external input or real occurrence that produces the
-failing input. A reproduction that runs is not a requirement. Constructed
+failing input. Input that can arrive through a real external boundary (an
+HTTP request, a webhook, a queue message, a provider response, a file or text a
+user supplies) counts as produced, even if no example has been seen yet. A
+reproduction that runs is not a requirement on its own. Constructed
 inputs with no producer are not defects, however cleanly they reproduce: a
 Proxy with stateful traps, an overridden array method, a shape no caller ever
 logs or sends, an evasion form used nowhere in the repository. Record them as

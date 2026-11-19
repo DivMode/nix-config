@@ -64,12 +64,12 @@ With a Sonnet or Haiku coordinator, `opus` takes the substantive rows instead, a
 coordinator's own model is still skipped.
 
 - `model` is always explicit: omitted, it inherits the coordinator's model, which this rule
-  forbids. `fable` only when the user names Fable (global rule 7).
+  forbids. `fable` whenever a piece needs it, never at `max` (global rule 7).
 - Verify the routing after each first dispatch:
   `grep -o '"model":"[^"]*"' <the task's output file> | sort | uniq -c` prints the model the
   worker really ran. Say it in the dispatch report.
-- `effort` is the lowest level the piece needs. `max`, like `fable`, runs only after the cheaper
-  model at `high` has visibly failed on that piece (global rule 7).
+- `effort` is the lowest level the piece needs. `max` runs only after `high` on the same model has
+  visibly failed on that piece, and never with `fable` (global rule 7).
 - Tooling follows the type. A narrow read-only search goes to `Explore`, which has no edit tools and
   reads excerpts, so audits that must read whole files go to `general-purpose`; `Explore` still
   has Bash, so read-only remains an instruction for anything it runs.
@@ -133,7 +133,7 @@ piece still fails, stop and bring the unresolved issue back for a fresh decision
 3. Read the actual diff, new untracked files included. Evaluate every acceptance criterion by
    observation and run the verification commands yourself.
 4. For significant or risky work, add an independent reviewer (global rules 8 and 9): a fresh worker
-   on the review row's model (never the coordinator's), given the diff, the original requirement, and the worktree's absolute path to run any
+   on the review row's model, or `fable` when the review needs it (never the coordinator's), given the diff, the original requirement, and the worktree's absolute path to run any
    checks in, never the implementer's summary.
 5. Integrate through the repository's workflow: commit in the worktree on a branch named for the
    change, push, open the pull request, merge, and record the outcome on the issue or pull request.

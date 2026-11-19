@@ -75,13 +75,12 @@ that the recipient received or read them.
 7. **Model routing for Claude workers.** **A worker never runs the
    coordinator's model.** Each worker's model and effort come from the
    `opus-delegate` table; an Opus coordinator never passes the `opus` alias (it
-   is its own model). Read the model a worker ran from its transcript. Raise
-   effort, not the model, when a piece is hard. **Never use Fable unless
-   the user explicitly asks for Fable by name.** Fable and `max` run only after
-   the cheaper model at `high` has visibly failed on that piece; permission or
-   wording ("highest effort", "Fable if need be") is not that failure, and no
-   fan-out starts on either. Audits run at `high`: `max` added two small
-   findings at twice the cost.
+   is its own model). Read the model a worker ran from its transcript.
+   **Fable runs whenever the coordinator judges a piece needs it,**
+   **at the effort that piece needs, and never at `max`.** On other models
+   `max` runs only after `high` has visibly failed on that piece; wording
+   ("highest effort") is not that failure, and no fan-out starts at `max`.
+   Audits run at `high`: `max` added two small findings at twice the cost.
 
 8. **Implementation and review stay separate** for anything significant or
    risky, whenever that is practical. A worker's own account of its work is not

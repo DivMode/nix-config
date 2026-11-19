@@ -133,7 +133,7 @@ piece still fails, stop and bring the unresolved issue back for a fresh decision
 3. Read the actual diff, new untracked files included. Evaluate every acceptance criterion by
    observation and run the verification commands yourself.
 4. For significant or risky work, add an independent reviewer (global rules 8 and 9): a fresh worker
-   on the review row's model (never the coordinator's), given the diff, the original requirement, and the worktree's absolute path to run any
+   on the review row's model, or `fable` when the review needs it (never the coordinator's), given the diff, the original requirement, and the worktree's absolute path to run any
    checks in, never the implementer's summary.
 5. Integrate through the repository's workflow: commit in the worktree on a branch named for the
    change, push, open the pull request, merge, and record the outcome on the issue or pull request.

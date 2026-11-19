@@ -128,6 +128,7 @@ let
     "coordinator's model.**"
     "**Fable runs whenever the coordinator judges a piece needs it,**"
     "**at the effort that piece needs, and never at `max`.**"
+    "`max` runs only after `high` has visibly failed on that piece;"
 
     # The second half of each reviewer/monitor rule; the first half of each is
     # in `sectionPhrases` above. Both halves are pinned because either one

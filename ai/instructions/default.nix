@@ -122,11 +122,12 @@ let
     "authority. Resume the worker that owns the task before creating another."
 
     # Model routing. The Fable rule is the one most likely to be softened by a
-    # well-meaning reword, so both halves of it are pinned.
+    # well-meaning reword, so both halves of it are pinned (owner, 2026-11-19:
+    # Fable whenever a piece needs it, never Fable at max).
     "**A worker never runs the"
     "coordinator's model.**"
-    "**Never use Fable unless"
-    "the user explicitly asks for Fable by name.**"
+    "**Fable runs whenever the coordinator judges a piece needs it,**"
+    "**at the effort that piece needs, and never at `max`.**"
 
     # The second half of each reviewer/monitor rule; the first half of each is
     # in `sectionPhrases` above. Both halves are pinned because either one

@@ -27,7 +27,8 @@ that the recipient received or read them.
 - **Workers** are Claude sub-agents (the `opus-delegate` skill) and Codex (the
   `codex-delegate` skill), dispatched and supervised by the coordinator.
   **The user's most recent instruction picks the worker:** "Codex" means
-  `codex-delegate`; "Opus", "sub-agents", or no instruction means `opus-delegate`.
+  `codex-delegate`; "Neon" means the `neon` skill (Gemini 4 Neon through the
+  Antigravity CLI); "Opus", "sub-agents", or no instruction means `opus-delegate`.
 - **GitHub** is the durable source of truth. Issues, pull requests, and commits
   outlive every session.
 

@@ -238,6 +238,17 @@ let
     install -Dm755 ${lib.getExe codexJournal} $out/local/codex-journal
   '';
 
+  agyUpstream = inputs.llm-agents.packages.${pkgs.stdenv.hostPlatform.system}.antigravity-cli;
+
+  # The agy plugin, unchanged, plus the local `neon` skill, which calls the
+  # plugin's wrapper through ${CLAUDE_PLUGIN_ROOT} and so has to live inside
+  # the plugin tree (the same layering as codex-delegate above).
+  agyClaudePlugin = pkgs.runCommand "agy-claude-plugin" { } ''
+    cp -r ${inputs.antigravity-plugin-cc}/plugins/agy $out
+    chmod -R u+w $out
+    cp -r ${ai.antigravity.neonSkill} $out/skills/neon
+  '';
+
   # The same gcx skills for Codex. Upstream's official cross-agent path is
   # `gcx agent skills install --all`, which copies this identical bundle (the
   # binary embeds claude-plugin/skills/, its canonical source) into
@@ -501,6 +512,7 @@ in
         mattPocockSkills
         gcxClaudePlugin
         codexOrchestratorPlugin
+        agyClaudePlugin
       ];
 
       context = instructions.text;
@@ -518,6 +530,31 @@ in
           impeccable = impeccableSkill;
           alchemy-domain = alchemyDomainSkill;
         };
+    };
+
+    # Google's Antigravity CLI (`agy`), which Claude Code drives through the
+    # agy plugin above. Home Manager's own module installs it; the package is
+    # llm-agents' build, because nixos-26.05 does not package it. The store
+    # binary cannot replace itself, so its background updater is switched off
+    # with the variable the binary reads (`AGY_CLI_DISABLE_AUTO_UPDATE`, the
+    # same arrangement wimpysworld/nix-config uses); `nix flake update
+    # llm-agents` moves it instead.
+    #
+    # `settings` stays unset on purpose: agy rewrites
+    # ~/.gemini/antigravity-cli/settings.json itself (model picker, trusted
+    # workspaces, /config), so a store symlink there would break the client.
+    # Sign-in lives in the login keychain, application-owned.
+    programs.antigravity-cli = {
+      enable = true;
+      package = pkgs.symlinkJoin {
+        name = "antigravity-cli-${agyUpstream.version}";
+        paths = [ agyUpstream ];
+        nativeBuildInputs = [ pkgs.makeWrapper ];
+        postBuild = ''
+          wrapProgram $out/bin/agy --set AGY_CLI_DISABLE_AUTO_UPDATE true
+        '';
+        inherit (agyUpstream) meta;
+      };
     };
 
     # Session launchers, declared beside the client they launch.

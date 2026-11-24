@@ -56,6 +56,13 @@
   # copy beside each skill's SKILL.md, so the two skills cannot drift apart.
   delegationAssignment = ./delegation/assignment.md;
 
+  # Local addition to the agy (Antigravity CLI) Claude Code plugin: the skill
+  # that sends reviews and bounded tasks to Gemini 4 Neon with the model named
+  # explicitly, and the deny rules that make a review read-only. Claude Code
+  # only; modules/home/ai layers it into the plugin tree so it can reach the
+  # plugin's wrapper through ${CLAUDE_PLUGIN_ROOT}.
+  antigravity.neonSkill = ./antigravity/neon;
+
   # Local additions to the codex-orchestrator Claude Code plugin: the
   # delegation policy skill, the post-run scope check, and the journal writer. Claude
   # Code only; modules/home/ai layers them into the plugin tree.

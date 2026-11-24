@@ -132,6 +132,17 @@
       flake = false;
     };
 
+    # Claude Code plugin that forwards tasks to the local Antigravity CLI
+    # (`agy -p`) and returns its output. Upstream installs it through its
+    # marketplace, which writes mutable state under ~/.claude; modules/home/ai
+    # loads its plugins/agy directory from this pinned tree instead. MIT;
+    # referenced, not vendored. A tag pin does not move with
+    # `nix flake update`; edit the tag to upgrade.
+    antigravity-plugin-cc = {
+      url = "github:simplybychris/antigravity-plugin-cc/v0.5.0";
+      flake = false;
+    };
+
     nix-homebrew.url = "github:zhaofengli/nix-homebrew";
 
     homebrew-core = {

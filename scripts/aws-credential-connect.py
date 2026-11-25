@@ -1,6 +1,6 @@
 """AWS credential_process: aws-credential-connect CONNECT_ENV VAULT ITEM.
 
-Reads the access-key pair from 1Password Connect only; no fallback.
+Reads the access-key pair through the shared 1Password Connect client.
 """
 
 import json

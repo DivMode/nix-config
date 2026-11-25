@@ -66,6 +66,12 @@
   # Prefer item IDs over titles; IDs survive retitling.
   onePassword.connectReference = "op://ExampleVault/bbbbbbbbbbbbbbbbbbbbbbbbbb/access-token";
   onePassword.connectHost = "http://198.51.100.10:8091";
+  # Optional HTTPS replica of the same Connect server, behind Cloudflare
+  # Access. Set all three in local.nix. Home Manager reads the Access fields
+  # from the primary and caches them in the existing 0600 file.
+  # onePassword.connectFallbackHost = "https://connect-fallback.example.com";
+  # onePassword.connectFallbackClientIdReference = "op://ExampleVault/dddddddddddddddddddddddddd/client-id";
+  # onePassword.connectFallbackClientSecretReference = "op://ExampleVault/dddddddddddddddddddddddddd/client-secret";
   # The Connect server's name in 1Password, which `op connect` administration
   # takes (`nix-config-connect-rotate` issues tokens for it).
   onePassword.connectServer = "example-connect";

@@ -24,12 +24,17 @@ let
 
   referenceIsSafe =
     reference:
-    hasPrefix "op://" reference
-    && builtins.match "^op://.+/.+/.+$" reference != null
+    builtins.match "op://[^/]+/[^/]+/[^/?]+" reference != null
     && !(hasInfix "\n" reference)
     && !(hasInfix "\r" reference);
 
   setupBootstrap = cfg.setupBootstrap;
+  fallbackHost = local.onePassword.connectFallbackHost or null;
+  fallbackClientId = local.onePassword.connectFallbackClientIdReference or null;
+  fallbackClientSecret = local.onePassword.connectFallbackClientSecretReference or null;
+  fallbackConfigured =
+    fallbackHost != null || fallbackClientId != null || fallbackClientSecret != null;
+  connectEnvCommand = "${pkgs.python3}/bin/python3 ${../../scripts}/onepassword-connect-env.py";
 
   # Every 1Password read on this Mac goes through the self-hosted Connect
   # server, and nothing falls back to anything else (owner ruling, restated
@@ -61,28 +66,8 @@ let
   connectSetToken = pkgs.writeShellApplication {
     name = "nix-config-connect-set-token";
     text = ''
-      tokenFile="''${1:?usage: nix-config-connect-set-token TOKEN_FILE}"
-      envPath=${escapeShellArg cfg.connect.envPath}
-      if [[ ! -s "$tokenFile" ]]; then
-        printf '%s\n' "ERROR: $tokenFile is empty or missing." >&2
-        exit 1
-      fi
-      token="$(tr -d '[:space:]' < "$tokenFile")"
-      mkdir -p "$(dirname "$envPath")"
-      chmod 700 "$(dirname "$envPath")"
-      candidate="$(umask 077; mktemp "$envPath.tmp.XXXXXX")"
-      trap 'rm -f "$candidate"' EXIT
-      printf 'OP_CONNECT_HOST=%s\nOP_CONNECT_TOKEN=%s\n' \
-        ${escapeShellArg local.onePassword.connectHost} "$token" > "$candidate"
-      unset token
-      chmod 600 "$candidate"
-      if ! ${pkgs.python3}/bin/python3 ${../../scripts}/onepassword-connect-note.py "$candidate" check; then
-        printf '%s\n' "ERROR: Connect did not accept the new token; the current one is unchanged." >&2
-        exit 1
-      fi
-      mv "$candidate" "$envPath"
-      trap - EXIT
-      printf '%s\n' "Connect accepted the new token; it is now in use."
+      exec ${connectEnvCommand} ${escapeShellArg cfg.connect.envPath} replace-token \
+        ${escapeShellArg local.onePassword.connectHost} "''${1:?usage: nix-config-connect-set-token TOKEN_FILE}"
     '';
   };
 
@@ -145,8 +130,8 @@ in
         type = types.str;
         default = "${config.xdg.configHome}/op/connect.env";
         description = ''
-          Absolute path to the 0600 env file holding OP_CONNECT_HOST and
-          OP_CONNECT_TOKEN. A path, never a value.
+          Absolute path to the 0600 env file holding the primary endpoint,
+          its Connect token, and optional fallback settings.
         '';
       };
     };
@@ -171,6 +156,20 @@ in
         {
           assertion = !cfg.connect.enable || hasPrefix "http" local.onePassword.connectHost;
           message = "local.onePassword.connectHost must be the Connect server URL. It is machine-invariant: the work monorepo's sst.config.ts pins the same value and a per-machine divergence replaces every onepassword.Item.";
+        }
+        {
+          assertion =
+            !cfg.connect.enable
+            || !fallbackConfigured
+            || (
+              builtins.isString fallbackHost
+              && builtins.match "^https://[^/?#@[:space:]]+/?$" fallbackHost != null
+              && builtins.isString fallbackClientId
+              && referenceIsSafe fallbackClientId
+              && builtins.isString fallbackClientSecret
+              && referenceIsSafe fallbackClientSecret
+            );
+          message = "Set local.onePassword.connectFallbackHost to an HTTPS origin and set both connectFallbackClientIdReference and connectFallbackClientSecretReference to op://vault/item/field URIs, or omit all three.";
         }
       ];
     }
@@ -242,9 +241,8 @@ in
         })
       ];
 
-      # Activation never reads 1Password and never refreshes the token: the
-      # human setup writes this 0600 file once (scripts/setup-mac.sh connect).
-      # A missing or incomplete file fails loudly.
+      # The setup wizard writes the primary endpoint and token. Activation
+      # uses them to refresh the optional Access credentials from the primary.
       home.activation.onePasswordConnectEnv = lib.hm.dag.entryAfter [ "writeBoundary" ] ''
         envPath=${escapeShellArg cfg.connect.envPath}
         if ${if setupBootstrap then "true" else "false"}; then
@@ -257,6 +255,24 @@ in
         elif [ "$(/usr/bin/stat -f %Lp "$envPath")" != 600 ]; then
           printf '%s\n' "ERROR: $envPath must be mode 600." >&2
           exit 1
+        else
+          ${
+            if fallbackConfigured then
+              ''
+                if ! run ${connectEnvCommand} "$envPath" refresh \
+                  ${escapeShellArg fallbackHost} \
+                  ${escapeShellArg fallbackClientId} \
+                  ${escapeShellArg fallbackClientSecret}; then
+                  printf '%s\n' 'WARNING: Connect fallback cache refresh failed. Keeping the existing cache.' >&2
+                fi
+              ''
+            else
+              ''
+                if /usr/bin/grep -q '^OP_CONNECT_FALLBACK_' "$envPath"; then
+                  run ${connectEnvCommand} "$envPath" clear-fallback
+                fi
+              ''
+          }
         fi
       '';
     })

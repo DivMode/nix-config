@@ -1,23 +1,36 @@
 """The one 1Password client for this repository: the Connect REST API.
 
-Every script that reads 1Password imports this module. There is no `op` CLI,
-no service account, no desktop application and no fallback: a failure exits
-non-zero with the reason, and never prints a secret.
+Every script that reads 1Password imports this module. The optional second
+endpoint is another Connect replica using the same bearer token.
 """
 
+import errno
 import http.client
 import json
 import re
+import socket
 import sys
 import threading
 import time
 import urllib.error
 import urllib.parse
 import urllib.request
+from functools import partial
 from ipaddress import ip_address
 from pathlib import Path
 
 ID = re.compile(r"[a-z0-9]{26}")
+HOST_KEY = "OP_CONNECT_HOST"
+TOKEN_KEY = "OP_CONNECT_TOKEN"
+FALLBACK_KEYS = (
+    "OP_CONNECT_FALLBACK_HOST",
+    "OP_CONNECT_FALLBACK_CF_ACCESS_CLIENT_ID",
+    "OP_CONNECT_FALLBACK_CF_ACCESS_CLIENT_SECRET",
+)
+_CONNECT_ERRNOS = {
+    errno.ECONNREFUSED, errno.EHOSTDOWN, errno.EHOSTUNREACH,
+    errno.ENETDOWN, errno.ENETUNREACH, errno.ETIMEDOUT,
+}
 
 
 class ConnectError(Exception):
@@ -28,23 +41,95 @@ class NotFound(ConnectError):
     """Connect answered 404."""
 
 
+class ConnectUnavailable(ConnectError):
+    """The primary TCP connection could not be established."""
+
+
 class _NoRedirect(urllib.request.HTTPRedirectHandler):
     def redirect_request(self, *args):
         return None
 
 
+def _primary_socket(address, timeout, source_address):
+    try:
+        sock = socket.create_connection(address, min(2.0, timeout), source_address)
+    except OSError as error:
+        if isinstance(error, (socket.gaierror, socket.timeout)) or error.errno in _CONNECT_ERRNOS:
+            raise ConnectUnavailable("the Connect primary is unreachable") from None
+        raise
+    # TLS, sending the request, and reading the response use the caller's timeout.
+    sock.settimeout(timeout)
+    return sock
+
+
+def _primary_connection(connection_type, host, **kwargs):
+    connection = connection_type(host, **kwargs)
+    # http.client shares this socket factory between HTTP and HTTPS. Classify
+    # only failures here, before TLS or any request bytes can reach the peer.
+    connection._create_connection = _primary_socket
+    return connection
+
+
+class _PrimaryHTTPHandler(urllib.request.HTTPHandler):
+    def http_open(self, request):
+        return self.do_open(partial(_primary_connection, http.client.HTTPConnection), request)
+
+
+class _PrimaryHTTPSHandler(urllib.request.HTTPSHandler):
+    def https_open(self, request):
+        return self.do_open(partial(_primary_connection, http.client.HTTPSConnection), request,
+                            context=self._context)
+
+
+def read_env(env_path):
+    values = {}
+    try:
+        for line in Path(env_path).read_text().splitlines():
+            name, separator, value = line.partition("=")
+            if separator and name in (HOST_KEY, TOKEN_KEY, *FALLBACK_KEYS):
+                values[name] = value.strip().strip("'\"")
+    except OSError:
+        raise ConnectError(f"the Connect environment {env_path} is unavailable; run scripts/setup-mac.sh") from None
+    return values
+
+
+def reference_parts(reference):
+    match = re.fullmatch(r"op://([^/\r\n]+)/([^/\r\n]+)/([^/?\r\n]+)", reference)
+    if match is None:
+        raise ConnectError("the reference must be op://VAULT/ITEM/FIELD")
+    return match.groups()
+
+
+def fallback_headers(primary_host, host, client_id, client_secret):
+    try:
+        origin = urllib.parse.urlsplit(host)
+        loopback = origin.hostname == "localhost" or (
+            origin.scheme == "http" and ip_address(origin.hostname or "").is_loopback
+        )
+        port = origin.port
+    except ValueError:
+        raise ConnectError("the Connect fallback must be a valid HTTPS origin") from None
+    if (not origin.hostname or origin.username or origin.password or origin.query
+            or origin.fragment or origin.path not in {"", "/"}
+            or re.search(r"[\s?#@]", host)
+            or not (origin.scheme == "https" or (origin.scheme == "http" and loopback))):
+        raise ConnectError("the Connect fallback must be a valid HTTPS origin")
+    primary = urllib.parse.urlsplit(primary_host)
+    default_port = 443 if origin.scheme == "https" else 80
+    if (origin.scheme, origin.hostname, port or default_port) == (
+            primary.scheme, primary.hostname, primary.port or default_port):
+        raise ConnectError("the Connect fallback must have a different origin from the primary")
+    for credential in (client_id, client_secret):
+        if not re.fullmatch(r"[!-~]+", credential) or credential != credential.strip("'\""):
+            raise ConnectError("the Connect fallback has an invalid Access credential")
+    return {"CF-Access-Client-Id": client_id, "CF-Access-Client-Secret": client_secret}
+
+
 class Connect:
-    def __init__(self, env_path):
-        values = {}
-        try:
-            for line in Path(env_path).read_text().splitlines():
-                name, separator, value = line.partition("=")
-                if separator and name in {"OP_CONNECT_HOST", "OP_CONNECT_TOKEN"}:
-                    values[name] = value.strip().strip("'\"")
-        except OSError:
-            raise ConnectError(f"the Connect environment {env_path} is unavailable; run scripts/setup-mac.sh") from None
-        self.host = values.get("OP_CONNECT_HOST", "").rstrip("/")
-        self._token = values.get("OP_CONNECT_TOKEN", "")
+    def __init__(self, env_path, *, primary_only=False):
+        values = read_env(env_path)
+        self.host = values.get(HOST_KEY, "").rstrip("/")
+        self._token = values.get(TOKEN_KEY, "")
         origin = urllib.parse.urlsplit(self.host)
         try:
             private = origin.hostname == "localhost" or ip_address(origin.hostname or "").is_private
@@ -54,6 +139,10 @@ class Connect:
                 or origin.fragment or origin.path not in {"", "/"}
                 or not (origin.scheme == "https" or (origin.scheme == "http" and private))):
             raise ConnectError("the Connect environment is invalid (https, or http on a private address, and a token)")
+        self._primary_only = primary_only
+        self._fallback = None
+        if not primary_only and all(values.get(name) for name in FALLBACK_KEYS):
+            self._fallback = tuple(values[name] for name in FALLBACK_KEYS)
 
     def raw(self, path, limit=2 * 1024 * 1024, method="GET", body=None, timeout=15.0):
         headers = {"Authorization": f"Bearer {self._token}"}
@@ -61,16 +150,39 @@ class Connect:
         if body is not None:
             data = json.dumps(body).encode()
             headers["Content-Type"] = "application/json"
-        request = urllib.request.Request(f"{self.host}{path}", data=data, headers=headers, method=method)
+        if self._primary_only or self._fallback:
+            # A proxy's connection or response cannot tell us whether the
+            # primary Connect endpoint is reachable.
+            try:
+                return self._request(self.host, path, limit, method, data, headers, timeout,
+                                     urllib.request.ProxyHandler({}), _PrimaryHTTPHandler, _PrimaryHTTPSHandler)
+            except ConnectUnavailable as primary_error:
+                if self._fallback is None:
+                    raise
+                host, client_id, client_secret = self._fallback
+                try:
+                    access_headers = fallback_headers(self.host, host, client_id, client_secret)
+                except ConnectError as error:
+                    print(f"WARNING: ignoring invalid Connect fallback: {error}", file=sys.stderr)
+                    raise primary_error from None
+                print("Connect primary is unreachable; trying the Connect fallback", file=sys.stderr)
+                return self._request(host.rstrip("/"), path, limit, method, data, headers | access_headers, timeout,
+                                     urllib.request.ProxyHandler({}))
+        return self._request(self.host, path, limit, method, data, headers, timeout)
+
+    @staticmethod
+    def _request(host, path, limit, method, data, headers, timeout, *handlers):
+        request = urllib.request.Request(f"{host}{path}", data=data, headers=headers, method=method)
         try:
-            with urllib.request.build_opener(_NoRedirect).open(request, timeout=timeout) as response:
+            with urllib.request.build_opener(_NoRedirect, *handlers).open(request, timeout=timeout) as response:
                 body = response.read(limit + 1)
         except urllib.error.HTTPError as error:
             kind = NotFound if error.code == 404 else ConnectError
+            error.close()
             raise kind(f"Connect returned HTTP {error.code} for {path.split('?')[0]}") from None
         except (OSError, http.client.HTTPException):
             # Never echo the response: a malformed status line can carry its text.
-            raise ConnectError(f"Connect at {self.host} is unreachable or answered malformed HTTP") from None
+            raise ConnectError(f"Connect at {host} is unreachable or answered malformed HTTP") from None
         if len(body) > limit:
             raise ConnectError(f"Connect returned more than {limit} bytes for {path.split('?')[0]}")
         return body

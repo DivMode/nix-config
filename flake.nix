@@ -334,6 +334,24 @@
                 ${python}/bin/python3 cli-proxy-state-test.py
                 touch "$out"
               '';
+            onepassword-connect =
+              let
+                pkgs = nixpkgs.legacyPackages.${system};
+              in
+              pkgs.runCommand "onepassword-connect-tests"
+                {
+                  # The HTTP fixtures bind and connect only on loopback.
+                  __darwinAllowLocalNetworking = pkgs.stdenv.hostPlatform.isDarwin;
+                }
+                ''
+                  mkdir scripts
+                  cp ${./scripts/onepassword_connect.py} scripts/onepassword_connect.py
+                  cp ${./scripts/onepassword-connect-env.py} scripts/onepassword-connect-env.py
+                  cp ${./scripts/onepassword-connect-test.py} scripts/onepassword-connect-test.py
+                  cd scripts
+                  ${pkgs.python3}/bin/python3 -B onepassword-connect-test.py
+                  touch "$out"
+                '';
             # The signal guard agent shells load (ai/shell-guard), run in every
             # shell it must work in: Nix's bash and zsh, and the system's own
             # (scripts with a /bin/bash shebang get bash 3.2; both clients run

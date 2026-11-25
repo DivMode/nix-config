@@ -153,8 +153,28 @@ a service account. Every read goes through the Connect server, and its token's
 vault scope decides what this Mac can reach. Give the Connect token read access
 to the vault holding the Git signing key and the vault holding the AWS profiles,
 and **read and write** access to the homelab vault: it holds the network-share
-password and the `local.nix` Secure Note that every rebuild creates or updates. A vault outside the token's scope fails
-loudly with an HTTP error from Connect; there is no fallback.
+password and the `local.nix` Secure Note that every rebuild creates or updates.
+
+To enable a secondary Connect endpoint, set `onePassword.connectFallbackHost`
+in `local.nix` to the HTTPS origin of a replica that accepts the same Connect
+token and is protected by Cloudflare Access. Set
+`onePassword.connectFallbackClientIdReference` and
+`onePassword.connectFallbackClientSecretReference` to the `op://` references
+for the Access service token. The Connect token needs read access to those
+fields. Keep `onePassword.connectHost` set to the fleet's primary URL.
+[Cloudflare Access service tokens](https://developers.cloudflare.com/cloudflare-one/access-controls/service-credentials/service-tokens/)
+
+Activate once while the primary is reachable. Home Manager caches the replica
+URL and both Access fields in the existing mode-600 Connect environment.
+If a later refresh fails, activation warns and keeps the existing cache.
+Removing all three settings clears the cached fallback.
+
+Clients connect directly to both endpoints when the replica is configured.
+They try the primary first with a two-second TCP connect timeout and retry
+on the replica only if the primary connection cannot be established. The
+replica receives the same Connect bearer token and both Cloudflare Access
+headers. Any HTTP response from the primary is final, including an
+authorization failure for a vault outside the token's scope.
 
 ### Network shares
 

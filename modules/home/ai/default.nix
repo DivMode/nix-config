@@ -490,6 +490,10 @@ in
   options.nixConfig.ai.enable = mkEnableOption "shared Codex and Claude Code configuration";
 
   config = mkIf config.nixConfig.ai.enable {
+    # `claude-goal`, which the /pursue skill and an armed session run to arm,
+    # inspect and end the session goal the managed Stop hook enforces.
+    home.packages = [ (import ai.goalCli { inherit pkgs; }) ];
+
     # Claude Code's own Home Manager module owns the client's instruction file
     # and agent definitions. Prefer it over hand-rolled `home.file` entries: it
     # is maintained upstream, understands this client's layout, and already

@@ -275,6 +275,8 @@
               agent-hooks
               agent-hooks-reject-exit
               agent-hooks-reject-stop
+              agent-hooks-reject-stop-kind
+              agent-hooks-goal
               agent-hooks-supervisor
               ;
             shell-bootstrap-hashes =

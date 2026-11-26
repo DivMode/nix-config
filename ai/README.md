@@ -17,6 +17,7 @@ previous machine's assistant configuration; everything here is restored by
 | `agents/*/prompt.md` | `~/.claude/agents/<name>.md`, `~/.codex/skills/<name>/SKILL.md` |
 | `skills/` | `~/.claude/skills/<name>/`, `~/.codex/skills/<name>/` |
 | `claude-skills/` | `~/.claude/skills/<name>/` (Claude Code only) |
+| `hooks/goal.nix` | `claude-goal` on PATH, the session goal's command line (`/pursue`) |
 | `delegation/assignment.md` | `assignment.md` beside both delegation skills |
 | `hooks/default.nix` | Claude managed settings and `/etc/codex/requirements.toml`, through the build-time hook contract |
 | `codex/default.nix` | narrowly merged into mutable `~/.codex/config.toml` |

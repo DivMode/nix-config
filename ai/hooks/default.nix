@@ -13,6 +13,8 @@
 let
   inherit (pkgs) lib;
 
+  goal = import ./goal.nix { inherit pkgs; };
+
   codexGuard = pkgs.writeShellApplication {
     name = "codex-guard";
     runtimeInputs = [
@@ -200,6 +202,26 @@ let
         }
       ];
     }
+    # The session goal (`/pursue`), Claude Code's /goal under this policy: the
+    # one Stop handler the contract admits. Inert unless a goal was armed for
+    # the stopping session; see goal/src/main.rs for every condition it blocks
+    # under.
+    {
+      name = "session-goal";
+      client = "claude";
+      event = "Stop";
+      matcher = "";
+      kind = "continue";
+      timeout = 5;
+      argv = [
+        (lib.getExe goal)
+        "hook"
+      ];
+      environments = [
+        { }
+        { HOME = "/nonexistent/agent-hook-contract/home"; }
+      ];
+    }
     {
       name = "codex-guard";
       client = "codex";
@@ -317,6 +339,8 @@ let
         print('{"decision":"block"}')
     if mode == "deny":
         print('{"continue":false}')
+    if mode == "continue-extra":
+        print('{"decision":"block","reason":"x","continue":false}')
   '';
   supervisorFixtures =
     map
@@ -325,8 +349,20 @@ let
         fixture
         // {
           name = "supervisor-${mode}";
-          kind = if mode == "exit" || mode == "deny" then "deny" else "observe";
-          event = if mode == "exit" || mode == "deny" then "PreToolUse" else "SessionStart";
+          kind =
+            if mode == "exit" || mode == "deny" then
+              "deny"
+            else if lib.hasPrefix "continue" mode then
+              "continue"
+            else
+              "observe";
+          event =
+            if mode == "exit" || mode == "deny" then
+              "PreToolUse"
+            else if lib.hasPrefix "continue" mode then
+              "Stop"
+            else
+              "SessionStart";
           argv = [
             (lib.getExe pkgs.python3)
             (toString supervisorFixture)
@@ -339,6 +375,7 @@ let
         "sleep"
         "observe"
         "deny"
+        "continue-extra"
       ];
 in
 {
@@ -351,8 +388,17 @@ in
       expectedBuilderLogEntries = [ "agent-hooks: bad-hook: exit 2: missing hook dependency" ];
     };
     agent-hooks-reject-stop = pkgs.testers.testBuildFailure' {
-      drv = contract "agent-hooks-bad-stop" [ (fixture // { event = "Stop"; }) ];
-      expectedBuilderLogEntries = [ "agent-hooks: forbidden event Stop" ];
+      drv = contract "agent-hooks-bad-stop" [ (fixture // { event = "SubagentStop"; }) ];
+      expectedBuilderLogEntries = [ "agent-hooks: forbidden event SubagentStop" ];
     };
+    # Stop admits only the continue kind; an observer there is refused.
+    agent-hooks-reject-stop-kind = pkgs.testers.testBuildFailure' {
+      drv = contract "agent-hooks-bad-stop-kind" [ (fixture // { event = "Stop"; }) ];
+      expectedBuilderLogEntries = [
+        "agent-hooks: Stop requires the continue kind, and continue requires Stop"
+      ];
+    };
+    # The goal binary's blocking rules: its `cargo test` runs in this build.
+    agent-hooks-goal = goal;
   };
 }

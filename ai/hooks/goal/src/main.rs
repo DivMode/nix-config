@@ -144,7 +144,11 @@ fn block_line(goal: &Goal, count: i64) -> Option<String> {
             utc(goal.deadline)
         );
         let line = json!({"decision": "block", "reason": reason}).to_string();
-        if line.len() <= MAX_OUTPUT {
+        // Measure the line as the supervisor forwards it: Python's json.dumps
+        // writes each non-ASCII character as \uXXXX (a surrogate pair above
+        // U+FFFF), so an em dash costs 6 bytes there, not 3.
+        let forwarded: usize = line.chars().map(|c| if c.is_ascii() { 1 } else { 6 * c.len_utf16() }).sum();
+        if forwarded <= MAX_OUTPUT {
             return Some(line);
         }
         keep -= 20;

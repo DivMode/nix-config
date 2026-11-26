@@ -139,12 +139,21 @@ fn unsafe_root() -> bool {
     Command::new("id").arg("-u").output().map(|o| o.stdout == b"0\n").unwrap_or(false)
 }
 
+/// Bytes of `line` once re-encoded the way the supervisor forwards it: Python's
+/// `json.dumps` writes every non-ASCII character as `\uXXXX`, a surrogate pair
+/// above U+FFFF. The supervisor drops anything over one pipe write (512).
+fn forwarded_len(line: &str) -> usize {
+    line.trim_end().chars().map(|c| if c.is_ascii() { 1 } else { 6 * c.len_utf16() }).sum()
+}
+
 #[test]
-fn a_long_non_ascii_condition_fits_one_pipe_write() {
-    let state = armed(&"ü".repeat(3000));
-    let output = stop(&state);
-    assert!(output.len() <= 512, "{}", output.len());
-    assert_eq!(serde_json::from_str::<Value>(&output).unwrap()["decision"], "block");
+fn a_long_non_ascii_condition_still_fits_one_pipe_write_as_forwarded() {
+    for condition in ["ü".repeat(3000), "PR 12 merged — “green” → 😀 ".repeat(40)] {
+        let state = armed(&condition);
+        let output = stop(&state);
+        assert!(forwarded_len(&output) <= 512, "{}", forwarded_len(&output));
+        assert_eq!(serde_json::from_str::<Value>(&output).unwrap()["decision"], "block");
+    }
 }
 
 #[test]

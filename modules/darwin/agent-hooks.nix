@@ -23,7 +23,8 @@ let
   # every handler with broken and harmless inputs before producing either
   # policy. Every command runs through the pinned-Python supervisor: observers
   # emit no stdout, failures/timeouts exit 0, and only validated PreToolUse
-  # permission denials can pass through. Turn-controlling events are banned.
+  # permission denials, or the session goal's validated Stop block, can pass
+  # through. Every other turn-controlling event is banned.
   #
   # Claude refuses to start if its managed file is not a JSON object. Install
   # only the contract's validated output, with a same-directory atomic rename

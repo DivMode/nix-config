@@ -11,10 +11,13 @@ import sys
 import tempfile
 import tomllib
 
-from supervisor import permission_denial
+from supervisor import permission_denial, stop_continuation
 
 
-FORBIDDEN_EVENTS = {"Stop", "SubagentStop", "PreCompact", "UserPromptSubmit"}
+# Stop is allowed for exactly one handler, of the `continue` kind (the session
+# goal, ai/hooks/goal). Everything else that can force or stall a turn stays
+# banned.
+FORBIDDEN_EVENTS = {"SubagentStop", "PreCompact", "UserPromptSubmit"}
 
 
 def require(condition, message):
@@ -41,7 +44,7 @@ def has_control(value):
     return isinstance(value, list) and any(has_control(item) for item in value)
 
 
-def output_denies(hook, output):
+def output_controls(hook, output):
     if not output.strip():
         return False
     if hook["kind"] == "observe":
@@ -54,6 +57,10 @@ def output_denies(hook, output):
                 continue
             require(not has_control(value), "observer emitted blocking/continuation control")
         return False
+    if hook["kind"] == "continue":
+        require(stop_continuation(output) is not None,
+                "continue hook emitted something other than a Stop block")
+        return True
     require(permission_denial(output) is not None,
             "deny hook emitted something other than PreToolUse permissionDecision deny")
     return True
@@ -78,7 +85,7 @@ def run(hook, text, environment, scratch, env_program, bare_path):
                 "supervisor stderr must be one short bounded line")
         if hook["kind"] == "observe":
             require(stdout == "", "supervised observer emitted stdout")
-    return output_denies(hook, stdout)
+    return output_controls(hook, stdout)
 
 
 def rendered_hooks(handlers, client):
@@ -95,10 +102,15 @@ def rendered_hooks(handlers, client):
 def main():
     manifest, claude_file, codex_file, destination, env_program, bare_path = sys.argv[1:]
     handlers = json.loads(Path(manifest).read_text())
+    require(sum(hook["kind"] == "continue" for hook in handlers) <= 1,
+            "at most one continue (Stop) handler")
     for hook in handlers:
         require(hook["event"] not in FORBIDDEN_EVENTS, f"forbidden event {hook['event']}")
-        require(hook["kind"] in {"observe", "deny"}, "unknown hook kind")
+        require(hook["kind"] in {"observe", "deny", "continue"}, "unknown hook kind")
         require(hook["kind"] != "deny" or hook["event"] == "PreToolUse", "deny requires PreToolUse")
+        require((hook["kind"] == "continue") == (hook["event"] == "Stop"),
+                "Stop requires the continue kind, and continue requires Stop")
+        require(hook["kind"] != "continue" or hook["client"] == "claude", "continue is Claude-only")
         require(type(hook["timeout"]) is int and 0 < hook["timeout"] <= 15,
                 "timeout must be explicit and between 1 and 15 seconds")
         require(hook["client"] in {"claude", "codex"}, "unknown hook client")
@@ -121,7 +133,7 @@ def main():
                 for environment in hook.get("environments", [{}]):
                     for text in ["{", "", "null", payload(hook["event"])]:
                         require(not run(hook, text, environment, scratch, env_program, bare_path),
-                                "denied malformed or harmless input")
+                                "controlled a turn on malformed or harmless input")
                 for probe in hook.get("probes", []):
                     # A probe is a typed command, or another tool's whole input
                     # (a file edit), named for the log by its `label`.

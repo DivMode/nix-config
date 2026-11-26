@@ -75,20 +75,37 @@ No plugins are force-enabled through managed Claude settings.
 Claude still accepts Agent SDK hooks registered in-process. Using that residual
 requires a program that embeds Claude, which is reviewed as code; editing
 configuration cannot register an SDK hook. Under managed-only mode, Claude's
-`/goal` cannot run and plugin hooks stop unless the plugin is force-enabled in
-managed `enabledPlugins`. None are force-enabled here.
+`/goal` cannot run (it is a session Stop hook) and plugin hooks stop unless the
+plugin is force-enabled in managed `enabledPlugins`. None are force-enabled
+here. `/pursue` is the replacement for `/goal`; see below.
 
 An `observe` handler never blocks. A `deny` handler is allowed only on
 PreToolUse and may refuse a specific forbidden command only through
-`permissionDecision: "deny"` JSON with exit 0. Stop, SubagentStop, PreCompact,
-and UserPromptSubmit handlers are forbidden because they can force or stall
-model turns. Broken input or a handler's own failure must never become a denial.
+`permissionDecision: "deny"` JSON with exit 0. SubagentStop, PreCompact, and
+UserPromptSubmit handlers are forbidden because they can force or stall model
+turns. Broken input or a handler's own failure must never become a denial.
+
+Stop admits exactly one handler, of the `continue` kind: the session goal
+(`ai/hooks/goal`, a Rust binary, armed by the `/pursue` skill, inspected and ended with
+`claude-goal`). That reverses part of the 2026-10-31 ban, when a repository
+hook that exited 2 on a missing dependency looped Stop across six sessions.
+The contract admits it only as a Claude handler, at most one, and only with
+the `continue` kind. The supervisor forwards only an exact
+`{"decision":"block","reason":…}` from a clean exit; any failure lets the
+session stop. The handler is inert unless a goal was armed for the exact
+`session_id` that is stopping. It blocks only before the goal's deadline
+(24 hours by default, 7 days at most) and its 200th forced continuation. It
+never blocks while a background task or session cron will wake the session.
+It saves the new count before it blocks, and a count it cannot save means no
+block. Claude Code's own limit of eight blocks without a tool call still
+applies, and Esc skips Stop hooks entirely. State and an event log are under
+`~/.local/state/claude-goals/`.
 
 Every managed command runs through the pinned-Python supervisor. It passes
 stdin to the handler, kills its process group before the client timeout, and
 always exits 0, including on its own errors. Observers emit no stdout; deny
-handlers can emit only a validated PreToolUse permission denial after a
-successful exit. All other stdout is discarded, and stderr is limited to one
+handlers can emit only a validated PreToolUse permission denial, and the
+continue handler only a validated Stop block, after a successful exit. All other stdout is discarded, and stderr is limited to one
 short line. The contract executes these exact supervised commands. Fixtures
 cover exit-2 failures, hangs, observer blocking output, and non-deny controls;
 the raw exit-2 fixture still proves the build gate catches an unsupervised hook.
@@ -97,8 +114,9 @@ Both managed files are outputs of the hook-contract derivation. Before writing
 them, it runs each real command with malformed, empty, null, and harmless event
 payloads under `env -i`, a bare PATH and no HOME tools. It checks exit
 status, output controls, and deliberate guard denials; separate flake checks
-prove rejection of an exit-2 hook and a Stop declaration, including the
-expected failure reason.
+prove rejection of an exit-2 hook, a SubagentStop declaration and a Stop
+handler of any kind but `continue`, including the expected failure reason.
+`agent-hooks-goal` builds the goal binary, which runs its `cargo test`.
 
 Claude's validated JSON is installed atomically at
 `/Library/Application Support/ClaudeCode/managed-settings.json`, owned by

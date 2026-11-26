@@ -50,7 +50,14 @@
     # codexOrchestrator.delegateSkill; the global Roles rule picks between the
     # two by the user's words.
     opus-delegate = ./claude-skills/opus-delegate;
+    # `/pursue <condition>`: arm a goal this session may not stop short of,
+    # enforced by the managed Stop hook (hooks/goal, Rust). Claude Code's own
+    # /goal cannot run under the managed-only hook policy.
+    pursue = ./claude-skills/pursue;
   };
+
+  # The `claude-goal` command line for that goal.
+  goalCli = ./hooks/goal.nix;
 
   # The worker brief both delegation skills write from. modules/home/ai puts a
   # copy beside each skill's SKILL.md, so the two skills cannot drift apart.

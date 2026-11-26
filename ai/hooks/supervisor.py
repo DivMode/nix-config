@@ -32,6 +32,19 @@ def permission_denial(output):
     return value
 
 
+def stop_continuation(output):
+    """The sole control a continue (Stop) hook may return, shared with the build gate."""
+    try:
+        value = json.loads(output)
+    except (ValueError, UnicodeError, RecursionError):
+        return None
+    if (not isinstance(value, dict) or set(value) != {"decision", "reason"}
+            or value["decision"] != "block"
+            or not isinstance(value["reason"], str) or not value["reason"].strip()):
+        return None
+    return value
+
+
 def emit(fd, data):
     # One nonblocking, atomic pipe write: an unread client pipe must not stall
     # the supervisor. Oversized denials are dropped rather than sent partially.
@@ -58,7 +71,7 @@ def main(arguments):
             or arguments[2] != "--timeout" or arguments[4] != "--"):
         return
     kind, timeout = arguments[1], float(arguments[3])
-    if kind not in {"observe", "deny"} or not math.isfinite(timeout) or not 0 < timeout <= 15:
+    if kind not in {"observe", "deny", "continue"} or not math.isfinite(timeout) or not 0 < timeout <= 15:
         return
     # Leave up to a second for interpreter startup, process cleanup and output
     # before the client's own deadline. Even the one-second fixtures get 0.5s.
@@ -110,10 +123,11 @@ def main(arguments):
                 pass
 
     report(stderr)
-    if kind == "deny" and succeeded and not overflow:
-        denial = permission_denial(stdout)
-        if denial is not None:
-            emit(1, json.dumps(denial, separators=(",", ":")).encode("utf-8") + b"\n")
+    if succeeded and not overflow:
+        control = (permission_denial(stdout) if kind == "deny"
+                   else stop_continuation(stdout) if kind == "continue" else None)
+        if control is not None:
+            emit(1, json.dumps(control, separators=(",", ":")).encode("utf-8") + b"\n")
 
 
 if __name__ == "__main__":

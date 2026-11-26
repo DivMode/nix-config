@@ -79,6 +79,13 @@
 
       "raycast"
 
+      # T3 Code, the agent control plane (./t3code.nix holds its machine
+      # policy: telemetry off, providers pinned to this Mac's launchers). An
+      # auto_updates cask like chatgpt: the app's own updater keeps it current,
+      # so no `greedy`. The lock's definition must be v0.1.12 or later; earlier
+      # releases sent hashes of the Claude and Codex account IDs.
+      "t3-code"
+
       # DeepSeek Harness, the chat and agent app used with the local oMLX
       # server (modules/home/omlx.nix). Like chatgpt: an auto_updates cask of
       # DeepSeek's own zip, kept current by the app's electron-builder updater.

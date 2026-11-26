@@ -54,6 +54,10 @@
     # enforced by the managed Stop hook (hooks/goal, Rust). Claude Code's own
     # /goal cannot run under the managed-only hook policy.
     pursue = ./claude-skills/pursue;
+    # `$conduct <task>` in a T3 Code thread: lead the task and hand its pieces
+    # to Claude, Codex and Antigravity through T3's delegate_task
+    # (modules/darwin/t3code.nix).
+    conduct = ./claude-skills/conduct;
   };
 
   # The `claude-goal` command line for that goal.

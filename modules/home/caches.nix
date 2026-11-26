@@ -38,12 +38,26 @@ let
       root=${lib.escapeShellArg cacheDirectory}
       agents="claude-$(id -u)"
       deleted=0
+      failed=0
+      # One entry that cannot be removed must not end the run. Tools leave
+      # read-only directories behind (a tmp/ scene store from 2026-10-28 was
+      # mode 0555), where `rm -rf` cannot unlink the files; the failure then
+      # stopped every run from 2026-10-30 on with exit 1, nothing was pruned
+      # for four weeks, and on 2026-11-25 the volume was full (4.9 GB free)
+      # and a CI VM's disk went read-only. So: restore the owner's write bit
+      # inside the entry first (chmod -R does not follow symlinks), and count
+      # what still fails instead of stopping.
       prune() {
         local entry
         for entry in "$@"; do
           [ -e "$entry" ] || continue
           if [ -z "$(find "$entry" -type f \( -atime -${toString pruneDays} -o -mtime -${toString pruneDays} \) -print -quit 2>/dev/null)" ]; then
-            rm -rf -- "$entry" && deleted=$((deleted + 1))
+            chmod -R u+w -- "$entry" 2>/dev/null || true
+            if rm -rf -- "$entry"; then
+              deleted=$((deleted + 1))
+            else
+              failed=$((failed + 1))
+            fi
           fi
         done
       }
@@ -53,7 +67,8 @@ let
       done
       prune "$root/tmp/$agents"/*/*
       prune "$root"/rust/*/*
-      echo "$(date -u +%FT%TZ) prune-caches: deleted $deleted entries untouched for ${toString pruneDays} days"
+      echo "$(date -u +%FT%TZ) prune-caches: deleted $deleted entries untouched for ${toString pruneDays} days, $failed could not be removed"
+      [ "$failed" -eq 0 ]
     '';
   };
 in

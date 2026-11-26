@@ -147,6 +147,11 @@ Fix type errors properly, with real types and guards. Escape hatches that
 silence the checker — casts to a permissive type, `any`, suppression comments —
 convert a compile-time error into a runtime one.
 
+**We are not a Python shop.** Write new programs, hooks, CLIs, tests and
+scripts in Rust; plain shell is acceptable only for a few lines of glue. Never
+add new Python, even beside existing Python in the same directory: existing
+Python is debt to migrate, not a pattern to copy (owner, 2026-11-25).
+
 ## Tests and verification
 
 Run CPU-heavy work (test suites, release builds, browser e2e) in parallel;

@@ -19,6 +19,7 @@
     ./spotlight.nix
     ./sysv-shm.nix
     ./sudo.nix
+    ./t3code.nix
     ./xcode.nix
   ];
 

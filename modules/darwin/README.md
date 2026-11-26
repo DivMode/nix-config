@@ -220,6 +220,17 @@ with TERM, then KILL (`kickstart -k` is refused under SIP), at most 12 times a
 day. FSEvents clients that were running at the restart stop receiving events
 until their process restarts.
 
+`t3code.nix` writes T3 Code's machine policy,
+`/Library/Application Support/T3Code/policy.json`, which the app reads at
+startup (restart it after a change). It turns telemetry off, allows only the
+Claude, Codex and Antigravity drivers, pins each to this Mac's own launcher
+(`claude`, `codex`, `agy`) so T3 threads keep the managed hooks and guards, and
+enables the Antigravity instance. It refuses to overwrite a policy it did not
+write. Processes T3 Code starts cannot reach the local network until T3 Code
+is allowed under Privacy & Security → Local Network (measured 2026-11-25: a
+LAN `nc` from a T3 thread failed while the same command from a terminal
+succeeded); the Connect signer needs that for commits.
+
 `spotlight.nix` installs a launch daemon that runs at load and whenever a volume
 mounts. It asks `diskutil` whether each mounted volume is internal and reconciles
 Spotlight indexing and searching off only when macOS reports `Internal = false`.

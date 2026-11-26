@@ -324,6 +324,18 @@ nothing said means `opus-delegate`. Both skills write their briefs from
 `delegation/assignment.md`, copied beside each `SKILL.md`, so the two cannot
 drift.
 
+### Leading a team from T3 Code (conduct)
+
+`claude-skills/conduct` is for a Claude thread inside T3 Code
+(`modules/darwin/t3code.nix`). `/conduct <task>` makes that thread the lead: it
+splits the task and hands each piece to Claude, Codex or Antigravity with T3's
+`delegate_task`, in its own worktree, and it routes by job (Opus for parallel
+slices, Codex `gpt-6.2-sol` for clear-spec work, Fable for hard problems,
+cross-family review). A finished child wakes the lead, so it hands out work and
+ends its turn instead of polling. Invoking it is the owner naming the workers,
+which satisfies the Roles rule for that task; children leave their changes
+uncommitted and the lead commits. It never messages threads it did not start.
+
 ### Plugins and marketplaces are deliberately not declared
 
 Checked on 2026-08-13, and the answer is that there is nothing at risk:

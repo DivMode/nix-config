@@ -47,8 +47,8 @@
   # ones above.
   claudeSkills = {
     # Delegation to Claude sub-agents through the Agent tool. The sibling of
-    # codexOrchestrator.delegateSkill; the global Roles rule picks between the
-    # two by the user's words.
+    # codexOrchestrator.delegateSkill, which routes implementation to Codex by
+    # default under the global Roles rule.
     opus-delegate = ./claude-skills/opus-delegate;
     # `/pursue <condition>`: arm a goal this session may not stop short of,
     # enforced by the managed Stop hook (hooks/goal, Rust). Claude Code's own

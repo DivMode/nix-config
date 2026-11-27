@@ -11,13 +11,13 @@ The task: `$ARGUMENTS`
 
 You are the lead for this task, in a T3 Code thread. You plan, split, delegate,
 check and merge. Write code yourself only when a piece is too small to hand off.
-Invoking this skill is the owner naming the workers below, so the global rule
-that Codex or Neon run only when named is satisfied for this task.
+Invoking this skill does not choose a worker: implementation goes to Codex
+unless the owner names another (global Roles), as the routes below say.
 
 ## How T3 Code runs the team
 
-T3 Code's orchestrator tools are in this session. Use them, not sub-agents or
-codex-delegate, for every child here:
+T3 Code's orchestrator tools are in this session. Use them for delegated
+children. Run the independent review through the Codex CLI as described below.
 
 - `delegate_task` starts a child thread on any provider and model. Use
   `mode: "async"` (the default) and `isolation: "worktree"` for anything that
@@ -35,17 +35,16 @@ codex-delegate, for every child here:
 
 | Job | Target | Effort |
 | --- | --- | --- |
-| Parallel implementation slices | Claude Opus 5.5 | high |
+| Parallel implementation slices | Codex `gpt-6.2-sol` (Claude Opus 5.5 only when the owner names it) | high |
 | Clear-spec, many-file or mechanical work, scripts, migrations | Codex `gpt-6.2-sol` | medium for mechanical, high by default, xhigh for subtle logic |
 | A long, hard problem (design, a deep bug) | Claude Fable 5.2 | high; it hands execution back to you |
-| Review of a Claude slice | Codex `gpt-6.2-sol` | high, read-only brief |
-| Review of a Codex slice, or a second opinion on a plan | Claude Opus 5.5, or Antigravity Neon | high, read-only brief |
+| Independent review of the finished diff | `codex review -c model="gpt-6.2-sol" -c sandbox_mode="read-only"` | high by default |
+| Optional second opinion on a diff or plan | Claude Opus 5.5, or Antigravity Neon | high, read-only brief |
 | Lookups and chores | Claude Haiku 5.5 | default |
 
-Effort is never `max` to start; use it only after `high` visibly failed on that
-same piece. Review crosses model families: Codex reviews Claude's work, Claude
-or Neon reviews Codex's. Give the reviewer the diff and the original requirement,
-not the builder's summary.
+Effort is never `max` to start. Use it only after `high` visibly failed on that
+same piece. Global rule 9 applies whoever implemented the work. Give the
+reviewer the actual diff and the original requirement.
 
 ## Brief every child completely
 
@@ -69,6 +68,16 @@ first to merge.
 
 - Read each child's report as claims. Inspect the actual diff in its
   worktree and run the acceptance checks yourself.
+- Before merging or reporting completion, independently review the final diff.
+  Follow global rule 9: with nothing committed on top of the base use
+  `codex review --uncommitted`; otherwise commit the final edits, confirm nothing
+  is untracked, and use `--base <branch>`. Always add
+  `-c sandbox_mode="read-only"` and pass the requirement in
+  `-c developer_instructions=...`. For SQL privileges, grants,
+  roles, or security boundaries, start with a Claude reviewer through
+  `opus-delegate`. For a mixed diff, use a custom Codex review prompt for the
+  remaining diff and the original requirement. Repeat the review after a
+  correction, a fix after review, or a combination of pieces.
 - Commit through the repository's signed path, push, open the PR, and watch
   its checks until green. Nothing reaches `main` without a PR.
 - One correction per child, by messaging that same child. If it still fails,

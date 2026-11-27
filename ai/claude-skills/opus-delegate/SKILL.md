@@ -1,6 +1,6 @@
 ---
 name: opus-delegate
-description: The Opus coordinator's sub-agents — hand implementation, debugging, review or research to Claude workers through the Agent tool, each on its own model and effort (never the coordinator's) and writing in its own worktree, while the coordinator plans, supervises, reviews the real diff, and merges. Use when the user says Opus, sub-agents, or Claude agents for doing work, and for any large planned change the user has not handed to Codex.
+description: The Opus coordinator's sub-agents — hand implementation, debugging, review or research to Claude workers through the Agent tool, each on its own model and effort (never the coordinator's) and writing in its own worktree, while the coordinator plans, supervises, reviews the real diff, and merges. Use when the user says Opus, sub-agents, or Claude agents for doing work, and for reviews routed here by the global orchestration policy.
 ---
 
 # Delegate work from the Opus coordinator to Claude sub-agents
@@ -132,9 +132,19 @@ piece still fails, stop and bring the unresolved issue back for a fresh decision
    Account for every exception before going further.
 3. Read the actual diff, new untracked files included. Evaluate every acceptance criterion by
    observation and run the verification commands yourself.
-4. For significant or risky work, add an independent reviewer (global rules 8 and 9): a fresh worker
-   on the review row's model, or `fable` when the review needs it (never the coordinator's), given the diff, the original requirement, and the worktree's absolute path to run any
-   checks in, never the implementer's summary.
+4. Apply global rule 9 before integrating or reporting completion. Give a fresh Codex review
+   the final diff and original requirement, even when Claude implemented it. In the handoff
+   worktree use `codex review --uncommitted -c model="gpt-6.2-sol" -c sandbox_mode="read-only"`
+   with the requirement in `-c developer_instructions=...`; once the branch has commits, commit
+   the final edits and use `--base <base branch>` instead. Repeat the review after a correction,
+   a fix after review, or a combination of pieces.
+
+   For SQL privileges, grants, roles, or security boundaries, a fresh Claude reviewer goes first.
+   A diff entirely of that kind completes with the Claude review alone, with no Codex review.
+   For a mixed diff, use Codex's custom review prompt for the remaining diff and original
+   requirement. A separate Claude reviewer is optional for other work. Give a Claude reviewer the
+   diff, the original requirement, and the worktree's absolute path. Use the review row's model,
+   or `fable` when the review needs it (never the coordinator's).
 5. Integrate through the repository's workflow: commit in the worktree on a branch named for the
    change, push, open the pull request, merge, and record the outcome on the issue or pull request.
 6. After the merge, `git worktree remove <path>` and delete the worker's branch.

@@ -487,8 +487,8 @@ in
   # minute its VZ process stayed at 40G MEM and 64-70G CMPRS in
   # `top -o cmprs`. Its virtio balloon had not negotiated free-page reporting
   # (feature bit 5 unset in
-  # /sys/bus/virtio/drivers/virtio_balloon/virtio*/features), which is the
-  # likely reason (hypothesis). Size `memory` to the jobs' measured peak
+  # /sys/bus/virtio/drivers/virtio_balloon/virtio*/features), a possible
+  # explanation (untested). Size `memory` to the jobs' measured peak
   # (MemTotal - MemAvailable in the guest over a full run) plus headroom, not
   # to the sum of their container limits.
   #

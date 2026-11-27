@@ -481,6 +481,16 @@ in
   # VZ. The exposure is the sum of the guest sizes plus VZ overhead: 24 GiB
   # per VM by default, plus 32 GiB if the gate VM runs as well.
   #
+  # That exposure is permanent, not a peak. The guest's virtio balloon offers
+  # no free-page reporting (feature bit 5 unset in
+  # /sys/bus/virtio/drivers/virtio_balloon/virtio*/features) and Lima sets no
+  # balloon target, so every page the guest has touched, page cache included,
+  # stays resident or compressed on the Mac. Dropping the guest's page cache
+  # does not help: on 2026-11-27 a 40 GiB VM freed 23.7 GB that way and its VZ
+  # process stayed at 40G MEM and 64-70G CMPRS in `top -o cmprs`. Size
+  # `memory` to the jobs' measured peak (MemTotal - MemAvailable in the guest
+  # over a full run) plus headroom, not to the sum of their container limits.
+  #
   # Template changes apply to a newly created instance; Lima owns an existing
   # one. To rebuild it: `limactl stop ci-runner-v1 && limactl delete
   # ci-runner-v1`, then let launchd start it again and re-run the registration.

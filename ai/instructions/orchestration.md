@@ -45,7 +45,11 @@ that the recipient received or read them.
    them with the correct project working directory.
 
 3. **Protect personal terminal sessions.** Do not modify, reset, or close
-   personal Herdr workspaces, panes, or tabs unless explicitly asked to.
+   personal Herdr workspaces, panes, or tabs unless explicitly asked to. The
+   one standing exception: a session started by the `session-handoff` skill
+   closes the predecessor pane its first prompt names, once that agent is
+   idle, as the skill describes. A session cannot close its own pane, and
+   handed-off sessions otherwise pile up (owner, 2026-11-27).
 
 4. **A long turn is not a stuck turn.** `status: running` is the normal state
    for real work. Follow the same worker using the current client's status tools

@@ -79,20 +79,28 @@ let
   #
   # Who merges belongs in Roles because it is a standing fact about the
   # coordinator, not a step to follow; so does which worker the user's words
-  # pick, with both halves pinned so the default cannot quietly flip back to
-  # Codex. The five under Binding rules are obligations, and an obligation that
-  # is not a binding rule is a suggestion.
+  # pick. Both halves are pinned to hold Codex as the default (owner, 2026-11-26)
+  # so it cannot quietly flip back to opus-delegate. The phrases under Binding
+  # rules are obligations, and an obligation that is not a binding rule is
+  # a suggestion.
   sectionPhrases = {
     "## Roles" = [
       "delegates, verifies, and **merges verified work** for changes the user asked"
       "**The user's most recent instruction picks the worker:**"
-      "\"Opus\", \"sub-agents\", or no instruction means `opus-delegate`."
+      "\"Codex\" or no instruction means `codex-delegate` (owner, 2026-11-26)."
+      "\"Opus\" or \"sub-agents\" means `opus-delegate`."
     ];
     "## Binding rules" = [
       "**Reconcile before you open.**"
       "**Implementation and review stay separate**"
       "**Implementation workers do not self-approve**"
+      "**An independent Codex review is mandatory** after implementation and before"
+      "merging or reporting the work complete. Run `codex review -c model=\"gpt-6.2-sol\"`"
+      "Give it the actual diff and the original requirement."
+      "The review applies to all implementation work, whoever implemented it."
+      "on the final diff that will merge, after the last edit to it."
       "**A separate Claude reviewer is optional, not mandatory.**"
+      "start with `opus-delegate` because Codex's content filter stops these reviews partway."
       "**Never open a Claude session solely to watch another one.**"
     ];
   };
@@ -134,12 +142,12 @@ let
     # in `sectionPhrases` above. Both halves are pinned because either one
     # alone survives an edit that inverts the rule. "Implementation and review
     # stay separate" without "do not self-approve" still lets a worker approve
-    # itself so long as somebody else also looked. "A separate Claude reviewer
-    # is optional" without "not a substitute" turns an optional second opinion
-    # into the merge decision. And a ban on monitoring sessions without the
-    # mechanism that replaces them leaves a coordinator no way to see progress at
-    # all, which is how the banned session gets opened again.
-    "the coordinator, not a substitute for its review and merge decision**."
+    # itself so long as somebody else also looked. Mandatory Codex review
+    # without "not a substitute" turns its verdict into the merge decision.
+    # A ban on monitoring sessions without the mechanism that replaces them
+    # leaves a coordinator no way to see progress at all, which is how the
+    # banned session gets opened again.
+    "Its verdict is **evidence for the coordinator, not a substitute for its review and merge decision**."
     "progress comes from the current client's status and wait tools for the"
     "**closed immediately afterwards**."
 

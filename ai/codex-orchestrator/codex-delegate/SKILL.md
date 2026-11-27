@@ -1,6 +1,6 @@
 ---
 name: codex-delegate
-description: Codex workers — hand a coding job to a Codex CLI worker (gpt-6.2-sol at an effort Claude chooses per job; Fast tier only when the user asks for fast mode) while Claude plans, splits it into parallel pieces, supervises, and accepts. Use when the user names Codex for doing work ("use Codex", "have Codex do it", "Codex fast mode"). Delegation the user has not given to Codex goes through opus-delegate.
+description: Codex workers — hand a coding job to a Codex CLI worker (gpt-6.2-sol at an effort Claude chooses per job; Fast tier only when the user asks for fast mode) while Claude plans, supervises, and accepts. Codex is the default for all implementation work in every Claude Code session (owner, 2026-11-26). Use the per-piece exceptions below or follow the user's explicit worker choice.
 ---
 
 # Delegate an implementation to Codex
@@ -26,31 +26,19 @@ repository baseline in `run_started` as upstream describes.
 
 ## Codex or Claude: decide per piece of work
 
-Upstream says to prefer Codex as the first mover for bounded coding tasks. Here Codex runs only when
-the user has named it (global Roles); other delegation goes through `opus-delegate`. Even then,
-Codex gets only work where delegating saves Claude more than writing and checking the assignment
-costs. Decide for each piece, even inside a project the user said to "use Codex" for.
-
-Send to Codex when all of these hold:
-- The decisions are made. What remains is execution, not product, architecture, or design choices.
-- It is implementation-heavy: many files, the same transformation repeated across a codebase, or
-  a long edit-test-fix loop. As a rough guide, more than about 5 files or 150 changed lines.
-- It can be checked by commands, run by Codex or by Claude afterwards.
+Codex is the default for all implementation work in every Claude Code session (owner, 2026-11-26).
+A single Codex worker is the default implementation pass. Follow the user's explicit worker choice
+for the work they name.
 
 Do it in Claude directly when any of these hold:
-- It is a small fix: a few files, roughly under 50 lines, or the exact edit is already known.
-  Writing and verifying the assignment would cost as much as doing it.
-- It still needs investigation, debugging of a live system, or a decision.
+- It is a small fix with a known exact edit, affecting a few files and roughly under 50 lines.
+- It still needs investigation, live-system debugging, or a design decision.
 - It needs cloud access, credentials, deploys, or production data. Codex has network access for
   builds and package downloads, but secrets and anything that changes live systems stay with
   Claude.
-- It is a review of SQL privileges, grants, roles, or security boundaries. Codex's provider content
-  filter has repeatedly stopped these reviews partway (2026-10-22/23), so they start on a Claude
-  reviewer through `opus-delegate`.
+- It is a one-line follow-up fix after review.
 
-If the user explicitly asks for Codex on a specific change, use Codex for it. When a large job
-contains small follow-ups, such as a one-line fix after review, do those in Claude rather than
-starting another Codex execution. Say in one line which way each piece went and why.
+Say in one line which way each piece went and why.
 
 ## Who owns what
 
@@ -65,8 +53,10 @@ widens product scope, introduces architecture, or decides unrelated improvements
 - Split a big job into independent pieces yourself and run them together. There is no fixed cap on
   concurrent Codex jobs (the user's choice, 2026-10-06, replacing the 2026-10-03 cap of 4): run as
   many as there are genuinely independent pieces. See "Running several jobs at once" below.
-- No `planning` or `planning_review` agents. No Codex reviewer unless material risk or a specific
-  unresolved question justifies one; say which.
+- No `planning` or `planning_review` agents.
+- After acceptance, independently review the final diff before integrating it, as in Accept.
+  For Codex use `codex review -c model="gpt-6.2-sol" -c sandbox_mode="read-only"` and choose
+  effort as for implementation.
 - For each piece: one implementation execution, then Claude's verification. At most one targeted correction, by
   resuming the same session. If it still fails, stop and bring the unresolved issue back for a fresh
   decision. Never loop.
@@ -189,14 +179,14 @@ and `close --judgment`, never in a status:
 ## Running several jobs at once
 
 Codex is slow, so a big job finishes fastest as independent pieces running side by side. Do this
-by default for any job that splits cleanly; the user should not have to ask.
+by default for big jobs that split cleanly.
 
 1. **Split.** Break the job into pieces that touch disjoint files and do not need each other's
    results. A piece that needs another piece's code waits until that piece is accepted. Size each
    piece to finish well inside Codex's context. `gpt-6.2-sol` has a 500k-token window (catalog,
    2026-11-17), compacted at about 95%, and Codex's own instructions use part of it. A piece that
-   needs most of a package read, or dozens of files changed, is too big; split it again. Pieces
-   that are small fixes stay with Claude, per the routing rule above.
+   needs most of a package read, or dozens of files changed, is too big; split it again. The routing
+   exceptions above still apply to each piece.
 2. **Scale.** No fixed cap on concurrent jobs or on how many of them run heavy work (Rust builds,
    test suites, bundlers): the machine has 96 GB of memory and Codex usage is effectively
    unlimited (the user, 2026-10-06). The number of pieces is set by how the work splits, not by a
@@ -212,8 +202,9 @@ by default for any job that splits cleanly; the user should not have to ask.
    owns, and the effort chosen with its reason.
 5. **Collect.** Verify each piece as it finishes, exactly as in Accept; a blocked piece does not stop
    the others. Integrate each accepted piece through the repository's workflow as its own slice.
-   When pieces must ship together, combine them in one worktree after review and rerun the checks
-   there.
+   When pieces must ship together, combine them in one worktree after review. Rerun the checks and
+   the independent review on the final combined diff before integration. Record it as a `verify`
+   entry.
 
 ## Observe, resume, cancel
 
@@ -286,10 +277,26 @@ by default for any job that splits cleanly; the user should not have to ask.
    "$JOURNAL" verify --run-dir "$RUN_DIR" --id check-01 --task task-01 \
      --criterion "<criterion>" --method command --check "<exact command>" \
      --result passed --observation "<what you observed>"
-   "$JOURNAL" task --run-dir "$RUN_DIR" --id task-01 --status complete
    ```
-5. Integrate through the repository's own workflow. The worker's changes are uncommitted edits in
-   the worktree, and the handoff says what it did. The worker never commits or ships.
+5. Run the independent review on the final diff that will ship. For worker handoffs use
+   `codex review --uncommitted -c sandbox_mode="read-only"` so new untracked files are included.
+   Once the branch has commits, commit the final edits and use `--base <branch>` instead, only
+   for committed changes, after confirming with `git status --short --untracked-files=all` that
+   nothing is untracked. Pass the original requirement in `-c developer_instructions=...` because
+   the diff selectors cannot be combined with a positional prompt.
+
+   Reviews of SQL privileges, grants, roles, or security boundaries start with a Claude reviewer
+   through `opus-delegate`. Codex's provider content filter has repeatedly stopped these reviews
+   partway (2026-10-22/23). If that is the entire diff, run only the Claude review and record it
+   as the `verify` entry. For a mixed diff, give Codex only the remaining diff and the original
+   requirement in a custom prompt.
+
+   Record each applicable review as a `verify` entry using the helper above. Resolve material
+   findings and repeat the review after any correction, fix after review, or combination of
+   parallel pieces. Integrate only once the review covers the final diff.
+6. Mark the task complete with `"$JOURNAL" task --run-dir "$RUN_DIR" --id task-01 --status complete`
+   and integrate through the repository's own workflow. The worker's changes are uncommitted edits
+   in the worktree, and the handoff says what it did. The worker never commits or ships.
 
 ## What actually constrains the worker
 

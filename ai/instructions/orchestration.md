@@ -1,9 +1,8 @@
 # Agent orchestration
 
-Machine-level policy for how coding agents on this Mac coordinate. It is
-deliberately general: no repository, issue, or client project is named.
-Anything specific to one codebase belongs in that codebase's own `AGENTS.md`
-or `CLAUDE.md`.
+Machine-level policy for how coding agents on this Mac coordinate. It is deliberately general:
+no repository, issue, or client project is named. Anything specific to one codebase belongs in
+that codebase's own `AGENTS.md` or `CLAUDE.md`.
 
 **Who actually loads this file.** Two local clients, automatically, for every
 project: Claude Code reads it as user memory from `~/.claude/CLAUDE.md`, and
@@ -11,26 +10,22 @@ Codex reads it as global user instructions from `$CODEX_HOME/AGENTS.md`
 (`~/.codex/AGENTS.md` unless `CODEX_HOME` is set, which nothing here sets).
 That is the whole list. This is a policy for **local workers**.
 
-**Remote workers do not read either file** — they are files on this Mac, and
-a cloud or browser session cannot see them. Do not assume a remote participant
-has read this policy. Supply relevant canonical policy excerpts and acceptance
-criteria with remote tasks, including review tasks; a link alone is not proof
-that the recipient received or read them.
+**Remote workers do not read either file** — they are files on this Mac, and a cloud or browser
+session cannot see them. Do not assume a remote participant has read this policy. Supply relevant
+canonical policy excerpts and acceptance criteria with remote tasks, including review tasks; a
+link alone is not proof that the recipient received or read them.
 
 ## Roles
 
-- **Claude Code** is the coordinator: the session the user works with plans,
+- **Claude Code** is the coordinator and reviewer of record. It plans,
   delegates, verifies, and **merges verified work** for changes the user asked
-  for, rather than leaving a finished pull request open. When the repository
-  requires another reviewer, request that review rather than asking the user.
-  Claude Code is also the default implementation and review worker.
-- **Workers** are Claude sub-agents (the `opus-delegate` skill) and Codex (the
-  `codex-delegate` skill), dispatched and supervised by the coordinator.
-  **The user's most recent instruction picks the worker:** "Codex" means
-  `codex-delegate`; "Neon" means the `neon` skill (Gemini 4 Neon through the
-  Antigravity CLI); "Opus", "sub-agents", or no instruction means `opus-delegate`.
-- **GitHub** is the durable source of truth. Issues, pull requests, and commits
-  outlive every session.
+  for, rather than leaving a finished pull request open. It requests any required
+  repository review rather than asking the user. Claude Code handles read-only
+  research and audits by default and does the small fixes routed to it by `codex-delegate`.
+- **Workers.** **The user's most recent instruction picks the worker:**
+  "Codex" or no instruction means `codex-delegate` (owner, 2026-11-26).
+  "Opus" or "sub-agents" means `opus-delegate`. "Neon" means `neon` (Gemini 4 Neon through the Antigravity CLI).
+- **GitHub** is the durable source of truth. Issues, pull requests, and commits outlive every session.
 
 ## Binding rules
 
@@ -99,12 +94,13 @@ that the recipient received or read them.
    tests pass. Inspect the original requirement, actual diff, and execution
    evidence; a clean automated review is not proof of necessity or completion.
 
-9. **A separate Claude reviewer is optional, not mandatory.** Open one when
-   risk, complexity, or local execution earns a genuinely independent read —
-   security, protocol and MCP behaviour, Nix and system state, migrations,
-   concurrency and shared state, large refactors. Its verdict is **evidence for
-   the coordinator, not a substitute for its review and merge decision**.
-   Skip it for small, low-risk, plainly correct work, and say you skipped it.
+9. **An independent Codex review is mandatory** after implementation and before
+   merging or reporting the work complete. Run `codex review -c model="gpt-6.2-sol"` with `-c sandbox_mode="read-only"`
+   on the final diff that will merge, after the last edit to it. The coordinator runs it; a delegated worker hands back its edits unreviewed. With nothing committed on top of the base use `--uncommitted`; otherwise commit, confirm nothing is untracked, and use `--base <base branch>`.
+   Give it the actual diff and the original requirement. The review applies to all implementation work, whoever implemented it.
+   Its verdict is **evidence for the coordinator, not a substitute for its review and merge decision**.
+   **A separate Claude reviewer is optional, not mandatory.** For SQL privileges, grants, roles, or security boundaries,
+   start with `opus-delegate` because Codex's content filter stops these reviews partway. A diff entirely of that kind completes with the Claude review alone; Codex reviews any remaining diff.
 
 10. **Never open a Claude session solely to watch another one.** Routine
     progress comes from the current client's status and wait tools for the

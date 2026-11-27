@@ -106,12 +106,11 @@ If the answer implies a change worth making, say so and wait. A question is not
 an instruction, and treating it as one destroys the ability to ask anything
 safely.
 
-**Match ceremony to the task.** Most work is one pass by one agent. Do not
-spawn sub-agents, panels, or parallel fan-outs for something a single pass
-finishes — delegation is for genuine breadth, or for adversarial review where
-an independent reading is the point. When several agents do run at once, state
-which files each owns before they start, or they will collide and the merge
-will cost more than the parallelism saved.
+**Match ceremony to the task.** Most work is one implementation pass by one
+agent. For Claude Code, delegating that pass to Codex is the default. Run the
+independent review required by rule 9. Use additional workers or parallel
+fan-outs only for genuine breadth or when another independent reading is
+warranted. Before several agents run at once, state which files each owns.
 
 ## Global instruction ownership
 

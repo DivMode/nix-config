@@ -55,7 +55,9 @@ Session-only scheduled jobs (CronCreate) die with this session. For each one:
 2. Tell the next session to schedule it itself.
 3. Cancel it here with CronDelete, so it runs exactly once.
 
-Done when every pending job has exactly one owner.
+The new session closes this session's pane (step 5), and that ends everything this session started: background shell tasks such as a `just pr`, monitors, and workers it supervises. Before step 5, wait for each one to finish, or stop it and hand its rerun to the next session as a task item.
+
+Done when every pending job has exactly one owner and nothing still runs in this session.
 
 ## 5. Start the new session in Herdr
 
@@ -64,10 +66,18 @@ Follow the `herdr` skill. In short:
 1. Confirm `HERDR_ENV=1`. Without Herdr, give the user the one-line prompt to paste into a new session in the repository root, and stop here.
 2. Inspect the caller's geometry with `herdr pane layout --pane "$HERDR_PANE_ID"`. Split right if the pane is wide, down if it is narrow or tall, using `--no-focus` and `--cwd <repository root>`.
 3. Start the agent in the new pane with `herdr agent start <task-name> --kind claude --pane <new pane>`, unless the user asked for another kind.
-4. Send the first prompt with `herdr agent prompt <task-name> "..."`. The prompt names the handoff path, says to carry it out in order, names the first action explicitly, and says to act and then report.
+4. Send the first prompt with `herdr agent prompt <task-name> "..."`. The prompt names the handoff path, says to carry it out in order, names the first action explicitly, and says to act and then report. It also carries the closing instruction below, with this session's pane ID (`$HERDR_PANE_ID`) and agent name filled in.
 5. Wait about 15 seconds, then `herdr agent get <task-name>`.
 
 Done when the agent's status is `working` and its title or recent output shows it picked up the handoff. If it stalls or blocks, read its output with `herdr agent read` and resolve it before reporting.
+
+### The closing instruction
+
+A session cannot close its own pane without cutting off its own report, so the new session closes it (owner, 2026-11-27: handed-off sessions were piling up in open panes). Put this in the first prompt:
+
+> Your predecessor is pane `<pane ID>`, agent `<agent name>`. Once you have verified the repository root and read the handoff, run `herdr agent wait <pane ID> --timeout 600000`, then `herdr agent get <pane ID>`. If the agent there is still `<agent name>` and its status is `idle` or `done`, close it with `herdr pane close <pane ID>`. If the name differs or the agent is still working or blocked, leave the pane open and say so in your report. Close no other pane.
+
+The new session closes only the predecessor named in its prompt. Other sessions' panes, including older sessions a handoff document lists, stay as they are.
 
 ## 6. Report
 
@@ -77,6 +87,7 @@ Tell the user:
 - the handoff path;
 - what the new session will do first;
 - which jobs moved to it;
-- anything this session left unresolved.
+- anything this session left unresolved;
+- that the new session will close this pane once this turn ends.
 
-Leave the other sessions' panes as they are.
+Then end the turn and start nothing more. Leave every other session's pane as it is.

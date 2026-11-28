@@ -394,7 +394,11 @@ let
         fi
         # A dpkg run cut off by a reboot leaves its journal dirty, and APT then
         # refuses every install below; this finishes it, and does nothing on a
-        # clean system.
+        # clean system. Other cuts mid-install (a half-unpacked package, a
+        # dependency pair split between unpacks) are not repaired here. A
+        # machine holds only caches, so the recovery is to recreate it: remove
+        # its ciRunnerVms entry and activate (that removes its agent), `orb
+        # delete` it, restore the entry and activate again.
         DEBIAN_FRONTEND=noninteractive dpkg --configure -a
 
         # OrbStack 2.2.5 adds Mac tool links and a login PATH hook even in an

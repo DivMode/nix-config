@@ -146,19 +146,15 @@
     count = 4;
   };
 
-  # A Linux CI runner VM for one private repository whose jobs are Linux
-  # containers (modules/home/ci-runner-vm.nix). Omit it to configure nothing.
-  # `labels` are what that repository's workflows put in `runs-on`; cpus,
-  # memory and disk default to 16, "24GiB" and "120GiB".
-  # ciRunnerVm = {
+  # Each entry creates an isolated OrbStack Ubuntu machine with rootful Docker
+  # (modules/home/ci-runner-vm.nix). `labels` go in the workflows' `runs-on`.
+  # Omit `cpus` or `memory` to share the corresponding OrbStack global limit.
+  # Omit ciRunnerVms to declare no Linux CI machines.
+  # ciRunnerVms.example-runner = {
   #   repository = "example-owner/example-linux-repository";
   #   labels = [ "example-label" ];
-  # };
-  # Named ciRunnerVms entries default to Lima. Set engine = "orbstack" to
-  # create an isolated OrbStack Ubuntu machine with its own rootful Docker.
-  # ciRunnerVms.example-runner = {
-  #   engine = "orbstack";
-  #   repository = "example-owner/example-linux-repository";
+  #   cpus = 8;
+  #   memory = "16GiB";
   # };
 
   # SMB shares mounted at login by modules/home/network-shares.nix. Leave

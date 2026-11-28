@@ -52,7 +52,6 @@ in
     ./herdr
     ./karabiner.nix
     ./launchers.nix
-    ./lima.nix
     ./ci-runner-vm.nix
     ./login-apps.nix
     ./media.nix

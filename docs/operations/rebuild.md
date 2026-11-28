@@ -43,7 +43,7 @@ it waits up to five minutes for all of them to come online, empties the token
 file, and exits non-zero otherwise. A registration token expires after an
 hour; a registered runner keeps its own credential in its state directory.
 
-When `local.nix` declares `ciRunnerVm` or `ciRunnerVms`, the script then runs
+When `local.nix` declares `ciRunnerVms`, the script then runs
 `nix-config-ci-runner-vm-register`. Each Linux VM has its own launchd agent,
 which starts it at login (`modules/home/ci-runner-vm.nix`). For each VM, the
 command waits up to thirty minutes for the guest to install Docker and the
@@ -55,8 +55,8 @@ VM), the remaining runners and VMs are still attempted, and
 the command exits non-zero if any VM failed. A GitHub listing error stops that
 runner's attempt without replacing its registration.
 
-Declare multiple VMs by instance name. Set `engine = "orbstack"` for an
-isolated OrbStack Ubuntu machine. The default engine is Lima.
+Declare each isolated OrbStack Ubuntu machine by instance name. Omit
+`ciRunnerVms` or leave it empty to declare no Linux CI machines.
 
 ```nix
 ciRunnerVms = {
@@ -66,7 +66,6 @@ ciRunnerVms = {
     runners = 3;
   };
   ci-repo-b = {
-    engine = "orbstack";
     repository = "owner/repo-b";
     labels = [ "mac-vm-b" ];
     cpus = 8;
@@ -75,22 +74,24 @@ ciRunnerVms = {
 };
 ```
 
-Each entry defaults to `name = <instance name>`, `labels = [ "mac-vm" ]`,
-`runners = 1`, `cpus = 16` and `memory = "24GiB"`. Lima defaults to
-`disk = "120GiB"`. Specify OrbStack memory as whole `GiB` or `MiB`.
+Each entry defaults to `name = <instance name>`, `labels = [ "mac-vm" ]`, and
+`runners = 1`. The optional `cpus` and `memory` set per-machine limits. Specify
+at least 1 GiB of memory in whole `GiB` or `MiB`. Each omitted limit shares
+OrbStack's global capacity for that resource.
 `runners` must be a positive integer. All expanded runner names must be
 distinct across entries. Instance names start with an alphanumeric character
-and contain only alphanumeric characters, dots, underscores or hyphens;
-`linux-gate-v1` is reserved for the gate VM. Each new entry owns launchd label
+and contain only alphanumeric characters, dots, underscores or hyphens.
+Each entry owns launchd label
 `org.nix-community.home.ci-runner-vm-<instance>`, and log
 `~/Library/Logs/ci-runner-vm-<instance>.log`. Guest files and credentials stay
-on that instance's disk. Lima entries each own `~/.config/lima/<instance>.yaml`
-and a subdirectory in the private `LIMA_HOME` directory.
+on that instance's disk.
 
-OrbStack provisions the runner and rootful Docker each time the launchd
-agent starts the machine. Activation sets OrbStack's global memory limit to
-fit the declared OrbStack entries, with a 16 GiB floor. If the limit changes,
-activation reports a pending OrbStack restart so active jobs can finish.
+Each time the launchd agent starts, it checks isolation, applies changed
+per-machine limits live, and provisions rootful Docker and the runner.
+Activation sets OrbStack's global limits to the Mac's physical RAM and CPU
+count. OrbStack releases unused memory back to macOS. If the global memory
+limit changes, activation reports a pending OrbStack restart so active jobs
+can finish.
 
 With `runners = 3`, the example's first VM runs `ci-repo-a`, `ci-repo-a-2`
 and `ci-repo-a-3`, all with the entry's labels. The first retains
@@ -103,12 +104,11 @@ limits. Increasing the count leaves an online first runner registered as-is.
 Home Manager reconciles runner counts after setting up launchd agents. It
 waits for the guest's initial provisioning and sends the desired runner
 provisioning script over standard input. This applies count changes to an
-existing VM without replacing its Lima template or restarting runner 1.
+existing machine while runner 1 stays running.
 Guest reconciliation uses a lock so activation and registration
 cannot install additional runners concurrently. Multi-runner registration
 also reconciles before registering its runners. Count changes
-leave the original Lima template, start script and launchd plist unchanged,
-so launchd does not restart the VM for a runner-count change. Additional units
+leave the start script and launchd plist unchanged. Additional units
 are enabled for subsequent boots.
 
 Reducing the count stops and disables surplus runner units and prints each
@@ -122,17 +122,6 @@ registration files remain. Lowering the count stops surplus units immediately,
 so reduce it when those runners have finished their jobs. Reconciliation also
 runs when the count is explicitly one or omitted, covering reductions back
 to the default without changing the original single-runner generated files.
-
-The single `ciRunnerVm = { repository = "owner/repo-a"; };` form retains
-instance `ci-runner-v1`, default runner name `mac-vm-1`, launchd label
-`org.nix-community.home.ci-runner-vm`, and its existing files. Keep it and add
-`ciRunnerVms` entries to add repositories without changing the existing VM.
-The two forms cannot both declare `ci-runner-v1`. Omitting both forms (or an
-empty `ciRunnerVms`) declares no runner VM. Templates configure newly created
-instances; shape changes do not resize an existing Lima instance. The runner
-count is reconciled separately for `ciRunnerVms`; the legacy `ciRunnerVm`
-form remains a single runner with its original generated files and no new
-reconciliation step.
 
 Do not hand-assemble the underlying command. It is recorded here only so the
 script's final step is reviewable:

@@ -109,13 +109,14 @@ if [[ -x "$register_bin" ]]; then
   fi
 fi
 
-# ── Register the Linux CI runner VM's runner ───────────────────────────────
-# Present only when local.nix declares ciRunnerVm. The VM itself is started by
-# launchd; on its first boot this waits for it to finish provisioning.
+# ── Register the Linux CI runners ──────────────────────────────────────────
+# Present only when local.nix declares ciRunnerVms. Each OrbStack machine is
+# started by launchd; on its first start this waits for it to finish
+# provisioning.
 vm_register_bin="/etc/profiles/per-user/$(id -un)/bin/nix-config-ci-runner-vm-register"
 if [[ -x "$vm_register_bin" ]]; then
   if ! "$vm_register_bin"; then
-    echo "ERROR: activation succeeded, but the CI runner VM's runner is not online (see above)." >&2
+    echo "ERROR: activation succeeded, but a Linux CI runner is not online (see above)." >&2
     exit 1
   fi
 fi

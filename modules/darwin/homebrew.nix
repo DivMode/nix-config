@@ -79,12 +79,10 @@
 
       "raycast"
 
-      # OrbStack, for the Linux CI runner machines (replacing the Lima VZ VMs
-      # of ../home/ci-runner-vm.nix). Its own virtualization stack returns
-      # unused guest memory to macOS (docs.orbstack.dev/efficiency); a VZ guest
-      # keeps every page it has touched (../home/ci-runner-vm.nix records the
-      # measurement). An auto_updates cask like chatgpt: the app updates
-      # itself, so no `greedy`.
+      # OrbStack runs all Linux CI machines. It returns unused guest memory to
+      # macOS (docs.orbstack.dev/efficiency), unlike the Lima VZ runner measured
+      # in ../home/ci-runner-vm.nix. An auto_updates cask like chatgpt: the app
+      # updates itself, so no `greedy`.
       "orbstack"
 
       # T3 Code, the agent control plane (./t3code.nix holds its machine

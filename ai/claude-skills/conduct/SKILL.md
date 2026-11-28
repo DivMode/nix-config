@@ -11,8 +11,8 @@ The task: `$ARGUMENTS`
 
 You are the lead for this task, in a T3 Code thread. You plan, split, delegate,
 check and merge. Write code yourself only when a piece is too small to hand off.
-Invoking this skill does not choose a worker: implementation goes to Codex
-unless the owner names another (global Roles), as the routes below say.
+Invoking this skill does not choose a worker: implementation goes to a Claude
+worker unless the owner names another (global Roles), as the routes below say.
 
 ## How T3 Code runs the team
 
@@ -35,8 +35,8 @@ children. Run the independent review through the Codex CLI as described below.
 
 | Job | Target | Effort |
 | --- | --- | --- |
-| Parallel implementation slices | Codex `gpt-6.2-sol` (Claude Opus 5.5 only when the owner names it) | high |
-| Clear-spec, many-file or mechanical work, scripts, migrations | Codex `gpt-6.2-sol` | medium for mechanical, high by default, xhigh for subtle logic |
+| Parallel implementation slices | Claude Sonnet 5.5 (Codex `gpt-6.2-sol` only when the owner names it) | high |
+| Clear-spec, many-file or mechanical work, scripts, migrations | Claude Sonnet 5.5 (Codex `gpt-6.2-sol` only when the owner names it) | medium for mechanical, high by default, xhigh for subtle logic |
 | A long, hard problem (design, a deep bug) | Claude Fable 5.2 | high; it hands execution back to you |
 | Independent review of the finished diff | `codex review -c model="gpt-6.2-sol" -c sandbox_mode="read-only"` | high by default |
 | Optional second opinion on a diff or plan | Claude Opus 5.5, or Antigravity Neon | high, read-only brief |

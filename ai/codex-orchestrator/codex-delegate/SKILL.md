@@ -28,7 +28,9 @@ repository baseline in `run_started` as upstream describes.
 
 Since 2026-11-27, `opus-delegate` is the default for delegated implementation (owner, replacing
 the 2026-11-26 Codex default). Use this skill when the user names Codex for the work; then a single
-Codex worker is the default implementation pass for it.
+Codex worker is the default implementation pass for it. Follow the user's explicit worker choice
+for the work they name, including a small fix they hand to Codex; the credential, deploy and
+live-system exceptions below still stay with Claude.
 
 Do it in Claude directly when any of these hold:
 - It is a small fix with a known exact edit, affecting a few files and roughly under 50 lines.

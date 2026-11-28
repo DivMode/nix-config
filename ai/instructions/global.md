@@ -107,8 +107,8 @@ an instruction, and treating it as one destroys the ability to ask anything
 safely.
 
 **Match ceremony to the task.** Most work is one implementation pass by one
-agent. For Claude Code, delegating that pass to an Opus sub-agent (`opus-delegate`) is
-the default. Run the
+agent. For Claude Code, delegating that pass to a Claude sub-agent through
+`opus-delegate` is the default. Run the
 independent review required by rule 9. Use additional workers or parallel
 fan-outs only for genuine breadth or when another independent reading is
 warranted. Before several agents run at once, state which files each owns.

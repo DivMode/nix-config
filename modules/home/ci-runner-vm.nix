@@ -154,6 +154,79 @@ let
         chmod 755 "$dir/register.sh"
         chown runner:runner "$dir/register.sh"
 
+        # Each runner's work directory is its own btrfs subvolume, so it has its
+        # own tree root lock and its own fsync log. With 20 runners in one
+        # subvolume, about 37 of 60 sampled D-state processes waited in
+        # btrfs_read_lock_root_node and 8 in wait_log_commit (/proc/<pid>/wchan,
+        # 2026-11-28), while the VM's CPU stayed 72-79% idle. The unit runs this
+        # before each start, when no job can be using the directory. A directory
+        # from before is reflink-copied in, so its checkout and tools stay warm.
+        # Every runner unit runs the helper, so replace it whole, never in place.
+        helper=$(mktemp /usr/local/sbin/.ci-runner-work-subvolume.XXXXXX)
+        cat > "$helper" <<'SUBVOLUME'
+        #!/bin/bash
+        # Converting is only an optimisation: whenever it cannot be done safely
+        # now, start the runner on the directory as it is and try next start.
+        set -euo pipefail
+        work="$1" new="$1.new" old="$1.old"
+        # A btrfs subvolume's top directory is always inode 256. Checking the
+        # path itself avoids "subvolume show", which lists every subvolume and
+        # fails when another runner deletes one at the same time.
+        is_subvolume() {
+          [ "$(stat -c %i "$1" 2>/dev/null)" = 256 ]
+        }
+        if is_subvolume "$work" && [ ! -e "$old" ]; then
+          exit 0
+        fi
+        skip() {
+          echo "not converting $work now: $1" >&2
+          exit 0
+        }
+        command -v btrfs >/dev/null || skip "btrfs-progs is not installed yet"
+        # A job container that outlived a crashed runner, in any state but
+        # exited, keeps the old directory mounted.
+        containers=$(docker ps -q --filter status=created --filter status=running \
+          --filter status=restarting --filter status=paused --filter status=removing) ||
+          skip "docker ps failed"
+        mounts=""
+        if [ -n "$containers" ]; then
+          # shellcheck disable=SC2086
+          mounts=$(docker inspect --format '{{range .Mounts}}{{println .Source}}{{end}}' $containers) ||
+            skip "a container's mounts could not be read"
+        fi
+        if grep -qF -- "$work" <<< "$mounts"; then
+          skip "it is mounted in a container"
+        fi
+        # A conversion stopped between its two renames: put the original back,
+        # over the empty work directory the runner may have made since.
+        if [ -d "$old" ] && ! is_subvolume "$work"; then
+          if [ -e "$work" ]; then
+            rm -r "$work"
+          fi
+          mv -T "$old" "$work"
+        fi
+        if ! is_subvolume "$work"; then
+          if is_subvolume "$new"; then
+            btrfs subvolume delete "$new"
+          fi
+          btrfs subvolume create "$new"
+          if [ -d "$work" ]; then
+            cp -a --reflink=auto "$work/." "$new/"
+          fi
+          chown runner:runner "$new"
+          if [ -d "$work" ]; then
+            mv -T "$work" "$old"
+          fi
+          mv -T "$new" "$work"
+        fi
+        # Also finishes a removal a previous start did not complete.
+        if [ -e "$old" ]; then
+          rm -r "$old"
+        fi
+        SUBVOLUME
+        chmod 755 "$helper"
+        mv -f "$helper" /usr/local/sbin/ci-runner-work-subvolume
+
         cat > /etc/systemd/system/${runner.service}.service <<'UNIT'
         [Unit]
         Description=GitHub Actions runner
@@ -164,6 +237,11 @@ let
         [Service]
         User=runner
         WorkingDirectory=${runner.directory}
+        # "-" and the 5-minute limit: a failed or stalled conversion never keeps
+        # the runner from starting. A 2.4 GB, 39k-file work directory copies in
+        # well under that; the start limit stays above it.
+        ExecStartPre=-+/usr/bin/timeout 5m /usr/local/sbin/ci-runner-work-subvolume ${runner.directory}/_work
+        TimeoutStartSec=10min
         ExecStart=${runner.directory}/run.sh
         Restart=always
         RestartSec=10
@@ -288,6 +366,16 @@ let
         if ! command -v git >/dev/null || ! command -v jq >/dev/null; then
           apt-get update
           DEBIAN_FRONTEND=noninteractive apt-get install -y git jq
+        fi
+        # The runner units' work-subvolume helper needs btrfs-progs, but runs
+        # without it (it skips converting), so a failed download must not stop
+        # provisioning. Installed here only: this runs once per boot, outside
+        # reconcile's lock, so a second apt-get in provisionRunner could race
+        # it for the APT lock.
+        if ! command -v btrfs >/dev/null; then
+          if ! { apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y btrfs-progs; }; then
+            echo "warning: btrfs-progs not installed; runner work directories stay unconverted" >&2
+          fi
         fi
         # Install rootful Docker with CDI and the containerd image store.
         if ! command -v docker >/dev/null; then

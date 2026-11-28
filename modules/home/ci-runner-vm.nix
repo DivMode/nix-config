@@ -188,12 +188,17 @@ let
         containers=$(docker ps -q --filter status=created --filter status=running \
           --filter status=restarting --filter status=paused --filter status=removing) ||
           skip "docker ps failed"
+        # Inspected one by one: on a busy machine other runners' containers
+        # exit between "docker ps" and "docker inspect" ("no such object",
+        # 2026-11-28), and a container that is gone holds no mount.
         mounts=""
-        if [ -n "$containers" ]; then
-          # shellcheck disable=SC2086
-          mounts=$(docker inspect --format '{{range .Mounts}}{{println .Source}}{{end}}' $containers) ||
-            skip "a container's mounts could not be read"
-        fi
+        for container in $containers; do
+          if container_mounts=$(docker inspect --format '{{range .Mounts}}{{println .Source}}{{end}}' "$container" 2>/dev/null); then
+            mounts+="$container_mounts"$'\n'
+          elif docker inspect "$container" >/dev/null 2>&1; then
+            skip "the mounts of container $container could not be read"
+          fi
+        done
         if grep -qF -- "$work" <<< "$mounts"; then
           skip "it is mounted in a container"
         fi

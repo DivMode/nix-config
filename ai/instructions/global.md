@@ -268,10 +268,12 @@ timed out suites under load (2026-11-28).
   experimental or test repository.
 - **Migrate once, clone per test.** Integration tests run the migrations once
   into a template database in the framework's global setup (Vitest
-  `globalSetup` with `provide`/`inject`). Each test or suite then gets
-  `CREATE DATABASE … TEMPLATE`. Never run the full migration chain inside
+  `globalSetup` with `provide`/`inject`), then close every connection to it:
+  PostgreSQL refuses to clone a template that has one open. Each test or suite
+  then gets `CREATE DATABASE … TEMPLATE`. Never run the full migration chain inside
   each suite's setup hook.
-- **No durability on a database that is thrown away.** Start it with
+- **No durability on a server that is thrown away.** These settings are
+  server-wide, so use them only when the whole instance is disposable. Start it with
   `fsync=off`, `synchronous_commit=off` and `full_page_writes=off`
   (PostgreSQL's "Non-Durable Settings").
 

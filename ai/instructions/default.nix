@@ -79,16 +79,17 @@ let
   #
   # Who merges belongs in Roles because it is a standing fact about the
   # coordinator, not a step to follow; so does which worker the user's words
-  # pick. Both halves are pinned to hold Codex as the default (owner, 2026-11-26)
-  # so it cannot quietly flip back to opus-delegate. The phrases under Binding
+  # pick. Both halves are pinned to hold opus-delegate as the default (owner,
+  # 2026-11-27, replacing Codex as the default from 2026-11-26) so it cannot
+  # quietly flip back to codex-delegate. The phrases under Binding
   # rules are obligations, and an obligation that is not a binding rule is
   # a suggestion.
   sectionPhrases = {
     "## Roles" = [
       "delegates, verifies, and **merges verified work** for changes the user asked"
       "**The user's most recent instruction picks the worker:**"
-      "\"Codex\" or no instruction means `codex-delegate` (owner, 2026-11-26)."
-      "\"Opus\" or \"sub-agents\" means `opus-delegate`."
+      "\"Opus\", \"sub-agents\" or no instruction means `opus-delegate` (owner, 2026-11-27)."
+      "\"Codex\" means `codex-delegate`."
     ];
     "## Binding rules" = [
       "**Reconcile before you open.**"

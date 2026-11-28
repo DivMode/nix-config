@@ -1,6 +1,6 @@
 ---
 name: codex-delegate
-description: Codex workers — hand a coding job to a Codex CLI worker (gpt-6.2-sol at an effort Claude chooses per job; Fast tier only when the user asks for fast mode) while Claude plans, supervises, and accepts. Codex is the default for all implementation work in every Claude Code session (owner, 2026-11-26). Use the per-piece exceptions below or follow the user's explicit worker choice.
+description: Codex workers — hand a coding job to a Codex CLI worker (gpt-6.2-sol at an effort Claude chooses per job; Fast tier only when the user asks for fast mode) while Claude plans, supervises, and accepts. Use when the user names Codex for the work. Since 2026-11-27 the owner's default worker is opus-delegate; within a Codex job, apply the per-piece exceptions below.
 ---
 
 # Delegate an implementation to Codex
@@ -26,9 +26,9 @@ repository baseline in `run_started` as upstream describes.
 
 ## Codex or Claude: decide per piece of work
 
-Codex is the default for all implementation work in every Claude Code session (owner, 2026-11-26).
-A single Codex worker is the default implementation pass. Follow the user's explicit worker choice
-for the work they name.
+Since 2026-11-27, `opus-delegate` is the default for delegated implementation (owner, replacing
+the 2026-11-26 Codex default). Use this skill when the user names Codex for the work; then a single
+Codex worker is the default implementation pass for it.
 
 Do it in Claude directly when any of these hold:
 - It is a small fix with a known exact edit, affecting a few files and roughly under 50 lines.

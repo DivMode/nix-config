@@ -318,9 +318,8 @@ disable all of it.
 `claude-skills/opus-delegate` is the sibling of `codex-delegate`: the same assignment,
 worktree, single-correction, and acceptance discipline, with the Agent tool as
 the mechanism instead of a runner, journal, and guard hook. Claude picks the
-model, effort, and agent type per piece. The global Roles rule routes "Codex"
-or no instruction to `codex-delegate` and "Opus" or "sub-agents" to
-`opus-delegate`. Both skills write their briefs from
+model, effort, and agent type per piece. The global Roles rule routes "Opus", "sub-agents"
+or no instruction to `opus-delegate` and "Codex" to `codex-delegate`. Both skills write their briefs from
 `delegation/assignment.md`, copied beside each `SKILL.md`, so the two cannot
 drift.
 

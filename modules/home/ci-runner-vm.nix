@@ -2,26 +2,63 @@
   config,
   lib,
   local,
+  orbstack,
   pkgs,
   ...
 }:
 let
   legacy = local.ciRunnerVm or null;
   declared = local.ciRunnerVms or { };
-  vms = lib.mapAttrs mkVm (declared // lib.optionalAttrs (legacy != null) { ci-runner-v1 = legacy; });
+  configuredVms = lib.mapAttrs mkVm (
+    declared // lib.optionalAttrs (legacy != null) { ci-runner-v1 = legacy; }
+  );
+  vms = lib.filterAttrs (_: vm: vm.engine != "lima" || cacheDirectory != null) configuredVms;
   vmList = lib.attrValues vms;
   cacheDirectory = local.cacheDirectory or null;
-  enabled =
-    vmList != [ ]
-    && pkgs.stdenv.hostPlatform.isDarwin
-    && pkgs.stdenv.hostPlatform.isAarch64
-    && cacheDirectory != null;
+  enabled = vmList != [ ] && pkgs.stdenv.hostPlatform.isDarwin && pkgs.stdenv.hostPlatform.isAarch64;
 
   limaHome = "${cacheDirectory}/lima";
+  inherit (orbstack) orb;
+  requireOrb = ''
+    if [ ! -x ${orb} ]; then
+      echo "error: OrbStack is required at ${orb} (install the orbstack cask)" >&2
+      exit 1
+    fi
+  '';
   mkVm =
     instance: cfg:
     let
       isLegacy = legacy != null && instance == "ci-runner-v1";
+      engine = if isLegacy then "lima" else cfg.engine or "lima";
+      useOrbStack = engine == "orbstack";
+      guest =
+        if useOrbStack then
+          "${orb} -m ${instance} -u root -w /"
+        else
+          "limactl shell --workdir / ${instance}";
+      orbRunning = ''
+        orb_running() {
+          local machines
+          machines=$(${orb} list --running --quiet) || return 1
+          grep -qxF -- ${instance} <<< "$machines"
+        }
+      '';
+      guestSetup =
+        if useOrbStack then
+          lib.removeSuffix "\n" ''
+            ${requireOrb}
+            ${orbRunning}
+            in_running_guest() {
+              # "orb -m ... test -e /run/ci-runner-provisioned" moved a
+              # stopped probe to Running. Let launchd start and provision it.
+              orb_running || return 1
+              ${guest} "$@"
+            }
+          ''
+        else
+          "export LIMA_HOME=${lib.escapeShellArg limaHome}";
+      runningGuest = if useOrbStack then "in_running_guest" else guest;
+      limaInputs = lib.optionals (!useOrbStack) [ pkgs.lima ];
       runnerName = cfg.name or (if isLegacy then "mac-vm-1" else instance);
       requestedRunners = if isLegacy then 1 else cfg.runners or 1;
       runnerCount =
@@ -199,25 +236,25 @@ let
       reconcileGuest = pkgs.writeText "${instance}-reconcile-runners.sh" reconcileGuestText;
       reconcile = pkgs.writeShellApplication {
         name = "nix-config-${agentName}-reconcile";
-        runtimeInputs = [ pkgs.lima ];
+        runtimeInputs = limaInputs;
         text = ''
           # Home Manager activation runs this with a PATH that has no /usr/bin,
           # and limactl execs macOS's sw_vers to resolve a vz instance; without it
           # every lookup failed with "sw_vers: executable file not found"
           # (rebuild 2026-11-16) and this loop waited 30 minutes for a running VM.
           export PATH="$PATH:/usr/bin:/bin:/usr/sbin:/sbin"
-          export LIMA_HOME=${lib.escapeShellArg limaHome}
+          ${guestSetup}
           for _ in $(seq 180); do
-            if limactl shell --workdir / ${instance} test -e /run/ci-runner-provisioned 2>/dev/null; then
+            if ${runningGuest} test -e /run/ci-runner-provisioned 2>/dev/null; then
               break
             fi
             sleep 10
           done
-          limactl shell --workdir / ${instance} test -e /run/ci-runner-provisioned || {
+          ${runningGuest} test -e /run/ci-runner-provisioned || {
             echo "error: ${instance} did not finish provisioning within 30 minutes" >&2
             exit 1
           }
-          limactl shell --workdir / ${instance} sudo bash < ${reconcileGuest}
+          ${runningGuest} sudo bash < ${reconcileGuest}
         '';
       };
       reconcileCommand = "${reconcile}/bin/nix-config-${agentName}-reconcile";
@@ -260,7 +297,7 @@ let
 
       # launchd keeps this running. The VM is created on first start; a start that
       # finds it already running (started by hand) just waits for it to stop.
-      start = pkgs.writeShellApplication {
+      limaStart = pkgs.writeShellApplication {
         name = startName;
         runtimeInputs = [ pkgs.lima ];
         text = ''
@@ -278,6 +315,79 @@ let
         '';
       };
 
+      orbProvision = pkgs.writeText "${instance}-orbstack-provision.sh" ''
+        #!/bin/bash
+        set -euo pipefail
+        if [ -e /run/ci-runner-provisioned ]; then
+          unlink /run/ci-runner-provisioned
+        fi
+
+        # OrbStack 2.2.5 adds Mac tool links and a login PATH hook even in an
+        # isolated machine. Leave them out of runner shells. Running
+        # mac /usr/bin/true returned "dial: no such file or directory".
+        for tool in mac macctl; do
+          if [ "$(readlink "/usr/local/bin/$tool")" = "/opt/orbstack-guest/bin/$tool" ]; then
+            unlink "/usr/local/bin/$tool"
+          fi
+        done
+        profile=/etc/profile.d/999-orbstack.sh
+        if [ "$(readlink "$profile")" = /opt/orbstack-guest/etc/profile-late ]; then
+          unlink "$profile"
+        fi
+
+        # The OrbStack Ubuntu image lacks the Git and jq packages.
+        if ! command -v git >/dev/null || ! command -v jq >/dev/null; then
+          apt-get update
+          DEBIAN_FRONTEND=noninteractive apt-get install -y git jq
+        fi
+        # Match the pinned Lima docker-rootful.yaml installer and daemon features.
+        if ! command -v docker >/dev/null; then
+          export DEBIAN_FRONTEND=noninteractive
+          curl -fsSL https://get.docker.com | sh
+        fi
+        daemon_config=/etc/docker/daemon.json
+        desired_config=$(mktemp)
+        trap 'unlink "$desired_config"' EXIT
+        if [ -f "$daemon_config" ]; then
+          cat "$daemon_config"
+        else
+          echo '{}'
+        fi | jq -S '.features.cdi = true | .features["containerd-snapshotter"] = true' > "$desired_config"
+        if ! cmp -s "$desired_config" "$daemon_config"; then
+          install -D -m 644 "$desired_config" "$daemon_config"
+          systemctl restart docker.service
+        fi
+        systemctl enable --now docker.service
+
+        ${provisionRunner firstRunner}
+      '';
+      orbStart = pkgs.writeShellApplication {
+        name = startName;
+        runtimeInputs = [ pkgs.jq ];
+        text = ''
+          ${requireOrb}
+          ${orb} start
+          machine=$(${orb} list --format json | jq -c --arg name ${instance} '.[] | select(.name == $name)')
+          if [ -z "$machine" ]; then
+            ${orb} create --isolated --cpus ${lib.escapeShellArg (toString (cfg.cpus or 16))} \
+              --memory ${toString orbstack.memoryMiB.${instance}} ubuntu ${instance}
+          elif ! jq -e '.config.isolated and (.config.forward_ssh_agent == false)
+                       and ((.config.mounts // []) | length == 0)' <<< "$machine" >/dev/null; then
+            echo "error: OrbStack machine ${instance} must be isolated with no host mounts or SSH agent forwarding" >&2
+            exit 1
+          fi
+
+          ${orbRunning}
+          if ! orb_running; then
+            ${orb} start ${instance}
+          fi
+          ${guest} bash < ${orbProvision}
+          # A reboot can finish between polls. Its tmpfs marker is gone.
+          while orb_running && ${guest} test -e /run/ci-runner-provisioned; do sleep 60; done
+        '';
+      };
+      start = if useOrbStack then orbStart else limaStart;
+
       registerRunner =
         runner:
         let
@@ -285,17 +395,14 @@ let
         in
         pkgs.writeShellApplication {
           name = runner.scriptName;
-          runtimeInputs = [
-            pkgs.lima
-            pkgs.jq
-          ];
+          runtimeInputs = limaInputs ++ [ pkgs.jq ];
           text = ''
             # Registers the VM's runner when GitHub does not list it as online, then
             # waits until it is. Runs as the owner: only the owner's `gh` login may
             # issue a registration token. The token goes to the guest on stdin, lives
             # an hour, and only registers runners; the runner's lasting credential
             # stays on the VM's own disk.
-            export LIMA_HOME=${lib.escapeShellArg limaHome}
+            ${guestSetup}
             repository=${lib.escapeShellArg cfg.repository}
             name=${lib.escapeShellArg runnerName}
             labels=${lib.escapeShellArg labels}
@@ -319,7 +426,7 @@ let
               return "$status"
             }
             in_guest() {
-              limactl shell --workdir / ${instance} "$@"
+              ${runningGuest} "$@"
             }
             if online_or_stop; then
               echo "runner $name is online"
@@ -336,7 +443,12 @@ let
             done
             in_guest test -e /run/ci-runner-provisioned || {
               echo "error: ${instance} did not finish provisioning within 30 minutes" >&2
-              echo "see $LIMA_HOME/${instance}/ha.stderr.log and serial*.log" >&2
+              ${
+                if useOrbStack then
+                  ''echo "see ${orb} logs ${instance} and ~/Library/Logs/${agentName}.log" >&2''
+                else
+                  ''echo "see $LIMA_HOME/${instance}/ha.stderr.log and serial*.log" >&2''
+              }
               exit 1
             }
 
@@ -373,7 +485,9 @@ let
               sleep 5
             done
             echo "error: $name is not online after 5 minutes" >&2
-            echo "see: limactl shell ${instance} sudo journalctl -u ${runner.service} -n 50" >&2
+            echo "see: ${
+              if useOrbStack then guest else "limactl shell ${instance}"
+            } sudo journalctl -u ${runner.service} -n 50" >&2
             exit 1
           '';
         };
@@ -405,6 +519,7 @@ let
     in
     {
       inherit
+        engine
         template
         start
         register
@@ -462,10 +577,10 @@ in
   # is arm64 with Rosetta registered through binfmt: arm64 binaries run
   # natively, amd64 containers under Rosetta.
   #
-  # Isolation is the VM itself: no host directory is mounted, no guest port or
-  # socket is forwarded, and the only way in from the host is Lima's own SSH
-  # forward (`limactl shell`, as the owner). A job sees the guest disk, the
-  # guest's Docker and the network.
+  # Lima mounts no host directories and forwards only its own SSH connection
+  # (`limactl shell`, as the owner). OrbStack uses isolated machines without Mac
+  # integration, SSH agent forwarding or automatic port forwards (./orbstack.nix).
+  # OrbStack machines share its Linux kernel rather than booting their own.
   #
   # It starts at login and stays up (launchd KeepAlive). This Mac has no
   # automatic login, so after a restart the runner is offline until the owner
@@ -505,8 +620,18 @@ in
         assertion = builtins.all (
           instance:
           builtins.match "[a-zA-Z0-9][a-zA-Z0-9_.-]*" instance != null && instance != "linux-gate-v1"
-        ) (builtins.attrNames vms);
-        message = "ciRunnerVms keys must be Lima instance names (alphanumeric first, then alphanumeric, dot, underscore or hyphen), excluding the reserved linux-gate-v1.";
+        ) (builtins.attrNames configuredVms);
+        message = "ciRunnerVms keys must be instance names (alphanumeric first, then alphanumeric, dot, underscore or hyphen), excluding the reserved linux-gate-v1.";
+      }
+      {
+        assertion = builtins.all (
+          vm:
+          builtins.elem vm.engine [
+            "lima"
+            "orbstack"
+          ]
+        ) vmList;
+        message = ''ciRunnerVms.engine must be "lima" or "orbstack".'';
       }
       {
         assertion =
@@ -520,16 +645,16 @@ in
     # The existing single-runner template and registration stay byte-identical.
     # Reconcile counts separately so lowering back to one also stops and names
     # surplus runners. The legacy form has no reconciliation step.
-    home.activation = lib.optionalAttrs (declared != { }) {
+    home.activation = lib.optionalAttrs (builtins.intersectAttrs declared vms != { }) {
       reconcileCiRunnerVms = lib.hm.dag.entryAfter [ "setupLaunchAgents" ] ''
         ci_runner_status=0
         ${lib.concatStringsSep "\n" (
-          lib.mapAttrsToList (instance: _: ''
-            if ! run ${vms.${instance}.reconcileCommand}; then
+          lib.mapAttrsToList (instance: vm: ''
+            if ! run ${vm.reconcileCommand}; then
               echo ${lib.escapeShellArg "error: could not reconcile runners in VM ${instance}"} >&2
               ci_runner_status=1
             fi
-          '') declared
+          '') (builtins.intersectAttrs declared vms)
         )}
         if [ "$ci_runner_status" -ne 0 ]; then
           exit "$ci_runner_status"
@@ -539,7 +664,7 @@ in
     home.packages = map (vm: vm.start) vmList ++ [ registerAll ];
     xdg.configFile = lib.mapAttrs' (
       instance: vm: lib.nameValuePair "lima/${instance}.yaml" { source = vm.template; }
-    ) vms;
+    ) (lib.filterAttrs (_: vm: vm.engine == "lima") vms);
     launchd.agents = lib.listToAttrs (map (vm: lib.nameValuePair vm.agentName vm.agent) vmList);
   };
 }

@@ -154,6 +154,12 @@
   #   repository = "example-owner/example-linux-repository";
   #   labels = [ "example-label" ];
   # };
+  # Named ciRunnerVms entries default to Lima. Set engine = "orbstack" to
+  # create an isolated OrbStack Ubuntu machine with its own rootful Docker.
+  # ciRunnerVms.example-runner = {
+  #   engine = "orbstack";
+  #   repository = "example-owner/example-linux-repository";
+  # };
 
   # SMB shares mounted at login by modules/home/network-shares.nix. Leave
   # `mounts` empty to disable the module entirely.

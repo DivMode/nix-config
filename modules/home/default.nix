@@ -60,6 +60,7 @@ in
     ./mouse.nix
     ./network-shares.nix
     ./omlx.nix
+    ./orbstack.nix
     ./privacy.nix
     ./projects.nix
     ./python.nix

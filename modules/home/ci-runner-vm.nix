@@ -264,6 +264,13 @@ let
 
         [Service]
         ${nixUnitEnvironment}User=runner
+        # Every runner on a machine shares the runner user's HOME, and rustup
+        # is not safe for concurrent use (rust-lang/rustup#988, open): two jobs
+        # installing one toolchain into /home/runner/.rustup at once failed with
+        # "could not rename 'downloaded' file" (2026-11-28). So each runner keeps
+        # its toolchains in its own work subvolume, about 1.3 GB per runner that
+        # uses Rust. Cargo locks its own package cache, so CARGO_HOME stays shared.
+        Environment=RUSTUP_HOME=${runner.directory}/_work/_rustup
         WorkingDirectory=${runner.directory}
         # "-" and the 5-minute limit: a failed or stalled conversion never keeps
         # the runner from starting. A 2.4 GB, 39k-file work directory copies in

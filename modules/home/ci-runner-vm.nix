@@ -76,26 +76,20 @@ let
       ghVersion = "2.104.0";
       ghSha256 = "cb34cefc6f4e77b90731374a2b737516bb8f3033c6ca46aa949e5344f68069e3";
 
-      # Optional `nix = true`: multi-user Nix with flakes, for job steps that call
-      # `nix shell` or `nix develop`. The sha256 is the contents of
-      # https://releases.nixos.org/nix/nix-2.36.0/nix-2.36.0-aarch64-linux.tar.xz.sha256
-      # (nixos.org/nix/install redirects to nix-2.36.0 on 2026-11-28); the
-      # downloaded tarball hashes to the same value.
+      # Optional `nix = true`: multi-user Nix with flakes, for job steps that
+      # call `nix shell` or `nix develop`. It comes from Ubuntu's own packages
+      # (nix-setup-systemd, which pulls nix-bin: Nix 2.34.3 in 26.04), so dpkg
+      # makes the install idempotent and resumable; the release tarball's
+      # installer refused to rerun after an interruption. `nix` lands in
+      # /usr/bin, already on the runner's PATH. Flakes are enabled for the
+      # runner through NIX_CONFIG rather than in /etc/nix/nix.conf, which is a
+      # dpkg conffile. A running runner picks up a unit change at its next
+      # start: provisioning never restarts a runner that may be running a job,
+      # so switching `nix` on for online runners takes an idle restart of each.
       nixEnabled = cfg.nix or false;
-      nixVersion = "2.36.0";
-      nixSha256 = "ee696971de946d311699f6dd639cccc8c6734aec9a061b8e205de0ce6515e5ae";
-      # How a job gets `nix` on PATH. The unit starts run.sh, which starts
-      # Runner.Listener; the job worker inherits its PATH
-      # (src/Runner.Worker/Handlers/Handler.cs:226-229 in actions/runner v2.338.2).
-      # The `.path` file env.sh writes is read only by runsvc.sh
-      # (src/Misc/layoutbin/runsvc.sh:7-9), which the unit does not use, so the
-      # unit sets PATH itself. This is the Ubuntu systemd default plus Nix last
-      # (nothing the machine already resolves changes), and it reaches runners
-      # that are already registered. A running runner picks it up at its next
-      # start, as with every unit change here: provisioning never restarts a
-      # runner that may be running a job, so switching `nix` on for a machine
-      # whose runners are online takes a restart of each one while it is idle.
-      nixUnitEnvironment = lib.optionalString nixEnabled "Environment=PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/nix/var/nix/profiles/default/bin\n";
+      nixUnitEnvironment = lib.optionalString nixEnabled ''
+        Environment="NIX_CONFIG=experimental-features = nix-command flakes"
+      '';
 
       # Runs as root inside the guest after Docker provisioning. Idempotent:
       # each step checks for its own result.
@@ -105,6 +99,11 @@ let
 
         id runner >/dev/null 2>&1 || useradd --create-home --shell /bin/bash runner
         usermod --append --groups docker runner
+        ${lib.optionalString nixEnabled ''
+          # The Nix daemon's socket directory is 770 root:nix-users
+          # (/usr/lib/tmpfiles.d/nix-daemon.conf in nix-setup-systemd).
+          usermod --append --groups nix-users runner
+        ''}
 
         # What CI steps expect on a runner host beyond Docker, git and curl.
         packages="jq unzip zip python3-pip python3-venv"
@@ -442,60 +441,19 @@ let
           locale-gen en_US.UTF-8
         fi
         ${lib.optionalString nixEnabled ''
-          # Here, once per boot, for the same APT lock reason as btrfs-progs above.
-          nix_bin=/nix/var/nix/profiles/default/bin/nix
-          if [ ! -x "$nix_bin" ]; then
-            nix_missing=""
-            for package in curl xz-utils ca-certificates; do
-              dpkg -s "$package" >/dev/null 2>&1 || nix_missing="$nix_missing $package"
-            done
-            if [ -n "$nix_missing" ]; then
-              apt-get update
-              # shellcheck disable=SC2086
-              DEBIAN_FRONTEND=noninteractive apt-get install -y $nix_missing
-            fi
-            # A subshell, so its EXIT trap removes the staging directory on
-            # failure too, without replacing this script's own EXIT trap.
-            (
-              set -e
-              nix_dir=$(mktemp -d)
-              trap 'rm -r "$nix_dir"' EXIT
-              curl -fsSL -o "$nix_dir/nix.tar.xz" \
-                "https://releases.nixos.org/nix/nix-${nixVersion}/nix-${nixVersion}-aarch64-linux.tar.xz"
-              echo "${nixSha256}  $nix_dir/nix.tar.xz" | sha256sum -c -
-              tar -xJf "$nix_dir/nix.tar.xz" -C "$nix_dir"
-              cd "$nix_dir/nix-${nixVersion}-aarch64-linux"
-              # stdin is this script (piped to bash), so the installer must not read it.
-              ./install --daemon --yes --no-channel-add < /dev/null
-            )
+          # Here, once per boot, for the same APT lock reason as btrfs-progs
+          # above. A package left half-configured by an interruption is
+          # finished by dpkg --configure first.
+          nix_package=$(dpkg -s nix-setup-systemd 2>/dev/null || true)
+          if ! grep -qx 'Status: install ok installed' <<< "$nix_package"; then
+            DEBIAN_FRONTEND=noninteractive dpkg --configure -a
+            apt-get update
+            DEBIAN_FRONTEND=noninteractive apt-get install -y nix-setup-systemd
           fi
-          # The installer's nix.conf holds only build-users-group. Keep a single
-          # experimental-features line, last; rewrite only when it differs.
-          nix_conf=/etc/nix/nix.conf
-          nix_conf_new=$(mktemp)
-          {
-            grep -v '^experimental-features[[:space:]]*=' "$nix_conf" || true
-            echo 'experimental-features = nix-command flakes'
-          } > "$nix_conf_new"
-          nix_conf_changed=0
-          if ! cmp -s "$nix_conf_new" "$nix_conf"; then
-            install -m 644 "$nix_conf_new" "$nix_conf"
-            nix_conf_changed=1
-          fi
-          unlink "$nix_conf_new"
-          # An install interrupted after the profile was populated but before
-          # the installer linked the daemon units leaves nix without them; link
-          # them from the profile as the installer does.
-          for nix_unit in nix-daemon.socket nix-daemon.service; do
-            if ! systemctl cat "$nix_unit" >/dev/null 2>&1; then
-              systemctl link "/nix/var/nix/profiles/default/lib/systemd/system/$nix_unit"
-            fi
-          done
-          systemctl enable --now nix-daemon.socket
-          systemctl start nix-daemon.service
-          if [ "$nix_conf_changed" = 1 ]; then
-            systemctl restart nix-daemon.service
-          fi
+          # The package enables and starts nix-daemon.service itself; its socket
+          # unit then refuses to listen ("Socket service nix-daemon.service
+          # already active"), so this ensures the service, not the socket.
+          systemctl enable --now nix-daemon.service
         ''}
         ${provisionRunner firstRunner}
       '';

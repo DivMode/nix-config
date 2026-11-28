@@ -155,6 +155,15 @@
   #   labels = [ "example-label" ];
   #   cpus = 8;
   #   memory = "16GiB";
+  #   runners = 4;
+  #   # Multi-user Nix with flakes on the runners' PATH, for jobs that call
+  #   # `nix shell`.
+  #   nix = true;
+  #   # Optional, off by default: each runner gets 4 CPUs of its own
+  #   # (CPUAffinity=), exported to jobs as CI_RUNNER_CPUSET and CI_RUNNER_CPUS
+  #   # for `docker run --cpuset-cpus`. Every machine that sets it must use the
+  #   # same value.
+  #   slotCpus = 4;
   # };
 
   # SMB shares mounted at login by modules/home/network-shares.nix. Leave

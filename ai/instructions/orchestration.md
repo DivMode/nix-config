@@ -21,10 +21,10 @@ link alone is not proof that the recipient received or read them.
   delegates, verifies, and **merges verified work** for changes the user asked
   for, rather than leaving a finished pull request open. It requests any required
   repository review rather than asking the user. Claude Code handles read-only
-  research and audits by default and does the small fixes routed to it by `codex-delegate`.
+  research and audits by default and does the small fixes routed to it by `opus-delegate`.
 - **Workers.** **The user's most recent instruction picks the worker:**
-  "Codex" or no instruction means `codex-delegate` (owner, 2026-11-26).
-  "Opus" or "sub-agents" means `opus-delegate`. "Neon" means `neon` (Gemini 4 Neon through the Antigravity CLI).
+  "Opus", "sub-agents" or no instruction means `opus-delegate` (owner, 2026-11-27).
+  "Codex" means `codex-delegate`. "Neon" means `neon` (Gemini 4 Neon through the Antigravity CLI).
 - **GitHub** is the durable source of truth. Issues, pull requests, and commits outlive every session.
 
 ## Binding rules

@@ -1,6 +1,6 @@
 ---
 name: opus-delegate
-description: The Opus coordinator's sub-agents — hand implementation, debugging, review or research to Claude workers through the Agent tool, each on its own model and effort (never the coordinator's) and writing in its own worktree, while the coordinator plans, supervises, reviews the real diff, and merges. Use when the user says Opus, sub-agents, or Claude agents for doing work, and for reviews routed here by the global orchestration policy.
+description: The Opus coordinator's sub-agents — hand implementation, debugging, review or research to Claude workers through the Agent tool, each on its own model and effort (never the coordinator's) and writing in its own worktree, while the coordinator plans, supervises, reviews the real diff, and merges. The default for delegated work (owner, 2026-11-27); use it unless the user names Codex or Neon, and for reviews routed here by the global orchestration policy.
 ---
 
 # Delegate work from the Opus coordinator to Claude sub-agents

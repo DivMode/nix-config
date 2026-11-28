@@ -483,6 +483,14 @@ let
             nix_conf_changed=1
           fi
           unlink "$nix_conf_new"
+          # An install interrupted after the profile was populated but before
+          # the installer linked the daemon units leaves nix without them; link
+          # them from the profile as the installer does.
+          for nix_unit in nix-daemon.socket nix-daemon.service; do
+            if ! systemctl cat "$nix_unit" >/dev/null 2>&1; then
+              systemctl link "/nix/var/nix/profiles/default/lib/systemd/system/$nix_unit"
+            fi
+          done
           systemctl enable --now nix-daemon.socket
           systemctl start nix-daemon.service
           if [ "$nix_conf_changed" = 1 ]; then

@@ -250,6 +250,33 @@ the feature you need, and use it:
   existing custom harnesses are debt to migrate, not patterns to copy or
   extend.
 
+**Test databases run native, isolated and disposable.** CI on this Mac runs on
+arm64; an emulated database container was measured five times slower and
+timed out suites under load (2026-11-28).
+
+- **Native architecture only.** Before pinning any container image for tests
+  or CI, run `docker buildx imagetools inspect <image>` and confirm it lists
+  the runner's architecture. Never run a service under emulation (a literal
+  `--platform linux/amd64` on an arm64 runner). Take the platform from the job's
+  architecture input, never a literal.
+- **Trusted images only.** Use a Docker Official Image or the upstream
+  project's own image. When upstream does not publish the runner's
+  architecture, build a small image from the Docker Official base plus the
+  upstream project's own packages, for example PostGIS from the PostgreSQL
+  project's apt repository on the official `postgres` image, following the
+  upstream Dockerfile. Never adopt an individual's rebuild or a self-described
+  experimental or test repository.
+- **Migrate once, clone per test.** Integration tests run the migrations once
+  into a template database in the framework's global setup (Vitest
+  `globalSetup` with `provide`/`inject`), then close every connection to it:
+  PostgreSQL refuses to clone a template that has one open. Each test or suite
+  then gets `CREATE DATABASE … TEMPLATE`. Never run the full migration chain inside
+  each suite's setup hook.
+- **No durability on a server that is thrown away.** These settings are
+  server-wide, so use them only when the whole instance is disposable. Start it with
+  `fsync=off`, `synchronous_commit=off` and `full_page_writes=off`
+  (PostgreSQL's "Non-Durable Settings").
+
 **A finding is a defect only when something real produces it.** Before acting
 on a review finding, a failing probe or a "this input breaks it" report, name
 the production call site, external input or real occurrence that produces the

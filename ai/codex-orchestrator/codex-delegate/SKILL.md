@@ -33,7 +33,8 @@ for the work they name, including a small fix they hand to Codex; the credential
 live-system exceptions below still stay with Claude.
 
 Do it in Claude directly when any of these hold:
-- It is a small fix with a known exact edit, affecting a few files and roughly under 50 lines.
+- It is a small fix with a known exact edit, affecting a few files and roughly under 50 lines,
+  and the user did not hand it to Codex by name.
 - It still needs investigation, live-system debugging, or a design decision.
 - It needs cloud access, credentials, deploys, or production data. Codex has network access for
   builds and package downloads, but secrets and anything that changes live systems stay with

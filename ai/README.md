@@ -328,11 +328,11 @@ drift.
 `claude-skills/conduct` is for a Claude thread inside T3 Code
 (`modules/darwin/t3code.nix`). `/conduct <task>` makes that thread the lead: it
 splits the task and hands each piece to Claude, Codex or Antigravity with T3's
-`delegate_task`, in its own worktree, and it routes by job (Opus for parallel
-slices, Codex `gpt-6.2-sol` for clear-spec work, Fable for hard problems,
-cross-family review). A finished child wakes the lead, so it hands out work and
-ends its turn instead of polling. Invoking it is the owner naming the workers,
-which satisfies the Roles rule for that task; children leave their changes
+`delegate_task`, in its own worktree, and it routes by job (Claude Sonnet for
+implementation slices and clear-spec work, Codex `gpt-6.2-sol` only when the
+owner names it, Fable for hard problems, cross-family review). A finished child wakes the lead, so it hands out work and
+ends its turn instead of polling. Invoking it does not choose a worker: the Roles
+default applies unless the owner names one, for example "use Codex"; children leave their changes
 uncommitted and the lead commits. It never messages threads it did not start.
 
 ### Plugins and marketplaces are deliberately not declared

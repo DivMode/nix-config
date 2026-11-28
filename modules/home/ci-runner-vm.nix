@@ -91,7 +91,10 @@ let
       # (src/Misc/layoutbin/runsvc.sh:7-9), which the unit does not use, so the
       # unit sets PATH itself. This is the Ubuntu systemd default plus Nix last
       # (nothing the machine already resolves changes), and it reaches runners
-      # that are already registered. A running runner picks it up at its next start.
+      # that are already registered. A running runner picks it up at its next
+      # start, as with every unit change here: provisioning never restarts a
+      # runner that may be running a job, so switching `nix` on for a machine
+      # whose runners are online takes a restart of each one while it is idle.
       nixUnitEnvironment = lib.optionalString nixEnabled "Environment=PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/nix/var/nix/profiles/default/bin\n";
 
       # Runs as root inside the guest after Docker provisioning. Idempotent:
@@ -444,14 +447,20 @@ let
               # shellcheck disable=SC2086
               DEBIAN_FRONTEND=noninteractive apt-get install -y $nix_missing
             fi
-            nix_dir=$(mktemp -d)
-            curl -fsSL -o "$nix_dir/nix.tar.xz" \
-              "https://releases.nixos.org/nix/nix-${nixVersion}/nix-${nixVersion}-aarch64-linux.tar.xz"
-            echo "${nixSha256}  $nix_dir/nix.tar.xz" | sha256sum -c -
-            tar -xJf "$nix_dir/nix.tar.xz" -C "$nix_dir"
-            # stdin is this script (piped to bash), so the installer must not read it.
-            (cd "$nix_dir/nix-${nixVersion}-aarch64-linux" && ./install --daemon --yes --no-channel-add < /dev/null)
-            rm -r "$nix_dir"
+            # A subshell, so its EXIT trap removes the staging directory on
+            # failure too, without replacing this script's own EXIT trap.
+            (
+              set -e
+              nix_dir=$(mktemp -d)
+              trap 'rm -r "$nix_dir"' EXIT
+              curl -fsSL -o "$nix_dir/nix.tar.xz" \
+                "https://releases.nixos.org/nix/nix-${nixVersion}/nix-${nixVersion}-aarch64-linux.tar.xz"
+              echo "${nixSha256}  $nix_dir/nix.tar.xz" | sha256sum -c -
+              tar -xJf "$nix_dir/nix.tar.xz" -C "$nix_dir"
+              cd "$nix_dir/nix-${nixVersion}-aarch64-linux"
+              # stdin is this script (piped to bash), so the installer must not read it.
+              ./install --daemon --yes --no-channel-add < /dev/null
+            )
           fi
           # The installer's nix.conf holds only build-users-group. Keep a single
           # experimental-features line, last; rewrite only when it differs.

@@ -76,6 +76,24 @@ let
       ghVersion = "2.104.0";
       ghSha256 = "cb34cefc6f4e77b90731374a2b737516bb8f3033c6ca46aa949e5344f68069e3";
 
+      # Optional `nix = true`: multi-user Nix with flakes, for job steps that call
+      # `nix shell` or `nix develop`. The sha256 is the contents of
+      # https://releases.nixos.org/nix/nix-2.36.0/nix-2.36.0-aarch64-linux.tar.xz.sha256
+      # (nixos.org/nix/install redirects to nix-2.36.0 on 2026-11-28); the
+      # downloaded tarball hashes to the same value.
+      nixEnabled = cfg.nix or false;
+      nixVersion = "2.36.0";
+      nixSha256 = "ee696971de946d311699f6dd639cccc8c6734aec9a061b8e205de0ce6515e5ae";
+      # How a job gets `nix` on PATH. The unit starts run.sh, which starts
+      # Runner.Listener; the job worker inherits its PATH
+      # (src/Runner.Worker/Handlers/Handler.cs:226-229 in actions/runner v2.338.2).
+      # The `.path` file env.sh writes is read only by runsvc.sh
+      # (src/Misc/layoutbin/runsvc.sh:7-9), which the unit does not use, so the
+      # unit sets PATH itself. This is the Ubuntu systemd default plus Nix last
+      # (nothing the machine already resolves changes), and it reaches runners
+      # that are already registered. A running runner picks it up at its next start.
+      nixUnitEnvironment = lib.optionalString nixEnabled "Environment=PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/nix/var/nix/profiles/default/bin\n";
+
       # Runs as root inside the guest after Docker provisioning. Idempotent:
       # each step checks for its own result.
       provisionRunner = runner: ''
@@ -242,7 +260,7 @@ let
         ConditionPathExists=${runner.directory}/.runner
 
         [Service]
-        User=runner
+        ${nixUnitEnvironment}User=runner
         WorkingDirectory=${runner.directory}
         # "-" and the 5-minute limit: a failed or stalled conversion never keeps
         # the runner from starting. A 2.4 GB, 39k-file work directory copies in
@@ -403,6 +421,58 @@ let
         fi
         systemctl enable --now docker.service
 
+        # A gate sets LANG=en_US.UTF-8 and runs initdb, whose collation depends
+        # on the locale existing. `locale -a` lists a generated one as en_US.utf8.
+        generated_locales=$(locale -a)
+        if ! grep -qiE '^en_US\.utf-?8$' <<< "$generated_locales"; then
+          if ! dpkg -s locales >/dev/null 2>&1; then
+            apt-get update
+            DEBIAN_FRONTEND=noninteractive apt-get install -y locales
+          fi
+          locale-gen en_US.UTF-8
+        fi
+        ${lib.optionalString nixEnabled ''
+          # Here, once per boot, for the same APT lock reason as btrfs-progs above.
+          nix_bin=/nix/var/nix/profiles/default/bin/nix
+          if [ ! -x "$nix_bin" ]; then
+            nix_missing=""
+            for package in curl xz-utils ca-certificates; do
+              dpkg -s "$package" >/dev/null 2>&1 || nix_missing="$nix_missing $package"
+            done
+            if [ -n "$nix_missing" ]; then
+              apt-get update
+              # shellcheck disable=SC2086
+              DEBIAN_FRONTEND=noninteractive apt-get install -y $nix_missing
+            fi
+            nix_dir=$(mktemp -d)
+            curl -fsSL -o "$nix_dir/nix.tar.xz" \
+              "https://releases.nixos.org/nix/nix-${nixVersion}/nix-${nixVersion}-aarch64-linux.tar.xz"
+            echo "${nixSha256}  $nix_dir/nix.tar.xz" | sha256sum -c -
+            tar -xJf "$nix_dir/nix.tar.xz" -C "$nix_dir"
+            # stdin is this script (piped to bash), so the installer must not read it.
+            (cd "$nix_dir/nix-${nixVersion}-aarch64-linux" && ./install --daemon --yes --no-channel-add < /dev/null)
+            rm -r "$nix_dir"
+          fi
+          # The installer's nix.conf holds only build-users-group. Keep a single
+          # experimental-features line, last; rewrite only when it differs.
+          nix_conf=/etc/nix/nix.conf
+          nix_conf_new=$(mktemp)
+          {
+            grep -v '^experimental-features[[:space:]]*=' "$nix_conf" || true
+            echo 'experimental-features = nix-command flakes'
+          } > "$nix_conf_new"
+          nix_conf_changed=0
+          if ! cmp -s "$nix_conf_new" "$nix_conf"; then
+            install -m 644 "$nix_conf_new" "$nix_conf"
+            nix_conf_changed=1
+          fi
+          unlink "$nix_conf_new"
+          systemctl enable --now nix-daemon.socket
+          systemctl start nix-daemon.service
+          if [ "$nix_conf_changed" = 1 ]; then
+            systemctl restart nix-daemon.service
+          fi
+        ''}
         ${provisionRunner firstRunner}
       '';
       start = pkgs.writeShellApplication {

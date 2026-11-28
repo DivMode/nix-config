@@ -76,6 +76,21 @@ let
       ghVersion = "2.104.0";
       ghSha256 = "cb34cefc6f4e77b90731374a2b737516bb8f3033c6ca46aa949e5344f68069e3";
 
+      # Optional `nix = true`: multi-user Nix with flakes, for job steps that
+      # call `nix shell` or `nix develop`. It comes from Ubuntu's own packages
+      # (nix-setup-systemd, which pulls nix-bin: Nix 2.34.3 in 26.04), so dpkg
+      # makes the install idempotent and resumable; the release tarball's
+      # installer refused to rerun after an interruption. `nix` lands in
+      # /usr/bin, already on the runner's PATH. Flakes are enabled for the
+      # runner through NIX_CONFIG rather than in /etc/nix/nix.conf, which is a
+      # dpkg conffile. A running runner picks up a unit change at its next
+      # start: provisioning never restarts a runner that may be running a job,
+      # so switching `nix` on for online runners takes an idle restart of each.
+      nixEnabled = cfg.nix or false;
+      nixUnitEnvironment = lib.optionalString nixEnabled ''
+        Environment="NIX_CONFIG=experimental-features = nix-command flakes"
+      '';
+
       # Runs as root inside the guest after Docker provisioning. Idempotent:
       # each step checks for its own result.
       provisionRunner = runner: ''
@@ -84,6 +99,11 @@ let
 
         id runner >/dev/null 2>&1 || useradd --create-home --shell /bin/bash runner
         usermod --append --groups docker runner
+        ${lib.optionalString nixEnabled ''
+          # The Nix daemon's socket directory is 770 root:nix-users
+          # (/usr/lib/tmpfiles.d/nix-daemon.conf in nix-setup-systemd).
+          usermod --append --groups nix-users runner
+        ''}
 
         # What CI steps expect on a runner host beyond Docker, git and curl.
         packages="jq unzip zip python3-pip python3-venv"
@@ -242,7 +262,14 @@ let
         ConditionPathExists=${runner.directory}/.runner
 
         [Service]
-        User=runner
+        ${nixUnitEnvironment}User=runner
+        # Every runner on a machine shares the runner user's HOME, and rustup
+        # is not safe for concurrent use (rust-lang/rustup#988, open): two jobs
+        # installing one toolchain into /home/runner/.rustup at once failed with
+        # "could not rename 'downloaded' file" (2026-11-28). So each runner keeps
+        # its toolchains in its own work subvolume, about 1.3 GB per runner that
+        # uses Rust. Cargo locks its own package cache, so CARGO_HOME stays shared.
+        Environment=RUSTUP_HOME=${runner.directory}/_work/_rustup
         WorkingDirectory=${runner.directory}
         # "-" and the 5-minute limit: a failed or stalled conversion never keeps
         # the runner from starting. A 2.4 GB, 39k-file work directory copies in
@@ -260,8 +287,6 @@ let
         systemctl enable ${runner.service}.service
         # A no-op until the runner is registered (ConditionPathExists).
         systemctl start ${runner.service}.service || true
-        # On tmpfs: says this boot's provisioning reached its end.
-        touch /run/ci-runner-provisioned
       '';
 
       # Reconcile after the first runner is provisioned, independently of the
@@ -300,12 +325,12 @@ let
           export PATH="$PATH:/usr/bin:/bin:/usr/sbin:/sbin"
           ${guestSetup}
           for _ in $(seq 180); do
-            if in_running_guest test -e /run/ci-runner-provisioned 2>/dev/null; then
+            if in_running_guest grep -qx ${provisionStamp} /run/ci-runner-provisioned 2>/dev/null; then
               break
             fi
             sleep 10
           done
-          in_running_guest test -e /run/ci-runner-provisioned || {
+          in_running_guest grep -qx ${provisionStamp} /run/ci-runner-provisioned || {
             echo "error: ${instance} did not finish provisioning within 30 minutes" >&2
             exit 1
           }
@@ -349,12 +374,32 @@ let
       machineConfig =
         if lib.hasInfix "." instance then ''machine."${instance}"'' else "machine.${instance}";
 
-      orbProvision = pkgs.writeText "${instance}-orbstack-provision.sh" ''
+      # The marker on tmpfs says this boot's provisioning reached its end, and
+      # holds a stamp of the script that wrote it. Reconcile and registration
+      # wait for this script's stamp, not merely for the file: right after an
+      # activation the previous script's marker can still be there, before the
+      # relaunched agent has removed it.
+      provisionStamp = builtins.substring 0 16 (builtins.hashString "sha256" orbProvisionBody);
+      orbProvision = pkgs.writeText "${instance}-orbstack-provision.sh" (
+        orbProvisionBody
+        + ''
+          echo ${provisionStamp} > /run/ci-runner-provisioned
+        ''
+      );
+      orbProvisionBody = ''
         #!/bin/bash
         set -euo pipefail
         if [ -e /run/ci-runner-provisioned ]; then
           unlink /run/ci-runner-provisioned
         fi
+        # A dpkg run cut off by a reboot leaves its journal dirty, and APT then
+        # refuses every install below; this finishes it, and does nothing on a
+        # clean system. Other cuts mid-install (a half-unpacked package, a
+        # dependency pair split between unpacks) are not repaired here. A
+        # machine holds only caches, so the recovery is to recreate it: remove
+        # its ciRunnerVms entry and activate (that removes its agent), `orb
+        # delete` it, restore the entry and activate again.
+        DEBIAN_FRONTEND=noninteractive dpkg --configure -a
 
         # OrbStack 2.2.5 adds Mac tool links and a login PATH hook even in an
         # isolated machine. Leave them out of runner shells. Running
@@ -403,6 +448,29 @@ let
         fi
         systemctl enable --now docker.service
 
+        # A gate sets LANG=en_US.UTF-8 and runs initdb, whose collation depends
+        # on the locale existing. `locale -a` lists a generated one as en_US.utf8.
+        generated_locales=$(locale -a)
+        if ! grep -qiE '^en_US\.utf-?8$' <<< "$generated_locales"; then
+          if ! dpkg -s locales >/dev/null 2>&1; then
+            apt-get update
+            DEBIAN_FRONTEND=noninteractive apt-get install -y locales
+          fi
+          locale-gen en_US.UTF-8
+        fi
+        ${lib.optionalString nixEnabled ''
+          # Here, once per boot, for the same APT lock reason as btrfs-progs
+          # above.
+          nix_package=$(dpkg -s nix-setup-systemd 2>/dev/null || true)
+          if ! grep -qx 'Status: install ok installed' <<< "$nix_package"; then
+            apt-get update
+            DEBIAN_FRONTEND=noninteractive apt-get install -y nix-setup-systemd
+          fi
+          # The package enables and starts nix-daemon.service itself; its socket
+          # unit then refuses to listen ("Socket service nix-daemon.service
+          # already active"), so this ensures the service, not the socket.
+          systemctl enable --now nix-daemon.service
+        ''}
         ${provisionRunner firstRunner}
       '';
       start = pkgs.writeShellApplication {
@@ -495,12 +563,12 @@ let
             # First boot downloads the guest image, installs Docker and the runner.
             echo "waiting for the VM to finish provisioning"
             for _ in $(seq 180); do
-              if in_guest test -e /run/ci-runner-provisioned 2>/dev/null; then
+              if in_guest grep -qx ${provisionStamp} /run/ci-runner-provisioned 2>/dev/null; then
                 break
               fi
               sleep 10
             done
-            in_guest test -e /run/ci-runner-provisioned || {
+            in_guest grep -qx ${provisionStamp} /run/ci-runner-provisioned || {
               echo "error: ${instance} did not finish provisioning within 30 minutes" >&2
               echo "see ${orb} logs ${instance} and ~/Library/Logs/${agentName}.log" >&2
               exit 1

@@ -189,13 +189,15 @@ let
           --filter status=restarting --filter status=paused --filter status=removing) ||
           skip "docker ps failed"
         # Inspected one by one: on a busy machine other runners' containers
-        # exit between "docker ps" and "docker inspect" ("no such object",
-        # 2026-11-28), and a container that is gone holds no mount.
+        # exit between "docker ps" and "docker inspect", which then says
+        # exactly "error: no such object: <id>" (runner 5, 2026-11-28). Only that
+        # whole answer means the container is gone and holds no mount; any other
+        # output, such as an unreachable daemon, leaves it unknown.
         mounts=""
         for container in $containers; do
-          if container_mounts=$(docker inspect --format '{{range .Mounts}}{{println .Source}}{{end}}' "$container" 2>/dev/null); then
-            mounts+="$container_mounts"$'\n'
-          elif docker inspect "$container" >/dev/null 2>&1; then
+          if inspected=$(docker inspect --format '{{range .Mounts}}{{println .Source}}{{end}}' "$container" 2>&1); then
+            mounts+="$inspected"$'\n'
+          elif [ "$inspected" != "error: no such object: $container" ]; then
             skip "the mounts of container $container could not be read"
           fi
         done

@@ -287,8 +287,6 @@ let
         systemctl enable ${runner.service}.service
         # A no-op until the runner is registered (ConditionPathExists).
         systemctl start ${runner.service}.service || true
-        # On tmpfs: says this boot's provisioning reached its end.
-        touch /run/ci-runner-provisioned
       '';
 
       # Reconcile after the first runner is provisioned, independently of the
@@ -327,12 +325,12 @@ let
           export PATH="$PATH:/usr/bin:/bin:/usr/sbin:/sbin"
           ${guestSetup}
           for _ in $(seq 180); do
-            if in_running_guest test -e /run/ci-runner-provisioned 2>/dev/null; then
+            if in_running_guest grep -qx ${provisionStamp} /run/ci-runner-provisioned 2>/dev/null; then
               break
             fi
             sleep 10
           done
-          in_running_guest test -e /run/ci-runner-provisioned || {
+          in_running_guest grep -qx ${provisionStamp} /run/ci-runner-provisioned || {
             echo "error: ${instance} did not finish provisioning within 30 minutes" >&2
             exit 1
           }
@@ -376,12 +374,28 @@ let
       machineConfig =
         if lib.hasInfix "." instance then ''machine."${instance}"'' else "machine.${instance}";
 
-      orbProvision = pkgs.writeText "${instance}-orbstack-provision.sh" ''
+      # The marker on tmpfs says this boot's provisioning reached its end, and
+      # holds a stamp of the script that wrote it. Reconcile and registration
+      # wait for this script's stamp, not merely for the file: right after an
+      # activation the previous script's marker can still be there, before the
+      # relaunched agent has removed it.
+      provisionStamp = builtins.substring 0 16 (builtins.hashString "sha256" orbProvisionBody);
+      orbProvision = pkgs.writeText "${instance}-orbstack-provision.sh" (
+        orbProvisionBody
+        + ''
+          echo ${provisionStamp} > /run/ci-runner-provisioned
+        ''
+      );
+      orbProvisionBody = ''
         #!/bin/bash
         set -euo pipefail
         if [ -e /run/ci-runner-provisioned ]; then
           unlink /run/ci-runner-provisioned
         fi
+        # A dpkg run cut off by a reboot leaves its journal dirty, and APT then
+        # refuses every install below; this finishes it, and does nothing on a
+        # clean system.
+        DEBIAN_FRONTEND=noninteractive dpkg --configure -a
 
         # OrbStack 2.2.5 adds Mac tool links and a login PATH hook even in an
         # isolated machine. Leave them out of runner shells. Running
@@ -442,11 +456,9 @@ let
         fi
         ${lib.optionalString nixEnabled ''
           # Here, once per boot, for the same APT lock reason as btrfs-progs
-          # above. A package left half-configured by an interruption is
-          # finished by dpkg --configure first.
+          # above.
           nix_package=$(dpkg -s nix-setup-systemd 2>/dev/null || true)
           if ! grep -qx 'Status: install ok installed' <<< "$nix_package"; then
-            DEBIAN_FRONTEND=noninteractive dpkg --configure -a
             apt-get update
             DEBIAN_FRONTEND=noninteractive apt-get install -y nix-setup-systemd
           fi
@@ -547,12 +559,12 @@ let
             # First boot downloads the guest image, installs Docker and the runner.
             echo "waiting for the VM to finish provisioning"
             for _ in $(seq 180); do
-              if in_guest test -e /run/ci-runner-provisioned 2>/dev/null; then
+              if in_guest grep -qx ${provisionStamp} /run/ci-runner-provisioned 2>/dev/null; then
                 break
               fi
               sleep 10
             done
-            in_guest test -e /run/ci-runner-provisioned || {
+            in_guest grep -qx ${provisionStamp} /run/ci-runner-provisioned || {
               echo "error: ${instance} did not finish provisioning within 30 minutes" >&2
               echo "see ${orb} logs ${instance} and ~/Library/Logs/${agentName}.log" >&2
               exit 1

@@ -7,8 +7,28 @@
   ...
 }:
 let
-  vms = lib.mapAttrs mkVm (local.ciRunnerVms or { });
+  machines = local.ciRunnerVms or { };
+  vms = lib.mapAttrs mkVm machines;
   vmList = lib.attrValues vms;
+
+  # Optional `slotCpus` gives every runner of a machine its own CPU set. The
+  # runners of all machines that declare it are numbered in one sequence:
+  # machines in attribute-name order, runners in index order. This is the
+  # number of runners that come before the machine's first one.
+  slotMachines = lib.filter (instance: machines.${instance} ? slotCpus) (lib.attrNames machines);
+  # One sequence of k*N offsets is disjoint only at one width: with 0-28, two
+  # 6-CPU runners take 0-5 and 6-11, and a 4-CPU runner after them 8-11.
+  slotWidths = lib.unique (map (instance: machines.${instance}.slotCpus) slotMachines);
+  slotRunnersBefore =
+    instance:
+    if lib.length slotWidths > 1 then
+      throw "ciRunnerVms: every machine with slotCpus must use the same value (found ${
+        lib.concatMapStringsSep ", " toString slotWidths
+      })"
+    else
+      lib.foldl' (total: other: total + lib.length vms.${other}.runnerNames) 0 (
+        lib.filter (other: other < instance) slotMachines
+      );
   enabled = vmList != [ ] && pkgs.stdenv.hostPlatform.isDarwin && pkgs.stdenv.hostPlatform.isAarch64;
 
   inherit (orbstack) orb;
@@ -52,6 +72,7 @@ let
           suffix = if index == 0 then "" else "-${toString (index + 1)}";
         in
         {
+          slotIndex = slotRunnersBefore instance + index;
           name = "${runnerName}${suffix}";
           directory = "/opt/actions-runner${suffix}";
           service = "github-runner${suffix}";
@@ -90,6 +111,101 @@ let
       nixUnitEnvironment = lib.optionalString nixEnabled ''
         Environment="NIX_CONFIG=experimental-features = nix-command flakes"
       '';
+
+      # Optional `slotCpus = N`: each runner unit gets N CPUs of its own
+      # (CPUAffinity=) instead of all of the machine's, and the set is exported
+      # to jobs as CI_RUNNER_CPUSET / CI_RUNNER_CPUS. Off unless declared, for a
+      # measured comparison. Runner k (numbered across machines, see
+      # slotRunnersBefore) takes cpus[(k*N + j) mod U], j = 0..N-1, of the U
+      # CPUs systemd may use, so slots are disjoint while
+      # runners*N <= U and overlap evenly beyond that. A changed unit applies at
+      # the runner's next start; provisioning never restarts a running one.
+      # CPUAffinity= rather than AllowedCPUs=: it is applied when the process is
+      # started, so the daemon-reload that provisioning runs leaves a running
+      # job's CPUs alone, while systemd reapplies a changed cgroup setting such
+      # as AllowedCPUs= to active units on reload
+      # (src/core/unit-serialize.c in systemd v259). Not enforced: a process
+      # may widen its own affinity, which the tools sizing themselves do not.
+      #
+      # Evidence (documentation; not yet measured on these machines):
+      # - CPUAffinity= sets the CPU affinity of executed processes, and children
+      #   inherit it:
+      #   https://www.freedesktop.org/software/systemd/man/latest/systemd.exec.html#CPUAffinity=
+      #   https://man7.org/linux/man-pages/man2/sched_setaffinity.2.html
+      # - nproc ("processing units available to the current process"):
+      #   https://www.gnu.org/software/coreutils/manual/html_node/nproc-invocation.html
+      #   Rust's available_parallelism reads sched_getaffinity (hypothesis about
+      #   the mechanism: its page names only the failure modes when it cannot be
+      #   queried): https://doc.rust-lang.org/std/thread/fn.available_parallelism.html
+      #   Node's os.availableParallelism wraps libuv's uv_available_parallelism,
+      #   which "inspects the calling thread's CPU affinity mask":
+      #   https://docs.libuv.org/en/v1.x/misc.html#c.uv_available_parallelism
+      # - The usable list is systemd's own (PID 1) affinity, which every unit
+      #   inherits: runner processes read Cpus_allowed_list 0-29, while a shell
+      #   started by `orb` reads 0-28 (observed 2026-11-28).
+      # - Docker containers are started by dockerd, outside the runner's unit and
+      #   affinity: a job container's /proc/<pid>/cgroup read
+      #   /system.slice/docker-<id>.scope with Cpus_allowed_list 0-29 (observed
+      #   2026-11-28). Jobs must pass --cpuset-cpus "$CI_RUNNER_CPUSET"
+      #   themselves (https://docs.docker.com/engine/containers/resource_constraints/).
+      slotEnabled = cfg ? slotCpus;
+      slotCpus =
+        if builtins.isInt cfg.slotCpus && cfg.slotCpus > 0 then
+          cfg.slotCpus
+        else
+          throw "ciRunnerVms.${instance}.slotCpus must be a positive integer";
+      # The unit is written through sed in slot mode; the placeholder stands for
+      # the list computed in the guest.
+      slotUnitEnvironment = lib.optionalString slotEnabled ''
+        CPUAffinity=@CPUSET@
+        Environment=CI_RUNNER_CPUSET=@CPUSET@
+        Environment=CI_RUNNER_CPUS=${toString slotCpus}
+      '';
+      # slot_cpuset_list K N ALLOWED prints runner K's N CPUs out of the
+      # ALLOWED list (the Cpus_allowed_list format, "0-3,8-11") as a sorted
+      # comma/range list, or fails when the list holds fewer than N CPUs.
+      slotCpusetFunction = ''
+        slot_cpuset_list() {
+          local k=$1 n=$2 allowed=$3 part lo hi c j start prev out=""
+          local -a parts cpus=() picked sorted
+          IFS=, read -ra parts <<< "$allowed"
+          for part in "''${parts[@]}"; do
+            lo=''${part%-*} hi=''${part#*-}
+            for ((c = lo; c <= hi; c++)); do cpus+=("$c"); done
+          done
+          if [ "$n" -gt "''${#cpus[@]}" ]; then
+            echo "error: slotCpus $n exceeds the ''${#cpus[@]} CPUs this machine allows ($allowed)" >&2
+            return 1
+          fi
+          for ((j = 0; j < n; j++)); do
+            picked+=("''${cpus[(k * n + j) % ''${#cpus[@]}]}")
+          done
+          mapfile -t sorted < <(printf '%s\n' "''${picked[@]}" | sort -n)
+          start=''${sorted[0]} prev=$start
+          # The trailing "end" flushes the last run.
+          for c in "''${sorted[@]:1}" end; do
+            if [ "$c" != end ] && [ "$c" -eq $((prev + 1)) ]; then
+              prev=$c
+              continue
+            fi
+            if [ "$start" -eq "$prev" ]; then
+              out+="''${out:+,}$start"
+            else
+              out+="''${out:+,}$start-$prev"
+            fi
+            start=$c prev=$c
+          done
+          echo "$out"
+        }
+      '';
+      slotProvision =
+        runner:
+        lib.optionalString slotEnabled ''
+          ${slotCpusetFunction}
+          allowed_cpus=$(sed -n 's/^Cpus_allowed_list:[[:space:]]*//p' /proc/1/status)
+          slot_cpus=$(slot_cpuset_list ${toString runner.slotIndex} ${toString slotCpus} "$allowed_cpus")
+
+        '';
 
       # Runs as root inside the guest after Docker provisioning. Idempotent:
       # each step checks for its own result.
@@ -254,7 +370,9 @@ let
         chmod 755 "$helper"
         mv -f "$helper" /usr/local/sbin/ci-runner-work-subvolume
 
-        cat > /etc/systemd/system/${runner.service}.service <<'UNIT'
+        ${slotProvision runner}${
+          if slotEnabled then ''sed "s/@CPUSET@/$slot_cpus/g"'' else "cat"
+        } > /etc/systemd/system/${runner.service}.service <<'UNIT'
         [Unit]
         Description=GitHub Actions runner
         After=network-online.target docker.service
@@ -262,7 +380,7 @@ let
         ConditionPathExists=${runner.directory}/.runner
 
         [Service]
-        ${nixUnitEnvironment}User=runner
+        ${nixUnitEnvironment}${slotUnitEnvironment}User=runner
         # Every runner on a machine shares the runner user's HOME, and rustup
         # is not safe for concurrent use (rust-lang/rustup#988, open): two jobs
         # installing one toolchain into /home/runner/.rustup at once failed with

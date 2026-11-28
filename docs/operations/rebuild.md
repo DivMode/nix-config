@@ -55,7 +55,8 @@ VM), the remaining runners and VMs are still attempted, and
 the command exits non-zero if any VM failed. A GitHub listing error stops that
 runner's attempt without replacing its registration.
 
-Declare multiple VMs by Lima instance name, for example:
+Declare multiple VMs by instance name. Set `engine = "orbstack"` for an
+isolated OrbStack Ubuntu machine. The default engine is Lima.
 
 ```nix
 ciRunnerVms = {
@@ -65,26 +66,31 @@ ciRunnerVms = {
     runners = 3;
   };
   ci-repo-b = {
+    engine = "orbstack";
     repository = "owner/repo-b";
     labels = [ "mac-vm-b" ];
     cpus = 8;
     memory = "16GiB";
-    disk = "80GiB";
   };
 };
 ```
 
 Each entry defaults to `name = <instance name>`, `labels = [ "mac-vm" ]`,
-`runners = 1`, `cpus = 16`, `memory = "24GiB"` and `disk = "120GiB"`.
+`runners = 1`, `cpus = 16` and `memory = "24GiB"`. Lima defaults to
+`disk = "120GiB"`. Specify OrbStack memory as whole `GiB` or `MiB`.
 `runners` must be a positive integer. All expanded runner names must be
 distinct across entries. Instance names start with an alphanumeric character
 and contain only alphanumeric characters, dots, underscores or hyphens;
-`linux-gate-v1` is reserved for the gate VM. Each new entry owns
-`~/.config/lima/<instance>.yaml`, launchd label
+`linux-gate-v1` is reserved for the gate VM. Each new entry owns launchd label
 `org.nix-community.home.ci-runner-vm-<instance>`, and log
 `~/Library/Logs/ci-runner-vm-<instance>.log`. Guest files and credentials stay
-on that instance's disk. All VMs share the private `LIMA_HOME` directory, but
-each instance owns its own subdirectory.
+on that instance's disk. Lima entries each own `~/.config/lima/<instance>.yaml`
+and a subdirectory in the private `LIMA_HOME` directory.
+
+OrbStack provisions the runner and rootful Docker each time the launchd
+agent starts the machine. Activation sets OrbStack's global memory limit to
+fit the declared OrbStack entries, with a 16 GiB floor. If the limit changes,
+activation reports a pending OrbStack restart so active jobs can finish.
 
 With `runners = 3`, the example's first VM runs `ci-repo-a`, `ci-repo-a-2`
 and `ci-repo-a-3`, all with the entry's labels. The first retains
